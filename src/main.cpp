@@ -176,7 +176,7 @@ void csr_from_graph (CSR* csr, Graph& graph)
       edge_iterator++;
     }
     
-    csr->vertices[i].set_end_edge_id (edge_iterator);
+    csr->vertices[i].set_end_edge_id (edge_iterator-1);
   }
 }
   
@@ -377,7 +377,6 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   //int i = blockIdx.x*blockDim.x + threadIdx.x;
   //if (i >= n_embeddings)
   //  return;
-  int q[1000] = {0};
   for (int i = 0; i < n_embeddings; i++) {
     //printf ("i %d ", i);
     VertexEmbedding& embedding = embeddings[i];
@@ -388,8 +387,12 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
     }*/
     for (int u = 0; u < N; u++) {
       if (embedding.test(u)) {
+        if (i >= 3229)
+          ;//printf ("u %d\n", u);
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
+          if (i == 3311)
+            ;//printf ("v = %d\n", v);
           if (embedding.test (v) == false) {
             VertexEmbedding extension = VertexEmbedding(embedding);
             extension.set(v);
@@ -405,19 +408,22 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
               if (i == 1500) q[2]++;*/
               //clique_process (output, extension);
               //(*n_output)++;
-              ((VertexEmbedding*)output_ptr)[atomicAdd(n_output,1)] = VertexEmbedding(extension);
+              ((VertexEmbedding*)output_ptr)[*n_output] = VertexEmbedding(extension);
+              (*n_output)++;
               //(*n_next_step)++; //make it atomic
-              new_embeddings[atomicAdd(n_next_step,1)] = VertexEmbedding(extension);
+              new_embeddings[*n_next_step] = VertexEmbedding(extension);
+              (*n_next_step)++;
             }
           }
         }
+        
+        if (i >= 3229)
+          ;//printf ("u done %d\n", u);
       }
     }
   }
   
-  printf ("embeddings generated [1000, 2000)= %d and [2000, 3000) = %d\n", q[0], q[1]);
-  printf ("embeddings at i = 1500: %d\n", q[2]);
-  //printf ("run_single_step: end\n");  
+  printf ("step done\n");
 }
 
 void print_embedding (VertexEmbedding embedding, std::ostream& os)

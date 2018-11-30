@@ -11,7 +11,7 @@
 
 #define LINE_SIZE 1024*1024
 const int N = 3312;
-const int N_EDGES = 9079;
+const int N_EDGES = 9074;
 class Vertex 
 {
 private:
@@ -164,7 +164,7 @@ void csr_from_graph (CSR* csr, Graph& graph)
       edge_iterator++;
     }
     
-    csr->vertices[i].set_end_edge_id (edge_iterator);
+    csr->vertices[i].set_end_edge_id (edge_iterator-1);
   }
 }
   
