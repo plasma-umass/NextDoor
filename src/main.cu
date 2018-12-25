@@ -10,6 +10,9 @@
 #include <assert.h>
 
 #define LINE_SIZE 1024*1024
+#define MAX_CUDA_THREADS 65536
+#define THREAD_BLOCK_SIZE 256
+
 const int N = 3312;
 const int N_EDGES = 9074;
 class Vertex 
@@ -359,20 +362,29 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
                       int* n_output,
                       void* next_step, int* n_next_step)
 {
-  //printf ("run_single_step: start, n_embeddings %d\n", n_embeddings);  
   VertexEmbedding* embeddings = (VertexEmbedding*)input;
   VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
   VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
   unsigned char temp [sizeof (VertexEmbedding)];
-  
   int id = blockIdx.x*blockDim.x + threadIdx.x;
+  int start = id, end = id+1;
   //printf ("running id %d\n", id);
-  if (id >= n_embeddings)
-    return;
-  int i = id;
+  if (n_embeddings >= MAX_CUDA_THREADS) {
+    int embeddings_per_thread = n_embeddings/MAX_CUDA_THREADS+1;
+  
+    start = id*embeddings_per_thread;
+    end = (id+1)*embeddings_per_thread < n_embeddings ? (id+1)*embeddings_per_thread : n_embeddings;
+  } else {
+    if (id >= n_embeddings) 
+      return;
+    
+    start = id;
+    end = id+1;
+  }
+  
   int q[1000] = {0};
   
-  //for (int i = 0; i < n_embeddings; i++) {
+  for (int i = start; i < end; i++) {
     //printf ("i %d ", i);
     VertexEmbedding& embedding = embeddings[i];
     //std::vector<VertexEmbedding> extensions = get_extensions (embedding, csr);
@@ -389,35 +401,16 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
             memcpy (&temp[0], &embedding, sizeof (VertexEmbedding));
              //__syncthreads();
             VertexEmbedding* extension = (VertexEmbedding*)(&temp[0]);
-            /*if (i == 1500) {
-              printf ("Extension at 1500 before v = %d", v);
-              printf_embedding (extension);
-              printf ("Embedding at 1500 before ");
-              printf_embedding (extension);
-            }*/
             extension->set(v);
-            /*if (i == 1500) {
-              printf ("Extension at 1500 v = %d", v);
-              printf_embedding (extension);
-            }*/
             if (clique_filter (csr, extension)) {
-              /*if (i == 1500) printf ("extension passed\n");
-              if (i >= 1000 && i < 2000) q[0]++;
-              if (i >= 2000 && i < 3000) q[1]++;
-              if (i == 1500) q[2]++;*/
-              //clique_process (output, extension);
-              //(*n_output)++;
               memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VertexEmbedding));
-              //(*n_next_step)++; //make it atomic
               memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VertexEmbedding));
-              //memset (&temp[0], 0, sizeof (VertexEmbedding));
-               //__syncthreads();
             }
           }
         }
       }
     }
-  //}
+  }
   
   //printf ("embeddings generated [1000, 2000)= %d and [2000, 3000) = %d\n", q[0], q[1]);
   //printf ("embeddings at i = 1500: %d\n", q[2]);
@@ -558,10 +551,20 @@ int main (int argc, char* argv[])
     
     cudaMemcpy (device_csr, csr, sizeof (CSR), cudaMemcpyHostToDevice);
     
-    std::cout << "starting kernel with n_embeddings: " << n_embeddings << std::endl;
-    run_single_step<<<n_embeddings/256+1,256>>> (device_embeddings, n_embeddings, device_csr, 
-                            device_outputs, device_n_outputs, 
-                            device_new_embeddings, device_n_embeddings);
+    std::cout << "starting kernel with n_embeddings: " << n_embeddings;
+    
+    if (false and n_embeddings < MAX_CUDA_THREADS) {
+      std::cout << " threads: " << n_embeddings/256 << std::endl;
+      run_single_step<<<n_embeddings/256+1,256>>> (device_embeddings, n_embeddings, device_csr, 
+                              device_outputs, device_n_outputs, 
+                              device_new_embeddings, device_n_embeddings);
+    } else {
+      std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
+      run_single_step<<<MAX_CUDA_THREADS/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
+                              device_outputs, device_n_outputs, 
+                              device_new_embeddings, device_n_embeddings);
+    }
+    
     cudaDeviceSynchronize ();
     
     cudaError_t error = cudaGetLastError ();
