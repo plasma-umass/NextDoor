@@ -68,11 +68,11 @@ class CSR
 public:
   struct Vertex
   {
-    int id;
-    int label;
-    int start_edge_id;
-    int end_edge_id;
-    
+    short int id;
+    short int label;
+    short int start_edge_id;
+    short int end_edge_id;
+    __host__ __device__
     Vertex ()
     {
       id = -1;
@@ -87,11 +87,11 @@ public:
       label = vertex.get_label ();
     }
     
-    void set_start_edge_id (int start) {start_edge_id = start;}
-    void set_end_edge_id (int end) {end_edge_id = end;}
+    void set_start_edge_id (short int start) {start_edge_id = start;}
+    void set_end_edge_id (short int end) {end_edge_id = end;}
   };
   
-  typedef int Edge;
+  typedef short int Edge;
   
 public:
   CSR::Vertex vertices[N];
@@ -104,6 +104,13 @@ public:
   {
     n_vertices = _n_vertices;
     n_edges = _n_edges;
+  }
+  
+  __host__ __device__
+  CSR ()
+  {
+    n_vertices = N;
+    n_edges = N_EDGES;
   }
   
   void print (std::ostream& os)
@@ -152,6 +159,25 @@ public:
   
   __host__ __device__
   int get_n_vertices () {return n_vertices;}
+  
+  __host__ __device__
+  void copy_vertices (CSR* src, int start, int end)
+  {
+    for (int i = start; i < end; i++) {
+      vertices[i] = src->get_vertices()[i];
+    }
+  }
+  
+  __host__ __device__
+  void copy_edges (CSR* src, int start, int end)
+  {
+    for (int i = start; i < end; i++) {
+      edges[i] = src->get_edges ()[i];
+    }
+  }
+  
+  __host__ __device__
+  int get_n_edges () {return n_edges;}
 };
 
 void csr_from_graph (CSR* csr, Graph& graph)
@@ -356,17 +382,39 @@ void printf_embedding (VertexEmbedding* embedding)
   printf ("]\n");
 }
 
+//#define USE_SHARED
+
 __global__
 void run_single_step (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr, 
                       int* n_output,
                       void* next_step, int* n_next_step)
 {
+  int id;
+
+#ifdef USE_SHARED
+  __shared__ unsigned char csr_shared_buff[sizeof (CSR)];
+  id = threadIdx.x;
+  CSR* csr_shared = (CSR*) csr_shared_buff;
+  csr_shared->n_vertices = csr->get_n_vertices ();
+  csr_shared->n_edges = csr->get_n_edges ();
+
+  int vertices_per_thread = csr->get_n_vertices ()/THREAD_BLOCK_SIZE + 1;
+  csr_shared->copy_vertices (csr, id*vertices_per_thread, 
+                             (id+1)*vertices_per_thread < csr->get_n_vertices () ? (id+1)*vertices_per_thread : csr->get_n_vertices ());
+  
+  int edges_per_thread = csr->get_n_edges ()/THREAD_BLOCK_SIZE + 1;
+  csr_shared->copy_edges (csr, id*edges_per_thread, 
+                          (id+1)*edges_per_thread < csr->get_n_edges () ? (id+1)*edges_per_thread : csr->get_n_edges ());
+  csr = csr_shared;
+  __syncthreads ();
+#endif
+  
   VertexEmbedding* embeddings = (VertexEmbedding*)input;
   VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
   VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
   unsigned char temp [sizeof (VertexEmbedding)];
-  int id = blockIdx.x*blockDim.x + threadIdx.x;
+  id = blockIdx.x*blockIdx.x + threadIdx.x;
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
   if (n_embeddings >= MAX_CUDA_THREADS) {
@@ -490,7 +538,7 @@ int main (int argc, char* argv[])
   Graph graph (vertices, n_edges);
   
   CSR* csr = new CSR(N, N_EDGES); 
-  
+  std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
 
   std::vector<VertexEmbedding> initial_embeddings = get_initial_embedding (csr);
