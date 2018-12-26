@@ -5,13 +5,19 @@
 #include <vector>
 #include <bitset>
 #include <unordered_set>
+#include <time.h>
+#include <sys/time.h>
 
 #include <string.h>
 #include <assert.h>
 
 #define LINE_SIZE 1024*1024
+//#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS 65536
-#define THREAD_BLOCK_SIZE 1024
+#define THREAD_BLOCK_SIZE 96
+//#define USE_CSR_IN_SHARED
+#define USE_EMBEDDING_IN_SHARED_MEM
+//#define USE_CONSTANT_MEM
 
 const int N = 3312;
 const int N_EDGES = 9074;
@@ -179,6 +185,10 @@ public:
   __host__ __device__
   int get_n_edges () {return n_edges;}
 };
+
+#ifdef USE_CONSTANT_MEM
+  __constant__ unsigned char csr_constant_buff[sizeof(CSR)];
+#endif
 
 void csr_from_graph (CSR* csr, Graph& graph)
 {
@@ -382,8 +392,6 @@ void printf_embedding (VertexEmbedding* embedding)
   printf ("]\n");
 }
 
-//#define USE_SHARED
-
 __global__
 void run_single_step (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr, 
@@ -392,7 +400,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
 {
   int id;
 
-#ifdef USE_SHARED
+#ifdef USE_CSR_IN_SHARED
   __shared__ unsigned char csr_shared_buff[sizeof (CSR)];
   id = threadIdx.x;
   CSR* csr_shared = (CSR*) csr_shared_buff;
@@ -408,6 +416,11 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
                           (id+1)*edges_per_thread < csr->get_n_edges () ? (id+1)*edges_per_thread : csr->get_n_edges ());
   csr = csr_shared;
   __syncthreads ();
+#else
+#ifdef USE_CONSTANT_MEM
+  csr = (CSR*) csr_constant_buff;
+#endif
+
 #endif
   
   VertexEmbedding* embeddings = (VertexEmbedding*)input;
@@ -417,6 +430,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
+#ifdef USE_FIXED_THREADS
   if (n_embeddings >= MAX_CUDA_THREADS) {
     int embeddings_per_thread = n_embeddings/MAX_CUDA_THREADS+1;
   
@@ -429,18 +443,43 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
     start = id;
     end = id+1;
   }
-  
+#else
+  if (id >= n_embeddings) 
+      return;
+    
+  start = id;
+  end = id+1;
+#endif
+
   int q[1000] = {0};
+
+#ifdef USE_EMBEDDING_IN_SHARED_MEM
+  const int shared_mem_size = 49152;
+  const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
+
+  assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
+  __shared__ unsigned char shared_buff[shared_mem_size];
   
+  unsigned char* local_shared_buff = &shared_buff[per_thread_shared_mem_size*threadIdx.x];
+
+#endif
+
   for (int i = start; i < end; i++) {
-    VertexEmbedding& embedding = embeddings[i];
+    #ifdef USE_EMBEDDING_IN_SHARED_MEM
+      
+      memcpy (&local_shared_buff[0], &embeddings[i], sizeof(VertexEmbedding));
+      
+      VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
+    #else
+      VertexEmbedding* embedding = &embeddings[i];
+    #endif
     
     for (int u = 0; u < N; u++) {
-      if (embedding.test(u)) {
+      if (embedding->test(u)) {
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
-          if (embedding.test (v) == false) {
-            memcpy (&temp[0], &embedding, sizeof (VertexEmbedding));
+          if (embedding->test (v) == false) {
+            memcpy (&temp[0], embedding, sizeof (VertexEmbedding));
              
             VertexEmbedding* extension = (VertexEmbedding*)(&temp[0]);
             extension->set(v);
@@ -474,6 +513,24 @@ void print_embedding (VertexEmbedding embedding, std::ostream& os)
 
 __global__ void print_kernel() {
     printf("Hello from block %d, thread %d\n", blockIdx.x, threadIdx.x);
+}
+
+double_t convertTimeValToDouble (struct timeval _time)
+{
+  return ((double_t)_time.tv_sec) + ((double_t)_time.tv_usec)/1000000.0f;
+}
+
+struct timeval getTimeOfDay ()
+{
+  struct timeval _time;
+  
+  if (gettimeofday (&_time, NULL) == -1) {
+    fprintf (stderr, "gettimeofday returned -1\n");
+    perror ("");
+    abort ();
+  }
+  
+  return _time;
 }
 
 int main (int argc, char* argv[])
@@ -535,6 +592,16 @@ int main (int argc, char* argv[])
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
 
+#ifdef USE_CONSTANT_MEM
+  cudaMemcpyToSymbol (csr_constant_buff, csr, sizeof(CSR));
+  //~ CSR* csr_constant = (CSR*) &csr_constant_buff[0];
+  //~ csr_constant->n_vertices = csr->get_n_vertices ();
+  //~ printf ("csr->get_n_vertices () = %d\n", csr->get_n_vertices ());
+  //~ csr_constant->n_edges = csr->get_n_edges ();
+  //~ csr_constant->copy_vertices (csr, 0, csr->get_n_vertices ());
+  //~ csr_constant->copy_edges (csr, 0, csr->get_n_edges ());
+#endif
+
   std::vector<VertexEmbedding> initial_embeddings = get_initial_embedding (csr);
   std::vector<VertexEmbedding> output;
   std::vector<VertexEmbedding> embeddings = initial_embeddings;
@@ -550,7 +617,7 @@ int main (int argc, char* argv[])
   
   iter = 1;
   
-  
+  double_t kernelTotalTime = 0.0;
   
   for (iter; iter < 10 && embeddings.size () > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << embeddings.size () << std::endl;
@@ -595,19 +662,25 @@ int main (int argc, char* argv[])
     
     std::cout << "starting kernel with n_embeddings: " << n_embeddings;
     
-    if (false and n_embeddings < MAX_CUDA_THREADS) {
-      std::cout << " threads: " << n_embeddings/256 << std::endl;
-      run_single_step<<<n_embeddings/256+1,256>>> (device_embeddings, n_embeddings, device_csr, 
-                              device_outputs, device_n_outputs, 
-                              device_new_embeddings, device_n_embeddings);
-    } else {
-      std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
+    double t1 = convertTimeValToDouble (getTimeOfDay ());
+#ifdef USE_FIXED_THREADS
+    std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
       run_single_step<<<MAX_CUDA_THREADS/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
                               device_outputs, device_n_outputs, 
                               device_new_embeddings, device_n_embeddings);
-    }
+#else
+    std::cout << " threads: " << n_embeddings/THREAD_BLOCK_SIZE << std::endl;
+    run_single_step<<<n_embeddings/THREAD_BLOCK_SIZE+1,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
+                              device_outputs, device_n_outputs, 
+                              device_new_embeddings, device_n_embeddings);
+#endif
     
     cudaDeviceSynchronize ();
+    
+    double t2 = convertTimeValToDouble (getTimeOfDay ());
+    
+    std::cout << "Execution time " << (t2-t1) << " secs" << std::endl;
+    kernelTotalTime += (t2-t1);
     
     cudaError_t error = cudaGetLastError ();
     if (error != cudaSuccess) {
@@ -642,7 +715,7 @@ int main (int argc, char* argv[])
   }
   
   std::cout << "Number of embeddings found "<< output.size () << std::endl;
-  
+  std::cout << "Time spent in execution " << kernelTotalTime << std::endl;
   /*for (auto embedding : output) {
     print_embedding (embedding, std::cout);
     std::cout << std::endl;
