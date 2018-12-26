@@ -11,7 +11,7 @@
 
 #define LINE_SIZE 1024*1024
 #define MAX_CUDA_THREADS 65536
-#define THREAD_BLOCK_SIZE 256
+#define THREAD_BLOCK_SIZE 1024
 
 const int N = 3312;
 const int N_EDGES = 9074;
@@ -402,7 +402,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   int vertices_per_thread = csr->get_n_vertices ()/THREAD_BLOCK_SIZE + 1;
   csr_shared->copy_vertices (csr, id*vertices_per_thread, 
                              (id+1)*vertices_per_thread < csr->get_n_vertices () ? (id+1)*vertices_per_thread : csr->get_n_vertices ());
-  
+
   int edges_per_thread = csr->get_n_edges ()/THREAD_BLOCK_SIZE + 1;
   csr_shared->copy_edges (csr, id*edges_per_thread, 
                           (id+1)*edges_per_thread < csr->get_n_edges () ? (id+1)*edges_per_thread : csr->get_n_edges ());
@@ -414,7 +414,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
   VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
   unsigned char temp [sizeof (VertexEmbedding)];
-  id = blockIdx.x*blockIdx.x + threadIdx.x;
+  id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
   if (n_embeddings >= MAX_CUDA_THREADS) {
@@ -433,13 +433,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   int q[1000] = {0};
   
   for (int i = start; i < end; i++) {
-    //printf ("i %d ", i);
     VertexEmbedding& embedding = embeddings[i];
-    //std::vector<VertexEmbedding> extensions = get_extensions (embedding, csr);
-    /*if (i ==1500) {
-      printf ("Embedding at 1500");
-      printf_embedding (&embedding);
-    }*/
     
     for (int u = 0; u < N; u++) {
       if (embedding.test(u)) {
@@ -447,7 +441,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
           int v = csr->get_edges () [e];
           if (embedding.test (v) == false) {
             memcpy (&temp[0], &embedding, sizeof (VertexEmbedding));
-             //__syncthreads();
+             
             VertexEmbedding* extension = (VertexEmbedding*)(&temp[0]);
             extension->set(v);
             if (clique_filter (csr, extension)) {

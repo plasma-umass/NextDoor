@@ -77,10 +77,10 @@ class CSR
 public:
   struct Vertex
   {
-    int id;
-    int label;
-    int start_edge_id;
-    int end_edge_id;
+    short int id;
+    short int label;
+    short int start_edge_id;
+    short int end_edge_id;
     
     Vertex ()
     {
@@ -100,7 +100,7 @@ public:
     void set_end_edge_id (int end) {end_edge_id = end;}
   };
   
-  typedef int Edge;
+  typedef short int Edge;
   
 public:
   CSR::Vertex vertices[N];
