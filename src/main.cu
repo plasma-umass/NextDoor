@@ -455,19 +455,37 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
 
 #ifdef USE_EMBEDDING_IN_SHARED_MEM
   const int shared_mem_size = 49152;
-  const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
+  int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
 
   assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
+  per_thread_shared_mem_size = sizeof (VertexEmbedding)+ 1;
   __shared__ unsigned char shared_buff[shared_mem_size];
   
   unsigned char* local_shared_buff = &shared_buff[per_thread_shared_mem_size*threadIdx.x];
-
 #endif
 
   for (int i = start; i < end; i++) {
     #ifdef USE_EMBEDDING_IN_SHARED_MEM
+      #define WARP_SIZE THREAD_BLOCK_SIZE
+      int thread_block_size = THREAD_BLOCK_SIZE;
+      if (blockIdx.x*blockDim.x + THREAD_BLOCK_SIZE > n_embeddings) {
+        thread_block_size = n_embeddings - (blockIdx.x*blockDim.x);
+      }
       
-      memcpy (&local_shared_buff[0], &embeddings[i], sizeof(VertexEmbedding));
+      for (int emb = 0; emb < thread_block_size; emb++) {
+        unsigned char* embedding_buff = (unsigned char*) &embeddings[emb+blockIdx.x*blockDim.x];
+        
+        for (int j = 0; j < sizeof (VertexEmbedding); j += thread_block_size) {
+          int idx = per_thread_shared_mem_size*emb;
+          if (j + threadIdx.x < sizeof (VertexEmbedding)) {
+            shared_buff[idx + j + threadIdx.x] = embedding_buff[j + threadIdx.x];
+          }
+        }
+      }
+      
+      __syncthreads ();
+      
+      //memcpy (&local_shared_buff[0], &embeddings[i], sizeof(VertexEmbedding));
       
       VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
     #else
@@ -590,6 +608,7 @@ int main (int argc, char* argv[])
   
   CSR* csr = new CSR(N, N_EDGES); 
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
+  std::cout <<"sizeof(VertexEmbedding)" << sizeof(VertexEmbedding) << std::endl;
   csr_from_graph (csr, graph);
 
 #ifdef USE_CONSTANT_MEM
