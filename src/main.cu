@@ -15,10 +15,12 @@
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS 65536
 #define THREAD_BLOCK_SIZE 96
-#define WARP_SIZE 32
+#define WARP_SIZE 96
 //#define USE_CSR_IN_SHARED
 #define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_CONSTANT_MEM
+
+typedef uint64_t SharedMemElem;
 
 const int N = 3312;
 const int N_EDGES = 9074;
@@ -210,10 +212,15 @@ void csr_from_graph (CSR* csr, Graph& graph)
   
 //template <size_t N> using VertexEmbedding = std::bitset<N>;
 
+#define CVT_TO_NEXT_MULTIPLE(n,k) ((n) %(k) ==0 ? (n) : ((n)/(k)+1)*(k))
 class VertexEmbedding
 {
 private:
-  unsigned char array[((N/8))];
+#ifdef USE_EMBEDDING_IN_SHARED_MEM
+  unsigned char array[CVT_TO_NEXT_MULTIPLE(N/8, sizeof(SharedMemElem))];
+#else
+  unsigned char array[(N/8)];
+#endif
 
 public:
   __device__ __host__
@@ -460,7 +467,6 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
 
   assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
   //per_thread_shared_mem_size = sizeof (VertexEmbedding);
-  typedef unsigned char SharedMemElem;
   __shared__ SharedMemElem shared_buff[shared_mem_size/sizeof (SharedMemElem)];
   
   SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
@@ -481,9 +487,10 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
       for (int emb = WARP_SIZE*warp_id; emb < last_emb; emb++) {
         SharedMemElem* embedding_buff = (SharedMemElem*) &embeddings[emb+blockIdx.x*blockDim.x];
         
-        for (int j = 0; j < sizeof (VertexEmbedding); j += thread_block_size) {
+        for (int j = 0; j < sizeof (VertexEmbedding)/sizeof (SharedMemElem); j += thread_block_size) {
           int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
-          if (j + lane_id  < sizeof (VertexEmbedding)) {
+          if (j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) {
+            //printf ("idx + j + lane_id = %d; j + lane_id = %d\n", idx + j + lane_id, j + lane_id);
             shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
           }
         }
