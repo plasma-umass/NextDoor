@@ -15,6 +15,7 @@
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS 65536
 #define THREAD_BLOCK_SIZE 96
+#define WARP_SIZE 32
 //#define USE_CSR_IN_SHARED
 #define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_CONSTANT_MEM
@@ -212,7 +213,7 @@ void csr_from_graph (CSR* csr, Graph& graph)
 class VertexEmbedding
 {
 private:
-  unsigned char array[((N/8)+1)];
+  unsigned char array[((N/8))];
 
 public:
   __device__ __host__
@@ -227,7 +228,7 @@ public:
   __host__ __device__
   size_t convert_to_bytes_multiple (size_t n)
   {
-    return ((n/8)+1)*8;
+    return (n/8)*8;
   }
   
   __host__ __device__
@@ -458,34 +459,35 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
 
   assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
-  per_thread_shared_mem_size = sizeof (VertexEmbedding)+ 1;
-  __shared__ unsigned char shared_buff[shared_mem_size];
+  //per_thread_shared_mem_size = sizeof (VertexEmbedding);
+  typedef unsigned char SharedMemElem;
+  __shared__ SharedMemElem shared_buff[shared_mem_size/sizeof (SharedMemElem)];
   
-  unsigned char* local_shared_buff = &shared_buff[per_thread_shared_mem_size*threadIdx.x];
+  SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
 #endif
 
+  int warp_id = threadIdx.x / WARP_SIZE;
+  int lane_id = threadIdx.x % WARP_SIZE;
   for (int i = start; i < end; i++) {
     #ifdef USE_EMBEDDING_IN_SHARED_MEM
-      #define WARP_SIZE THREAD_BLOCK_SIZE
-      int thread_block_size = THREAD_BLOCK_SIZE;
-      if (blockIdx.x*blockDim.x + THREAD_BLOCK_SIZE > n_embeddings) {
-        thread_block_size = n_embeddings - (blockIdx.x*blockDim.x);
+      int thread_block_size = WARP_SIZE;
+      int last_emb = WARP_SIZE*(warp_id+1);
+      if (blockIdx.x*blockDim.x + (warp_id+1)*WARP_SIZE > n_embeddings) {
+        thread_block_size = n_embeddings - blockIdx.x*blockDim.x - 
+                            warp_id*WARP_SIZE;
+        last_emb = warp_id*WARP_SIZE + thread_block_size;
       }
       
-      for (int emb = 0; emb < thread_block_size; emb++) {
-        unsigned char* embedding_buff = (unsigned char*) &embeddings[emb+blockIdx.x*blockDim.x];
+      for (int emb = WARP_SIZE*warp_id; emb < last_emb; emb++) {
+        SharedMemElem* embedding_buff = (SharedMemElem*) &embeddings[emb+blockIdx.x*blockDim.x];
         
         for (int j = 0; j < sizeof (VertexEmbedding); j += thread_block_size) {
-          int idx = per_thread_shared_mem_size*emb;
-          if (j + threadIdx.x < sizeof (VertexEmbedding)) {
-            shared_buff[idx + j + threadIdx.x] = embedding_buff[j + threadIdx.x];
+          int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
+          if (j + lane_id  < sizeof (VertexEmbedding)) {
+            shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
           }
         }
       }
-      
-      __syncthreads ();
-      
-      //memcpy (&local_shared_buff[0], &embeddings[i], sizeof(VertexEmbedding));
       
       VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
     #else
