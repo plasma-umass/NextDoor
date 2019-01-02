@@ -13,11 +13,20 @@
 
 #define LINE_SIZE 1024*1024
 //#define USE_FIXED_THREADS
-#define MAX_CUDA_THREADS 65536
+#define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 96
-#define WARP_SIZE 96
+#define WARP_SIZE 32
 //#define USE_CSR_IN_SHARED
 #define USE_EMBEDDING_IN_SHARED_MEM
+//#define USE_EMBEDDING_IN_GLOBAL_MEM
+//#define USE_EMBEDDING_IN_LOCAL_MEM
+
+#ifdef USE_EMBEDDING_IN_SHARED_MEM
+  #ifdef USE_FIXED_THREADS
+    #error "USE_FIXED_THREADS cannot be enabled with USE_EMBEDDING_IN_SHARED_MEM"
+  #endif
+#endif
+
 //#define USE_CONSTANT_MEM
 
 typedef uint64_t SharedMemElem;
@@ -434,7 +443,9 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   VertexEmbedding* embeddings = (VertexEmbedding*)input;
   VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
   VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
+#ifdef USE_EMBEDDING_IN_LOCAL_MEM
   unsigned char temp [sizeof (VertexEmbedding)];
+#endif
   id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
@@ -489,31 +500,34 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
         
         for (int j = 0; j < sizeof (VertexEmbedding)/sizeof (SharedMemElem); j += thread_block_size) {
           int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
-          if (j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) {
-            //printf ("idx + j + lane_id = %d; j + lane_id = %d\n", idx + j + lane_id, j + lane_id);
+          if (j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
             shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
           }
         }
       }
       
       VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
-    #else
+    #elif defined(USE_EMBEDDING_IN_LOCAL_MEM)
+      memcpy (&temp[0], &embeddings[i], sizeof (VertexEmbedding));
+      VertexEmbedding* embedding = (VertexEmbedding*)temp;
+    #elif defined(USE_EMBEDDING_IN_GLOBAL_MEM)
       VertexEmbedding* embedding = &embeddings[i];
+    #else
+      #error "None of USE_EMBEDDING_IN_*_MEM option defined"
     #endif
     
     for (int u = 0; u < N; u++) {
       if (embedding->test(u)) {
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
-          if (embedding->test (v) == false) {
-            memcpy (&temp[0], embedding, sizeof (VertexEmbedding));
-             
-            VertexEmbedding* extension = (VertexEmbedding*)(&temp[0]);
+          if (embedding->test (v) == false) {             
+            VertexEmbedding* extension = embedding;
             extension->set(v);
             if (clique_filter (csr, extension)) {
               memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VertexEmbedding));
               memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VertexEmbedding));
             }
+            extension->reset(v);
           }
         }
       }
