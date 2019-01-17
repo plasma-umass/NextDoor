@@ -20,7 +20,13 @@
 #define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 //#define USE_EMBEDDING_IN_LOCAL_MEM
+//#define SHARED_MEM_NON_COALESCING
 
+#ifdef SHARED_MEM_NON_COALESCING
+  #ifndef USE_EMBEDDING_IN_SHARED_MEM
+    #error "USE_EMBEDDING_IN_SHARED_MEM must be enabled with SHARED_MEM_NON_COALESCING"
+  #endif
+#endif
 #ifdef USE_EMBEDDING_IN_SHARED_MEM
   #ifdef USE_FIXED_THREADS
     #error "USE_FIXED_THREADS cannot be enabled with USE_EMBEDDING_IN_SHARED_MEM"
@@ -444,7 +450,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
   VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
 #ifdef USE_EMBEDDING_IN_LOCAL_MEM
-  unsigned char temp [sizeof (VertexEmbedding)];
+  VertexEmbedding temp;
 #endif
   id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
@@ -473,43 +479,64 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   int q[1000] = {0};
 
 #ifdef USE_EMBEDDING_IN_SHARED_MEM
-  const int shared_mem_size = 49152;
-  int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
+  #if 0
+    const int shared_mem_size = 49152;
+    const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
 
-  assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
-  //per_thread_shared_mem_size = sizeof (VertexEmbedding);
-  __shared__ SharedMemElem shared_buff[shared_mem_size/sizeof (SharedMemElem)];
-  
-  SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
+    assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
+    //per_thread_shared_mem_size = sizeof (VertexEmbedding);
+    __shared__ SharedMemElem shared_buff[per_thread_shared_mem_size/sizeof (SharedMemElem)];
+    
+    SharedMemElem* local_shared_buff = &shared_buff[0];
+  #else
+    const int shared_mem_size = 49152;
+    const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
+
+    //assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
+    //per_thread_shared_mem_size = sizeof (VertexEmbedding);
+    __shared__ SharedMemElem shared_buff[shared_mem_size/sizeof (SharedMemElem)];
+    
+    SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
+  #endif 
 #endif
 
   int warp_id = threadIdx.x / WARP_SIZE;
   int lane_id = threadIdx.x % WARP_SIZE;
   for (int i = start; i < end; i++) {
     #ifdef USE_EMBEDDING_IN_SHARED_MEM
-      int thread_block_size = WARP_SIZE;
-      int last_emb = WARP_SIZE*(warp_id+1);
-      if (blockIdx.x*blockDim.x + (warp_id+1)*WARP_SIZE > n_embeddings) {
-        thread_block_size = n_embeddings - blockIdx.x*blockDim.x - 
-                            warp_id*WARP_SIZE;
-        last_emb = warp_id*WARP_SIZE + thread_block_size;
-      }
-      
-      for (int emb = WARP_SIZE*warp_id; emb < last_emb; emb++) {
-        SharedMemElem* embedding_buff = (SharedMemElem*) &embeddings[emb+blockIdx.x*blockDim.x];
+      #ifdef SHARED_MEM_NON_COALESCING
+        memcpy (local_shared_buff, &embeddings[i], sizeof(VertexEmbedding));
         
-        for (int j = 0; j < sizeof (VertexEmbedding)/sizeof (SharedMemElem); j += thread_block_size) {
-          int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
-          if (j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
-            shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
+        VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
+      #else
+        int thread_block_size = WARP_SIZE;
+        int last_emb = WARP_SIZE*(warp_id+1);
+        if (blockIdx.x*blockDim.x + (warp_id+1)*WARP_SIZE > n_embeddings) {
+          thread_block_size = n_embeddings - blockIdx.x*blockDim.x - 
+                              warp_id*WARP_SIZE;
+          last_emb = warp_id*WARP_SIZE + thread_block_size;
+        }
+        
+        for (int emb = WARP_SIZE*warp_id; emb < last_emb; emb++) {
+          SharedMemElem* embedding_buff = (SharedMemElem*) &embeddings[emb+blockIdx.x*blockDim.x];
+          
+          for (int j = 0; j < sizeof (VertexEmbedding)/sizeof (SharedMemElem); 
+               j += thread_block_size) {
+            int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
+            if (j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
+              shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
+            }
           }
         }
-      }
-      
-      VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
+        
+        VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;        
+      #endif
+      //embedding = &embeddings[i];
     #elif defined(USE_EMBEDDING_IN_LOCAL_MEM)
-      memcpy (&temp[0], &embeddings[i], sizeof (VertexEmbedding));
-      VertexEmbedding* embedding = (VertexEmbedding*)temp;
+      //memcpy (&temp[0], &embeddings[i], sizeof (VertexEmbedding));
+      temp = embeddings[i];
+      VertexEmbedding* embedding = &temp;
+      //VertexEmbedding* embedding = &embeddings[i];
     #elif defined(USE_EMBEDDING_IN_GLOBAL_MEM)
       VertexEmbedding* embedding = &embeddings[i];
     #else
