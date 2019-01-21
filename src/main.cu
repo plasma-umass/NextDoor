@@ -17,9 +17,9 @@
 #define THREAD_BLOCK_SIZE 96
 #define WARP_SIZE 32
 //#define USE_CSR_IN_SHARED
-#define USE_EMBEDDING_IN_SHARED_MEM
+//#define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
-//#define USE_EMBEDDING_IN_LOCAL_MEM
+#define USE_EMBEDDING_IN_LOCAL_MEM
 //#define SHARED_MEM_NON_COALESCING
 
 #ifdef SHARED_MEM_NON_COALESCING
@@ -35,7 +35,7 @@
 
 //#define USE_CONSTANT_MEM
 
-typedef uint64_t SharedMemElem;
+typedef uint8_t SharedMemElem;
 
 const int N = 3312;
 const int N_EDGES = 9074;
@@ -232,7 +232,7 @@ class VertexEmbedding
 {
 private:
 #ifdef USE_EMBEDDING_IN_SHARED_MEM
-  unsigned char array[CVT_TO_NEXT_MULTIPLE(N/8, sizeof(SharedMemElem))];
+  unsigned char array[CVT_TO_NEXT_MULTIPLE(N/8, 32*sizeof(SharedMemElem))];
 #else
   unsigned char array[(N/8)];
 #endif
@@ -509,12 +509,13 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
         
         VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
       #else
-        int thread_block_size = WARP_SIZE;
-        int last_emb = WARP_SIZE*(warp_id+1);
+        const int thread_block_size = WARP_SIZE;
+        const int last_emb = WARP_SIZE*(warp_id+1);
         if (blockIdx.x*blockDim.x + (warp_id+1)*WARP_SIZE > n_embeddings) {
-          thread_block_size = n_embeddings - blockIdx.x*blockDim.x - 
+          assert (false);
+          /*thread_block_size = n_embeddings - blockIdx.x*blockDim.x - 
                               warp_id*WARP_SIZE;
-          last_emb = warp_id*WARP_SIZE + thread_block_size;
+          last_emb = warp_id*WARP_SIZE + thread_block_size;*/
         }
         
         for (int emb = WARP_SIZE*warp_id; emb < last_emb; emb++) {
@@ -523,7 +524,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
           for (int j = 0; j < sizeof (VertexEmbedding)/sizeof (SharedMemElem); 
                j += thread_block_size) {
             int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
-            if (j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
+            if (true or j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
               shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
             }
           }
@@ -543,11 +544,87 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
       #error "None of USE_EMBEDDING_IN_*_MEM option defined"
     #endif
     
+  #if 1
+    typedef uint32_t VertexEmbeddingChange;
+    const uint32_t max_changes = WARP_SIZE; //max changes per warp
+    __shared__ uint32_t shared_mem [max_changes*THREAD_BLOCK_SIZE/WARP_SIZE+THREAD_BLOCK_SIZE/WARP_SIZE+1];
+    VertexEmbeddingChange* changes = &shared_mem[0];
+    //For each warp record new embeddings (or changes) using atomic operations
+    uint32_t* n_extensions = &shared_mem[max_changes*THREAD_BLOCK_SIZE/WARP_SIZE];
+    n_extensions[warp_id] = 0;
+    __shared__ uint32_t prev_n_outputs [THREAD_BLOCK_SIZE/WARP_SIZE];
+    __shared__ uint32_t prev_n_next_steps [THREAD_BLOCK_SIZE/WARP_SIZE];
+    __shared__ uint32_t available_thread[WARP_SIZE];
+    available_thread[warp_id] = 0;
+    const uint32_t mask = ~0U;
+    for (int u = 0; u < N; u++) {
+      int e = csr->get_start_edge_idx(u);
+      
+      while (true) {
+        int predicate = 1;
+        n_extensions[warp_id] = 0;
+        if (e <= csr->get_end_edge_idx(u)) {
+          int v = csr->get_edges () [e];
+          if (embedding->test(u) and embedding->test (v) == false) {
+            VertexEmbedding* extension = embedding;
+            extension->set(v);
+            if (clique_filter (csr, extension)) {
+              changes[warp_id + atomicAdd (&n_extensions[warp_id], 1)] = v;
+              //memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VertexEmbedding));
+              //memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VertexEmbedding));
+            }
+            extension->reset(v);
+          }
+          
+          e++;
+          
+          if (e > csr->get_end_edge_idx(u)) {
+            predicate = 0;
+          }
+        } else {
+          predicate = 0;
+        }
+        
+        __syncwarp();
+        uint32_t n_changes = n_extensions[warp_id];
+        
+        if (n_changes > max_changes)
+          assert (false);
+        
+        if (true or n_changes == max_changes) {
+          if (lane_id == 0) {
+            prev_n_outputs[warp_id] = atomicAdd (n_output, n_changes);
+            prev_n_next_steps[warp_id] = atomicAdd (n_next_step, n_changes);
+          }
+          
+          uint32_t prev_n_output = prev_n_outputs[warp_id];
+          uint32_t prev_n_next_step = prev_n_next_steps[warp_id];
+          
+          if (lane_id < n_changes) {
+            VertexEmbedding* extension = embedding;
+            uint32_t c = changes[warp_id+lane_id];
+            extension->set(c);
+            memcpy (&output[prev_n_output + lane_id], extension,sizeof(VertexEmbedding));
+            memcpy (&new_embeddings[prev_n_next_step + lane_id], extension, sizeof (VertexEmbedding));
+            extension->reset(c);
+          }
+
+          //for (uint32_t idx = 0; idx < n_changes; idx++) {
+          //}
+        }
+        
+        if (!__any_sync (mask, predicate)) {
+          break;
+        }
+        //n_extensions[warp_id] = 0;
+      }
+    }
+  #else  
     for (int u = 0; u < N; u++) {
       if (embedding->test(u)) {
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
-          if (embedding->test (v) == false) {             
+          if (embedding->test (v) == false) {
             VertexEmbedding* extension = embedding;
             extension->set(v);
             if (clique_filter (csr, extension)) {
@@ -559,6 +636,8 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
         }
       }
     }
+  #endif
+  
   }
   
   //printf ("embeddings generated [1000, 2000)= %d and [2000, 3000) = %d\n", q[0], q[1]);
@@ -693,6 +772,8 @@ int main (int argc, char* argv[])
     size_t global_mem_size = 3*1024*1024*1024UL;
     char* global_mem_ptr = new char[global_mem_size];
     int n_embeddings = embeddings.size ();
+    //n_embeddings = (n_embeddings/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
+    std::cout << "iter " << iter << " n_embeddings " << n_embeddings << std::endl;
     for (int i = 0; i < n_embeddings; i++) {
       ((VertexEmbedding*)global_mem_ptr)[i] = embeddings[i];
     }
@@ -739,7 +820,7 @@ int main (int argc, char* argv[])
                               device_new_embeddings, device_n_embeddings);
 #else
     std::cout << " threads: " << n_embeddings/THREAD_BLOCK_SIZE << std::endl;
-    run_single_step<<<n_embeddings/THREAD_BLOCK_SIZE+1,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
+    run_single_step<<<n_embeddings/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
                               device_outputs, device_n_outputs, 
                               device_new_embeddings, device_n_embeddings);
 #endif
