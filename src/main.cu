@@ -265,6 +265,7 @@ public:
   __host__ __device__
   void set (int index)
   {
+    assert (index >= 0 and index < N);
     array[index/8] = array[index/8] | (1 << (index %8));
   }
   
@@ -287,6 +288,7 @@ public:
   __host__ __device__
   void reset (int index)
   {
+    assert (index >= 0 and index < N);
     array[index/8] = array[index/8] & (~(1UL << (index %8)));
   }
   
@@ -419,7 +421,8 @@ __global__
 void run_single_step (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr, 
                       int* n_output,
-                      void* next_step, int* n_next_step)
+                      void* next_step, int* n_next_step,
+                      int* n_output_1, int* n_next_step_1)
 {
   int id;
 
@@ -545,16 +548,16 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
     #endif
     
   #if 1
-    typedef uint32_t VertexEmbeddingChange;
-    const uint32_t max_changes = WARP_SIZE; //max changes per warp
-    __shared__ uint32_t shared_mem [max_changes*THREAD_BLOCK_SIZE/WARP_SIZE+THREAD_BLOCK_SIZE/WARP_SIZE+1];
-    VertexEmbeddingChange* changes = &shared_mem[0];
+    typedef unsigned char VertexEmbeddingChange;
+    const uint32_t max_changes = 32; //max changes per warp
+    //__shared__ int32_t shared_mem [max_changes*THREAD_BLOCK_SIZE/WARP_SIZE+THREAD_BLOCK_SIZE/WARP_SIZE+1];
+    __shared__ VertexEmbeddingChange changes[max_changes*THREAD_BLOCK_SIZE/WARP_SIZE*sizeof(VertexEmbedding)];
     //For each warp record new embeddings (or changes) using atomic operations
-    uint32_t* n_extensions = &shared_mem[max_changes*THREAD_BLOCK_SIZE/WARP_SIZE];
+    __shared__ int32_t n_extensions[THREAD_BLOCK_SIZE/WARP_SIZE];
     n_extensions[warp_id] = 0;
-    __shared__ uint32_t prev_n_outputs [THREAD_BLOCK_SIZE/WARP_SIZE];
-    __shared__ uint32_t prev_n_next_steps [THREAD_BLOCK_SIZE/WARP_SIZE];
-    __shared__ uint32_t available_thread[WARP_SIZE];
+    __shared__ int32_t prev_n_outputs [THREAD_BLOCK_SIZE/WARP_SIZE];
+    __shared__ int32_t prev_n_next_steps [THREAD_BLOCK_SIZE/WARP_SIZE];
+    __shared__ int32_t available_thread[WARP_SIZE];
     available_thread[warp_id] = 0;
     const uint32_t mask = ~0U;
     for (int u = 0; u < N; u++) {
@@ -563,13 +566,15 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
       while (true) {
         int predicate = 1;
         n_extensions[warp_id] = 0;
+
         if (e <= csr->get_end_edge_idx(u)) {
           int v = csr->get_edges () [e];
           if (embedding->test(u) and embedding->test (v) == false) {
             VertexEmbedding* extension = embedding;
             extension->set(v);
             if (clique_filter (csr, extension)) {
-              changes[warp_id + atomicAdd (&n_extensions[warp_id], 1)] = v;
+              memcpy (&changes[(warp_id*max_changes+atomicAdd (&n_extensions[warp_id], 1))*sizeof(VertexEmbedding)],
+                      extension, sizeof(VertexEmbedding));
               //memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VertexEmbedding));
               //memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VertexEmbedding));
             }
@@ -585,35 +590,40 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
           predicate = 0;
         }
         
-        __syncwarp();
-        uint32_t n_changes = n_extensions[warp_id];
+    
+        int32_t n_changes = n_extensions[warp_id];
         
         if (n_changes > max_changes)
           assert (false);
         
-        if (true or n_changes == max_changes) {
+        //assert (__activemask () == ~0U);
+        if (n_changes > 0) {
           if (lane_id == 0) {
+            /*if (n_changes > 10) {
+              atomicAdd (n_next_step_1, 1);
+            }
+            
+            atomicAdd (n_output_1, 1);*/
+            n_extensions[warp_id] = 0;
             prev_n_outputs[warp_id] = atomicAdd (n_output, n_changes);
             prev_n_next_steps[warp_id] = atomicAdd (n_next_step, n_changes);
           }
           
           uint32_t prev_n_output = prev_n_outputs[warp_id];
           uint32_t prev_n_next_step = prev_n_next_steps[warp_id];
-          
-          if (lane_id < n_changes) {
-            VertexEmbedding* extension = embedding;
-            uint32_t c = changes[warp_id+lane_id];
-            extension->set(c);
-            memcpy (&output[prev_n_output + lane_id], extension,sizeof(VertexEmbedding));
-            memcpy (&new_embeddings[prev_n_next_step + lane_id], extension, sizeof (VertexEmbedding));
-            extension->reset(c);
-          }
 
-          //for (uint32_t idx = 0; idx < n_changes; idx++) {
-          //}
+          int p = lane_id;
+          if (p < n_changes) {
+            memcpy (&output[prev_n_output + p], 
+                    &changes[(warp_id*max_changes+p)*sizeof(VertexEmbedding)],
+                    sizeof(VertexEmbedding));
+            memcpy (&new_embeddings[prev_n_next_step + p], 
+                    &changes[(warp_id*max_changes+p)*sizeof(VertexEmbedding)], 
+                    sizeof (VertexEmbedding));
+          }
         }
         
-        if (!__any_sync (mask, predicate)) {
+        if (!__any_sync (__activemask (), predicate)) {
           break;
         }
         //n_extensions[warp_id] = 0;
@@ -781,16 +791,19 @@ int main (int argc, char* argv[])
     void* embeddings_ptr = global_mem_ptr;
     
     int n_new_embeddings = 0;
+    int n_new_embeddings_1 = 0;
     void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*sizeof(VertexEmbedding);
     int max_embeddings = 1000000;
     void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*sizeof(VertexEmbedding);
     int n_output = 0;
-    
+    int n_output_1 = 0;
     char* device_embeddings;
     char *device_new_embeddings;
     int* device_n_embeddings;
+    int* device_n_embeddings_1;
     char *device_outputs;
     int* device_n_outputs;
+    int* device_n_outputs_1;
     CSR* device_csr;
     
     cudaMalloc (&device_embeddings, n_embeddings*sizeof(VertexEmbedding));
@@ -800,7 +813,9 @@ int main (int argc, char* argv[])
     cudaMalloc (&device_new_embeddings, max_embeddings*sizeof (VertexEmbedding));
     cudaMalloc (&device_outputs, max_embeddings*sizeof (VertexEmbedding));
     cudaMalloc (&device_n_embeddings, sizeof (0));
+    cudaMalloc (&device_n_embeddings_1, sizeof (0));
     cudaMalloc (&device_n_outputs, sizeof (0));
+    cudaMalloc (&device_n_outputs_1, sizeof (0));
     cudaMalloc (&device_csr, sizeof(CSR));
     
     cudaMemcpy (device_n_embeddings, &n_new_embeddings, 
@@ -808,6 +823,11 @@ int main (int argc, char* argv[])
     cudaMemcpy (device_n_outputs, &n_output, sizeof (n_output), 
                 cudaMemcpyHostToDevice);
     
+    cudaMemcpy (device_n_embeddings_1, &n_new_embeddings_1, 
+                sizeof (n_new_embeddings_1), cudaMemcpyHostToDevice);
+    cudaMemcpy (device_n_outputs_1, &n_output_1, sizeof (n_output_1), 
+                cudaMemcpyHostToDevice);
+                
     cudaMemcpy (device_csr, csr, sizeof (CSR), cudaMemcpyHostToDevice);
     
     std::cout << "starting kernel with n_embeddings: " << n_embeddings;
@@ -820,9 +840,10 @@ int main (int argc, char* argv[])
                               device_new_embeddings, device_n_embeddings);
 #else
     std::cout << " threads: " << n_embeddings/THREAD_BLOCK_SIZE << std::endl;
-    run_single_step<<<n_embeddings/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
+    run_single_step<<<n_embeddings/THREAD_BLOCK_SIZE+1, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
                               device_outputs, device_n_outputs, 
-                              device_new_embeddings, device_n_embeddings);
+                              device_new_embeddings, device_n_embeddings,
+                              device_n_outputs_1, device_n_embeddings_1);
 #endif
     
     cudaDeviceSynchronize ();
@@ -844,8 +865,13 @@ int main (int argc, char* argv[])
     cudaMemcpy (output_ptr, device_outputs, max_embeddings*sizeof(VertexEmbedding), cudaMemcpyDeviceToHost);
     cudaMemcpy (&n_new_embeddings, device_n_embeddings, sizeof(0), cudaMemcpyDeviceToHost);
     cudaMemcpy (&n_output, device_n_outputs, sizeof(0), cudaMemcpyDeviceToHost);
+    cudaMemcpy (&n_new_embeddings_1, device_n_embeddings_1, sizeof(0), cudaMemcpyDeviceToHost);
+    cudaMemcpy (&n_output_1, device_n_outputs_1, sizeof(0), cudaMemcpyDeviceToHost);
     
     std::cout << "n_new_embeddings "<<n_new_embeddings<<std::endl;
+    std::cout << "n_new_embeddings_1 "<<n_new_embeddings_1;
+    std::cout << " n_output "<<n_output;
+    std::cout << " n_output_1 "<<n_output_1<<std::endl;
     std::vector<VertexEmbedding> new_embeddings;
     for (int i = 0; i < n_new_embeddings; i++) {
       new_embeddings.push_back (((VertexEmbedding*)new_embeddings_ptr)[i]);
