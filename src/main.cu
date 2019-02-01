@@ -707,9 +707,6 @@ int main (int argc, char* argv[])
     return 1;
   }
   
-  print_kernel<<<1,10>>> ();
-  cudaDeviceSynchronize ();
-  
   while (true) {
     char line[LINE_SIZE];
     char num_str[LINE_SIZE];
@@ -837,10 +834,12 @@ int main (int argc, char* argv[])
     std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
       run_single_step<<<MAX_CUDA_THREADS/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
                               device_outputs, device_n_outputs, 
-                              device_new_embeddings, device_n_embeddings);
+                              device_new_embeddings, device_n_embeddings,
+                              device_n_outputs_1, device_n_embeddings_1);
 #else
+    int thread_blocks = (n_embeddings%THREAD_BLOCK_SIZE != 0) ? (n_embeddings/THREAD_BLOCK_SIZE+1) : n_embeddings/THREAD_BLOCK_SIZE;
     std::cout << " threads: " << n_embeddings/THREAD_BLOCK_SIZE << std::endl;
-    run_single_step<<<n_embeddings/THREAD_BLOCK_SIZE+1, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
+    run_single_step<<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr, 
                               device_outputs, device_n_outputs, 
                               device_new_embeddings, device_n_embeddings,
                               device_n_outputs_1, device_n_embeddings_1);
