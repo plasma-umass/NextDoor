@@ -576,9 +576,9 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
     const uint32_t mask = ~0U;
     for (int u = 0; u < N; u++) {
       int e = csr->get_start_edge_idx(u);
-      int while_iter = 0;
+      
       while (true) {
-        while_iter++;
+        
         int predicate = 1;
         //n_extensions[warp_id] = 0;
 
@@ -613,22 +613,26 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
           assert (false);
 
         //assert (__activemask () == ~0U);
+        uint32_t orig_prev_n_output = 0;
+        uint32_t orig_prev_n_next_step = 0;
+        
         if (lane_id == 0) {
           if (n_changes > 0) {
             n_extensions[warp_id] = 0;
-            prev_n_outputs[warp_id] = atomicAdd (n_output, n_changes);
-            prev_n_next_steps[warp_id] = atomicAdd (n_next_step, n_changes);
+            orig_prev_n_output = atomicAdd (n_output, n_changes);
+            orig_prev_n_next_step = atomicAdd (n_next_step, n_changes);
             //if (warp_id == 2 && (threadIdx.x == 64 || threadIdx.x == 65) && blockIdx.x == 0) {
             //  printf ("prev_n_next_steps[warp_id]: %d\n", prev_n_next_steps[warp_id]);
             //}
           }
         }
         
-        __syncwarp ();
+        //__syncwarp ();
         
         if (n_changes > 0) {
-          uint32_t prev_n_output = prev_n_outputs[warp_id];
-          uint32_t prev_n_next_step = prev_n_next_steps[warp_id];
+          
+          uint32_t prev_n_output = __shfl_sync (__activemask (), orig_prev_n_output, 0);
+          uint32_t prev_n_next_step = __shfl_sync (__activemask (), orig_prev_n_next_step, 0);
           
           for (int i = 0; i < n_changes; i++) {
             //int j = 0;
