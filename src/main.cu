@@ -228,7 +228,7 @@ void csr_from_graph (CSR* csr, Graph& graph)
 //template <size_t N> using VertexEmbedding = std::bitset<N>;
 
 #define CVT_TO_NEXT_MULTIPLE(n,k) ((n) %(k) ==0 ? (n) : ((n)/(k)+1)*(k))
-class VertexEmbedding
+class BitVectorVertexEmbedding
 {
 private:
 #ifdef USE_EMBEDDING_IN_SHARED_MEM
@@ -239,7 +239,7 @@ private:
 
 public:
   __device__ __host__
-  VertexEmbedding ()
+  BitVectorVertexEmbedding ()
   {
     //array = new unsigned char[convert_to_bytes_multiple(N)/8];
     assert (array != nullptr);
@@ -254,7 +254,7 @@ public:
   }
 
   __host__ __device__
-  VertexEmbedding (const VertexEmbedding& embedding)
+  BitVectorVertexEmbedding (const BitVectorVertexEmbedding& embedding)
   {
     //array = new unsigned char[convert_to_bytes_multiple(N)/8];
     for (int i = 0; i <  convert_to_bytes_multiple(N)/8; i++) {
@@ -324,22 +324,102 @@ public:
   }
   
   __host__ __device__
-  ~VertexEmbedding ()
+  ~BitVectorVertexEmbedding ()
   {
     //delete[] array;
   }
 };
 
-void print_embedding (VertexEmbedding embedding, std::ostream& os);
+//typedef BitVectorVertexEmbedding VertexEmbedding;
 
-
-std::vector<VertexEmbedding> get_extensions (VertexEmbedding& embedding, CSR* csr)
+template <size_t size> 
+class VectorVertexEmbedding
 {
-  std::vector<VertexEmbedding> extensions;
+private:
+  uint32_t array[size];
+  size_t filled_size;
+  
+public:
+  __device__ __host__
+  VectorVertexEmbedding ()
+  {
+    filled_size = 0;
+  }
+
+  __host__ __device__
+  VectorVertexEmbedding (const VectorVertexEmbedding& embedding)
+  {
+    assert (embedding.get_n_vertices () <= get_n_vertices ());
+    
+    for (int i = 0; i < embedding.get_n_vertices (); i++) {
+      add (embedding.get_vertex (i));
+    }
+  }
+
+  __host__ __device__
+  void add (int v)
+  {
+    assert (filled_size < size);
+    array[filled_size++] = v;
+  }
+
+  __host__ __device__
+  void remove (int v)
+  {
+    printf ("Do not support remove\n");
+    assert (false);
+  }
+
+  __host__ __device__
+  bool has (int index)
+  {
+    for (int i = 0; i < filled_size; i++) {
+      if (array[i] == index) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  __host__ __device__
+  int get_n_vertices () 
+  {
+    return filled_size;
+  }
+  
+  int get_vertex (int index) 
+  {
+    return array[index];
+  }
+  
+  __host__ __device__
+  ~VectorVertexEmbedding ()
+  {
+    //delete[] array;
+  }
+};
+
+template <size_t size> 
+void bitvector_to_vector_embedding (BitVectorVertexEmbedding& bit_emb, 
+                               VectorVertexEmbedding<size>& vec_emb)
+{
+  for (int u = 0; u < N; u++) {
+    if (bit_emb.test(u)) {
+      vec_emb.add (u);
+    }
+  }
+}
+
+void print_embedding (BitVectorVertexEmbedding embedding, std::ostream& os);
+
+std::vector<BitVectorVertexEmbedding> get_extensions (BitVectorVertexEmbedding& embedding, CSR* csr)
+{
+  std::vector<BitVectorVertexEmbedding> extensions;
 
   if (embedding.all_false ()) {
     for (int u = 0; u < N; u++) {
-      VertexEmbedding extension;
+      BitVectorVertexEmbedding extension;
       extension.set(u);
       //print_embedding (extension, std::cout);
       //std::cout << " " << u << std::endl;
@@ -351,7 +431,7 @@ std::vector<VertexEmbedding> get_extensions (VertexEmbedding& embedding, CSR* cs
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
           if (embedding.test (v) == false) {
-            VertexEmbedding extension = VertexEmbedding(embedding);
+            BitVectorVertexEmbedding extension = BitVectorVertexEmbedding(embedding);
             extension.set(v);
             extensions.push_back(extension);
           }
@@ -363,21 +443,21 @@ std::vector<VertexEmbedding> get_extensions (VertexEmbedding& embedding, CSR* cs
   return extensions;
 }
 
-std::vector<VertexEmbedding> get_initial_embedding (CSR* csr)
+std::vector<BitVectorVertexEmbedding> get_initial_embedding (CSR* csr)
 {
-  VertexEmbedding embedding;
-  std::vector <VertexEmbedding> embeddings;
+  BitVectorVertexEmbedding embedding;
+  std::vector <BitVectorVertexEmbedding> embeddings;
 
   embeddings.push_back (embedding);
 
   return embeddings;
 }
 
-bool (*filter) (CSR* csr, VertexEmbedding& embedding);
-void (*process) (std::vector<VertexEmbedding>& output, VertexEmbedding& embedding);
+bool (*filter) (CSR* csr, BitVectorVertexEmbedding& embedding);
+void (*process) (std::vector<BitVectorVertexEmbedding>& output, BitVectorVertexEmbedding& embedding);
 
 __host__ __device__
-bool clique_filter (CSR* csr, VertexEmbedding* embedding)
+bool clique_filter (CSR* csr, BitVectorVertexEmbedding* embedding)
 {
   for (int u = 0; u < N; u++) {
     if (embedding->test(u)) {
@@ -394,24 +474,24 @@ bool clique_filter (CSR* csr, VertexEmbedding* embedding)
   return true;
 }
 
-void clique_process (std::vector<VertexEmbedding>& output, VertexEmbedding& embedding)
+void clique_process_bit_vector (std::vector<BitVectorVertexEmbedding>& output, BitVectorVertexEmbedding& embedding)
 {
   output.push_back (embedding);
 }
 
-void run_single_step_initial (void* input, int n_embeddings, CSR* csr,
-                      std::vector<VertexEmbedding>& output,
-                      std::vector<VertexEmbedding>& next_step)
+void run_single_step_initial_bitvector (void* input, int n_embeddings, CSR* csr,
+                      std::vector<BitVectorVertexEmbedding>& output,
+                      std::vector<BitVectorVertexEmbedding>& next_step)
 {
-  VertexEmbedding* embeddings = (VertexEmbedding*)input;
+  BitVectorVertexEmbedding* embeddings = (BitVectorVertexEmbedding*)input;
 
   for (int i = 0; i < n_embeddings; i++) {
-    VertexEmbedding embedding = embeddings[i];
-    std::vector<VertexEmbedding> extensions = get_extensions (embedding, csr);
+    BitVectorVertexEmbedding embedding = embeddings[i];
+    std::vector<BitVectorVertexEmbedding> extensions = get_extensions (embedding, csr);
 
     for (auto extension : extensions) {
       if (clique_filter (csr, &extension)) {
-        clique_process (output, extension);
+        clique_process_bit_vector (output, extension);
         next_step.push_back (extension);
       }
     }
@@ -419,7 +499,7 @@ void run_single_step_initial (void* input, int n_embeddings, CSR* csr,
 }
 
 __device__
-void printf_embedding (VertexEmbedding* embedding)
+void printf_embedding (BitVectorVertexEmbedding* embedding)
 {
   printf ("[");
   for (int u = 0; u < N; u++) {
@@ -432,7 +512,7 @@ void printf_embedding (VertexEmbedding* embedding)
 }
 
 __global__
-void run_single_step (void* input, int n_embeddings, CSR* csr,
+void run_single_step_bitvector_embedding (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr,
                       int* n_output,
                       void* next_step, int* n_next_step,
@@ -463,11 +543,11 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
 
 #endif
 
-  VertexEmbedding* embeddings = (VertexEmbedding*)input;
-  VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
-  VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
+  BitVectorVertexEmbedding* embeddings = (BitVectorVertexEmbedding*)input;
+  BitVectorVertexEmbedding* new_embeddings = (BitVectorVertexEmbedding*)next_step;
+  BitVectorVertexEmbedding* output = ((BitVectorVertexEmbedding*)output_ptr);
 #ifdef USE_EMBEDDING_IN_LOCAL_MEM
-  unsigned char temp_buffer [sizeof(VertexEmbedding)];
+  unsigned char temp_buffer [sizeof(BitVectorVertexEmbedding)];
 #endif
   id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
@@ -522,9 +602,9 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   for (int i = start; i < end; i++) {
     #ifdef USE_EMBEDDING_IN_SHARED_MEM
       #ifdef SHARED_MEM_NON_COALESCING
-        memcpy (local_shared_buff, &embeddings[i], sizeof(VertexEmbedding));
+        memcpy (local_shared_buff, &embeddings[i], sizeof(BitVectorVertexEmbedding));
 
-        VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
+        BitVectorVertexEmbedding* embedding = (BitVectorVertexEmbedding*) local_shared_buff;
       #else
         const int thread_block_size = WARP_SIZE;
         const int last_emb = WARP_SIZE*(warp_id+1);
@@ -538,25 +618,25 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
         for (int emb = WARP_SIZE*warp_id; emb < last_emb; emb++) {
           SharedMemElem* embedding_buff = (SharedMemElem*) &embeddings[emb+blockIdx.x*blockDim.x];
 
-          for (int j = 0; j < sizeof (VertexEmbedding)/sizeof (SharedMemElem);
+          for (int j = 0; j < sizeof (BitVectorVertexEmbedding)/sizeof (SharedMemElem);
                j += thread_block_size) {
             int idx = per_thread_shared_mem_size/sizeof(SharedMemElem)*emb;
-            if (true or j + lane_id  < sizeof (VertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
+            if (true or j + lane_id  < sizeof (BitVectorVertexEmbedding)/sizeof (SharedMemElem)) { //TODO: Remove this if by doing padding with VertexEmbedding
               shared_buff[idx + j + lane_id] = embedding_buff[j + lane_id];
             }
           }
         }
 
-        VertexEmbedding* embedding = (VertexEmbedding*) local_shared_buff;
+        BitVectorVertexEmbedding* embedding = (BitVectorVertexEmbedding*) local_shared_buff;
       #endif
       //embedding = &embeddings[i];
     #elif defined(USE_EMBEDDING_IN_LOCAL_MEM)
       //memcpy (&temp[0], &embeddings[i], sizeof (VertexEmbedding));
-      memcpy (&temp_buffer[0], &embeddings[i], sizeof(VertexEmbedding));
-      VertexEmbedding* embedding = (VertexEmbedding*)&temp_buffer[0];
+      memcpy (&temp_buffer[0], &embeddings[i], sizeof(BitVectorVertexEmbedding));
+      BitVectorVertexEmbedding* embedding = (BitVectorVertexEmbedding*)&temp_buffer[0];
       //VertexEmbedding* embedding = &embeddings[i];
     #elif defined(USE_EMBEDDING_IN_GLOBAL_MEM)
-      VertexEmbedding* embedding = &embeddings[i];
+      BitVectorVertexEmbedding* embedding = &embeddings[i];
     #else
       #error "None of USE_EMBEDDING_IN_*_MEM option defined"
     #endif
@@ -585,7 +665,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
         if (e <= csr->get_end_edge_idx(u)) {
           int v = csr->get_edges () [e];
           if (embedding->test(u) and embedding->test (v) == false) {
-            VertexEmbedding* extension = embedding;
+            BitVectorVertexEmbedding* extension = embedding;
             extension->set(v);
             if (clique_filter (csr, extension)) {
               int prev_n_extensions = atomicAdd (&n_extensions[warp_id], 1);
@@ -640,13 +720,13 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
             uint32_t expected_thread_id = changed_thread_ids[changes_idx];
             if (expected_thread_id == id) {
               int v = changes[changes_idx];
-              VertexEmbedding* extension = embedding;
+              BitVectorVertexEmbedding* extension = embedding;
               extension->set (v);
               
               memcpy (&output[prev_n_output + i], extension, 
-                      sizeof(VertexEmbedding));
+                      sizeof(BitVectorVertexEmbedding));
               memcpy (&new_embeddings[prev_n_next_step + i], extension,
-                      sizeof (VertexEmbedding));
+                      sizeof (BitVectorVertexEmbedding));
               extension->reset (v);
             }
           }
@@ -667,11 +747,11 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
           if (embedding->test (v) == false) {
-            VertexEmbedding* extension = embedding;
+            BitVectorVertexEmbedding* extension = embedding;
             extension->set(v);
             if (clique_filter (csr, extension)) {
-              memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VertexEmbedding));
-              memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VertexEmbedding));
+              memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (BitVectorVertexEmbedding));
+              memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (BitVectorVertexEmbedding));
             }
             extension->reset(v);
           }
@@ -689,7 +769,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   //}
 }
 
-void print_embedding (VertexEmbedding embedding, std::ostream& os)
+void print_embedding (BitVectorVertexEmbedding embedding, std::ostream& os)
 {
   os << "[";
   for (int u = 0; u < N; u++) {
@@ -776,7 +856,7 @@ int main (int argc, char* argv[])
 
   CSR* csr = new CSR(N, N_EDGES);
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
-  std::cout <<"sizeof(VertexEmbedding)" << sizeof(VertexEmbedding) << std::endl;
+  std::cout <<"sizeof(VertexEmbedding)" << sizeof(BitVectorVertexEmbedding) << std::endl;
   csr_from_graph (csr, graph);
 
 #ifdef USE_CONSTANT_MEM
@@ -789,15 +869,15 @@ int main (int argc, char* argv[])
   //~ csr_constant->copy_edges (csr, 0, csr->get_n_edges ());
 #endif
 
-  std::vector<VertexEmbedding> initial_embeddings = get_initial_embedding (csr);
-  std::vector<VertexEmbedding> output;
-  std::vector<VertexEmbedding> embeddings = initial_embeddings;
+  std::vector<BitVectorVertexEmbedding> initial_embeddings = get_initial_embedding (csr);
+  std::vector<BitVectorVertexEmbedding> output;
+  std::vector<BitVectorVertexEmbedding> embeddings = initial_embeddings;
   //filter = clique_filter;
   //process = clique_process;
   int iter = 0;
   {
-    std::vector<VertexEmbedding> new_embeddings;
-    run_single_step_initial (&initial_embeddings[0], 1, csr, output, new_embeddings);
+    std::vector<BitVectorVertexEmbedding> new_embeddings;
+    run_single_step_initial_bitvector (&initial_embeddings[0], 1, csr, output, new_embeddings);
 
     embeddings = new_embeddings;
   }
@@ -818,15 +898,15 @@ int main (int argc, char* argv[])
     std::cout << "iter " << iter << " n_embeddings " << n_embeddings << std::endl;
   
     for (int i = 0; i < n_embeddings; i++) {
-      ((VertexEmbedding*)global_mem_ptr)[i] = embeddings[i];
+      ((BitVectorVertexEmbedding*)global_mem_ptr)[i] = embeddings[i];
     }
     void* embeddings_ptr = global_mem_ptr;
 
     int n_new_embeddings = 0;
     int n_new_embeddings_1 = 0;
-    void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*sizeof(VertexEmbedding);
+    void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*sizeof(BitVectorVertexEmbedding);
     int max_embeddings = 1000000;
-    void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*sizeof(VertexEmbedding);
+    void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*sizeof(BitVectorVertexEmbedding);
     int n_output = 0;
     int n_output_1 = 0;
     char* device_embeddings;
@@ -838,12 +918,12 @@ int main (int argc, char* argv[])
     int* device_n_outputs_1;
     CSR* device_csr;
 
-    cudaMalloc (&device_embeddings, n_embeddings*sizeof(VertexEmbedding));
+    cudaMalloc (&device_embeddings, n_embeddings*sizeof(BitVectorVertexEmbedding));
     cudaMemcpy (device_embeddings, embeddings_ptr,
-                n_embeddings*sizeof(VertexEmbedding),
+                n_embeddings*sizeof(BitVectorVertexEmbedding),
                 cudaMemcpyHostToDevice);
-    cudaMalloc (&device_new_embeddings, max_embeddings*sizeof (VertexEmbedding));
-    cudaMalloc (&device_outputs, max_embeddings*sizeof (VertexEmbedding));
+    cudaMalloc (&device_new_embeddings, max_embeddings*sizeof (BitVectorVertexEmbedding));
+    cudaMalloc (&device_outputs, max_embeddings*sizeof (BitVectorVertexEmbedding));
     cudaMalloc (&device_n_embeddings, sizeof (0));
     cudaMalloc (&device_n_embeddings_1, sizeof (0));
     cudaMalloc (&device_n_outputs, sizeof (0));
@@ -867,14 +947,14 @@ int main (int argc, char* argv[])
     double t1 = convertTimeValToDouble (getTimeOfDay ());
 #ifdef USE_FIXED_THREADS
     std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
-      run_single_step<<<MAX_CUDA_THREADS/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
+      run_single_step_bitvector_embedding<<<MAX_CUDA_THREADS/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                               device_outputs, device_n_outputs,
                               device_new_embeddings, device_n_embeddings,
                               device_n_outputs_1, device_n_embeddings_1);
 #else
     int thread_blocks = (n_embeddings%THREAD_BLOCK_SIZE != 0) ? (n_embeddings/THREAD_BLOCK_SIZE+1) : n_embeddings/THREAD_BLOCK_SIZE;
     std::cout << " threads: " << n_embeddings/THREAD_BLOCK_SIZE << std::endl;
-    run_single_step<<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
+    run_single_step_bitvector_embedding<<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                               device_outputs, device_n_outputs,
                               device_new_embeddings, device_n_embeddings,
                               device_n_outputs_1, device_n_embeddings_1);
@@ -895,8 +975,8 @@ int main (int argc, char* argv[])
       std::cout << "Cuda success " << std::endl;
     }
 
-    cudaMemcpy (new_embeddings_ptr, device_new_embeddings, max_embeddings*sizeof(VertexEmbedding), cudaMemcpyDeviceToHost);
-    cudaMemcpy (output_ptr, device_outputs, max_embeddings*sizeof(VertexEmbedding), cudaMemcpyDeviceToHost);
+    cudaMemcpy (new_embeddings_ptr, device_new_embeddings, max_embeddings*sizeof(BitVectorVertexEmbedding), cudaMemcpyDeviceToHost);
+    cudaMemcpy (output_ptr, device_outputs, max_embeddings*sizeof(BitVectorVertexEmbedding), cudaMemcpyDeviceToHost);
     cudaMemcpy (&n_new_embeddings, device_n_embeddings, sizeof(0), cudaMemcpyDeviceToHost);
     cudaMemcpy (&n_output, device_n_outputs, sizeof(0), cudaMemcpyDeviceToHost);
     cudaMemcpy (&n_new_embeddings_1, device_n_embeddings_1, sizeof(0), cudaMemcpyDeviceToHost);
@@ -906,10 +986,10 @@ int main (int argc, char* argv[])
     std::cout << "n_new_embeddings_1 "<<n_new_embeddings_1;
     std::cout << " n_output "<<n_output;
     std::cout << " n_output_1 "<<n_output_1<<std::endl;
-    std::vector<VertexEmbedding> new_embeddings;
+    std::vector<BitVectorVertexEmbedding> new_embeddings;
   
     for (int i = 0; i < n_new_embeddings; i++) {
-      VertexEmbedding embedding = ((VertexEmbedding*)new_embeddings_ptr)[i];
+      BitVectorVertexEmbedding embedding = ((BitVectorVertexEmbedding*)new_embeddings_ptr)[i];
       new_embeddings.push_back (embedding);
     #ifdef DEBUG
       if (embedding.get_n_vertices () != (iter + 1)) {
@@ -918,7 +998,7 @@ int main (int argc, char* argv[])
     #endif
     }
     for (int i = 0; i < n_output; i++) {
-      output.push_back (((VertexEmbedding*)output_ptr)[i]);
+      output.push_back (((BitVectorVertexEmbedding*)output_ptr)[i]);
     }
     embeddings = new_embeddings;
 
