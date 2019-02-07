@@ -467,7 +467,7 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
   VertexEmbedding* output = ((VertexEmbedding*)output_ptr);
 #ifdef USE_EMBEDDING_IN_LOCAL_MEM
-  VertexEmbedding temp;
+  unsigned char temp_buffer [sizeof(VertexEmbedding)];
 #endif
   id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
@@ -552,8 +552,8 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
       //embedding = &embeddings[i];
     #elif defined(USE_EMBEDDING_IN_LOCAL_MEM)
       //memcpy (&temp[0], &embeddings[i], sizeof (VertexEmbedding));
-      temp = embeddings[i];
-      VertexEmbedding* embedding = &temp;
+      memcpy (&temp_buffer[0], &embeddings[i], sizeof(VertexEmbedding));
+      VertexEmbedding* embedding = (VertexEmbedding*)&temp_buffer[0];
       //VertexEmbedding* embedding = &embeddings[i];
     #elif defined(USE_EMBEDDING_IN_GLOBAL_MEM)
       VertexEmbedding* embedding = &embeddings[i];
@@ -635,35 +635,20 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
           uint32_t prev_n_next_step = __shfl_sync (__activemask (), orig_prev_n_next_step, 0);
           
           for (int i = 0; i < n_changes; i++) {
-            //int j = 0;
+            
             int changes_idx = warp_id*max_changes + i;
             uint32_t expected_thread_id = changed_thread_ids[changes_idx];
             if (expected_thread_id == id) {
               int v = changes[changes_idx];
               VertexEmbedding* extension = embedding;
               extension->set (v);
-              //int p = n_changes - n_extensions[warp_id];
-              //VertexEmbedding* old_new = &new_embeddings[prev_n_next_step + p];
-              /*if (prev_n_next_step + p == 0) {
-                printf ("old_new n_vertices[%d]: %d for p: %d, warp_id: %d, tid: %d, block_id: %d, n_changes: %d, prev_n_next_step: %d while_iter: %d, u: %d\n", prev_n_next_step + p, old_new->get_n_vertices (), p, warp_id, threadIdx.x, blockIdx.x, n_changes, prev_n_next_step, while_iter, u);
-              }*/
-              
-              //if (old_new->get_n_vertices () != 0) {
-                //printf ("old_new n_vertices[%d]: %d for p: %d, warp_id: %d, tid: %d, n_changes: %d, prev_n_next_step: %d\n", prev_n_next_step + p, old_new->get_n_vertices (), p, warp_id, threadIdx.x, n_changes, prev_n_next_step);
-              //}
               
               memcpy (&output[prev_n_output + i], extension, 
                       sizeof(VertexEmbedding));
               memcpy (&new_embeddings[prev_n_next_step + i], extension,
                       sizeof (VertexEmbedding));
               extension->reset (v);
-              //atomicSub (&n_extensions[warp_id], 1);
-              
-              //j++;
             }
-            //if (j >= n_changes) {
-            //  break;
-            //}
           }
         }
 
@@ -825,14 +810,16 @@ int main (int argc, char* argv[])
     std::cout << "iter " << iter << " embeddings " << embeddings.size () << std::endl;
     size_t global_mem_size = 3*1024*1024*1024UL;
     char* global_mem_ptr = new char[global_mem_size];
+  #ifdef DEBUG
     memset (global_mem_ptr, 0, global_mem_size);
+  #endif
     int n_embeddings = embeddings.size ();
     //n_embeddings = (n_embeddings/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
     std::cout << "iter " << iter << " n_embeddings " << n_embeddings << std::endl;
+  
     for (int i = 0; i < n_embeddings; i++) {
       ((VertexEmbedding*)global_mem_ptr)[i] = embeddings[i];
     }
-
     void* embeddings_ptr = global_mem_ptr;
 
     int n_new_embeddings = 0;
@@ -920,12 +907,15 @@ int main (int argc, char* argv[])
     std::cout << " n_output "<<n_output;
     std::cout << " n_output_1 "<<n_output_1<<std::endl;
     std::vector<VertexEmbedding> new_embeddings;
+  
     for (int i = 0; i < n_new_embeddings; i++) {
       VertexEmbedding embedding = ((VertexEmbedding*)new_embeddings_ptr)[i];
       new_embeddings.push_back (embedding);
+    #ifdef DEBUG
       if (embedding.get_n_vertices () != (iter + 1)) {
         printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
       }
+    #endif
     }
     for (int i = 0; i < n_output; i++) {
       output.push_back (((VertexEmbedding*)output_ptr)[i]);
