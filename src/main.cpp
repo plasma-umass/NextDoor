@@ -5,6 +5,8 @@
 #include <vector>
 #include <bitset>
 #include <unordered_set>
+#include <time.h>
+#include <sys/time.h>
 
 #include <string.h>
 #include <assert.h>
@@ -16,6 +18,24 @@
 #define LINE_SIZE 1024*1024
 const int N = 3312;
 const int N_EDGES = 9079;
+
+double_t convertTimeValToDouble (struct timeval _time)
+{
+  return ((double_t)_time.tv_sec) + ((double_t)_time.tv_usec)/1000000.0f;
+}
+
+struct timeval getTimeOfDay ()
+{
+  struct timeval _time;
+
+  if (gettimeofday (&_time, NULL) == -1) {
+    fprintf (stderr, "gettimeofday returned -1\n");
+    perror ("");
+    abort ();
+  }
+
+  return _time;
+}
 
 int atomicAdd (int* x, int i)
 {
@@ -180,15 +200,15 @@ void csr_from_graph (CSR* csr, Graph& graph)
   }
 }
   
-//template <size_t N> using VertexEmbedding = std::bitset<N>;
+//template <size_t N> using BitVectorVertexEmbedding = std::bitset<N>;
 
-class VertexEmbedding
+class BitVectorVertexEmbedding
 {
 private:
   unsigned char array[((N/8)+1)];
 
 public:
-  VertexEmbedding () 
+  BitVectorVertexEmbedding () 
   {
     //array = new unsigned char[convert_to_bytes_multiple(N)/8];
     assert (array != nullptr);
@@ -203,7 +223,7 @@ public:
   }
   
   __host__ __device__
-  VertexEmbedding (const VertexEmbedding& embedding)
+  BitVectorVertexEmbedding (const BitVectorVertexEmbedding& embedding)
   {
     //array = new unsigned char[convert_to_bytes_multiple(N)/8];
     for (int i = 0; i <  convert_to_bytes_multiple(N)/8; i++) {
@@ -257,20 +277,133 @@ public:
     return true;
   }
   __host__ __device__
-  ~VertexEmbedding ()
+  ~BitVectorVertexEmbedding ()
   {
     //delete[] array;
   }
 };
 
-void print_embedding (VertexEmbedding embedding, std::ostream& os);
+template <size_t size> 
+class VectorVertexEmbedding
+{
+private:
+  uint32_t array[size];
+  size_t filled_size;
+  
+public:
+  __device__ __host__
+  VectorVertexEmbedding ()
+  {
+    filled_size = 0;
+  }
 
-void get_extensions (VertexEmbedding& embedding, CSR* csr, 
-                std::vector<VertexEmbedding>& extensions)
+  __host__ __device__
+  VectorVertexEmbedding (const VectorVertexEmbedding<size>& embedding)
+  {
+    assert (embedding.get_max_size () <= get_max_size ());
+    filled_size = 0;
+    for (int i = 0; i < embedding.get_n_vertices (); i++) {
+      add (embedding.get_vertex (i));
+    }
+  }
+  
+  __host__ __device__
+  void add (int v)
+  {
+    if (!(size != 0 and filled_size < size)) {
+      printf ("filled_size %ld, size %ld\n", filled_size, size);
+      //assert (size != 0 and filled_size < size);
+      assert (false);
+    }
+    array[filled_size++] = v;
+  }
+
+  __host__ __device__
+  void remove (int v)
+  {
+    printf ("Do not support remove\n");
+    assert (false);
+  }
+
+  __host__ __device__
+  bool has (int index)
+  {
+    for (int i = 0; i < filled_size; i++) {
+      if (array[i] == index) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  __host__ __device__
+  size_t get_n_vertices () const
+  {
+    return filled_size;
+  }
+  
+  __host__ __device__
+  int get_vertex (int index) const
+  {
+    return array[index];
+  }
+  
+  __host__ __device__
+  size_t get_max_size () const
+  {
+    return size;
+  }
+  
+  __host__ __device__
+  void clear ()
+  {
+    filled_size = 0;
+  }
+  
+  __host__ __device__
+  void remove_last () 
+  {
+    assert (filled_size > 0);
+    filled_size--;
+  }
+  __host__ __device__
+  ~VectorVertexEmbedding ()
+  {
+    //delete[] array;
+  }
+};
+
+template <size_t size>
+void vector_embedding_from_one_less_size (VectorVertexEmbedding<size>& vec_emb1,
+                                          VectorVertexEmbedding<size+1>& vec_emb2)
+{
+  //TODO: Optimize here, filled_size++ in add is being called several times
+  //but can be called only once too
+  for (int i = 0; i < vec_emb1.get_n_vertices (); i++) {
+    vec_emb2.add (vec_emb1.get_vertex (i));
+  }
+}
+
+template <size_t size> 
+void bitvector_to_vector_embedding (BitVectorVertexEmbedding& bit_emb, 
+                                    VectorVertexEmbedding<size>& vec_emb)
+{
+  for (int u = 0; u < N; u++) {
+    if (bit_emb.test(u)) {
+      vec_emb.add (u);
+    }
+  }
+}
+
+void print_embedding (BitVectorVertexEmbedding embedding, std::ostream& os);
+
+void get_extensions_bitvector (BitVectorVertexEmbedding& embedding, CSR* csr, 
+                std::vector<BitVectorVertexEmbedding>& extensions)
 {  
   if (embedding.all_false ()) {
     for (int u = 0; u < N; u++) {
-      VertexEmbedding extension;
+      BitVectorVertexEmbedding extension;
       extension.set(u);
       //print_embedding (extension, std::cout);
       //std::cout << " " << u << std::endl;
@@ -282,7 +415,7 @@ void get_extensions (VertexEmbedding& embedding, CSR* csr,
         for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
           int v = csr->get_edges () [e];
           if (embedding.test (v) == false) {
-            VertexEmbedding extension = VertexEmbedding(embedding);
+            BitVectorVertexEmbedding extension = BitVectorVertexEmbedding(embedding);
             extension.set(v);
             extensions.push_back(extension);
           }
@@ -292,21 +425,62 @@ void get_extensions (VertexEmbedding& embedding, CSR* csr,
   }
 }
 
-std::vector<VertexEmbedding> get_initial_embedding (CSR* csr)
+template <size_t size>
+std::vector<VectorVertexEmbedding<size+1>> get_extensions_vector (VectorVertexEmbedding<size>& embedding, CSR* csr)
 {
-  VertexEmbedding embedding;
-  std::vector <VertexEmbedding> embeddings;
+  std::vector<VectorVertexEmbedding<size+1>> extensions;
+
+  if (embedding.get_n_vertices () == 0) {
+    for (int u = 0; u < N; u++) {
+      VectorVertexEmbedding<size+1> extension;
+      extension.add(u);
+      //print_embedding (extension, std::cout);
+      //std::cout << " " << u << std::endl;
+      extensions.push_back (extension);
+    }
+  } else {
+    for (int i = 0; i < embedding.get_n_vertices (); i++) {
+      int u = embedding.get_vertex (i);
+      for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
+        int v = csr->get_edges () [e];
+        if (embedding.has (v) == false) {
+          VectorVertexEmbedding<size+1> extension;
+          vector_embedding_from_one_less_size (embedding, extension);
+          extension.add(v);
+          extensions.push_back(extension);
+        }
+      }
+    }
+  }
+
+  return extensions;
+}
+
+std::vector<BitVectorVertexEmbedding> get_initial_embedding_bitvector (CSR* csr)
+{
+  BitVectorVertexEmbedding embedding;
+  std::vector <BitVectorVertexEmbedding> embeddings;
 
   embeddings.push_back (embedding);
   
   return embeddings;
 }
 
-bool (*filter) (CSR* csr, VertexEmbedding& embedding);
-void (*process) (std::vector<VertexEmbedding>& output, VertexEmbedding& embedding);
+std::vector<VectorVertexEmbedding<0>> get_initial_embedding_vector (CSR* csr)
+{
+  VectorVertexEmbedding<0> embedding;
+  std::vector <VectorVertexEmbedding<0>> embeddings;
+
+  embeddings.push_back (embedding);
+
+  return embeddings;
+}
+
+bool (*filter) (CSR* csr, BitVectorVertexEmbedding& embedding);
+void (*process) (std::vector<BitVectorVertexEmbedding>& output, BitVectorVertexEmbedding& embedding);
 
 __host__ __device__
-bool clique_filter (CSR* csr, VertexEmbedding& embedding)
+bool clique_filter_bitvector (CSR* csr, BitVectorVertexEmbedding& embedding)
 {
   for (int u = 0; u < N; u++) {
     if (embedding.test(u)) {
@@ -323,34 +497,77 @@ bool clique_filter (CSR* csr, VertexEmbedding& embedding)
   return true;
 }
 
-void clique_process (std::vector<VertexEmbedding>& output, VertexEmbedding& embedding)
+template <size_t size>
+__host__ __device__
+bool clique_filter_vector (CSR* csr, VectorVertexEmbedding<size>* embedding)
+{
+  for (int i = 0; i < embedding->get_n_vertices (); i++) {
+    int u = embedding->get_vertex (i);
+    for (int j = 0; j < embedding->get_n_vertices (); j++) {
+      int v = embedding->get_vertex (j);
+      if (u != v and embedding->has(v)) {
+        if (!csr->has_edge (u, v)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+void clique_process_bitvector (std::vector<BitVectorVertexEmbedding>& output, BitVectorVertexEmbedding& embedding)
 {
   output.push_back (embedding);
 }
 
-void run_single_step_initial (void* input, int n_embeddings, CSR* csr,
-                      std::vector<VertexEmbedding>& output,
-                      std::vector<VertexEmbedding>& next_step)
+template <size_t size>
+void clique_process_vector (std::vector<VectorVertexEmbedding<size>>& output, VectorVertexEmbedding<size>& embedding)
+{
+  output.push_back (embedding);
+}
+
+void run_single_step_initial_bitvector (void* input, int n_embeddings, CSR* csr,
+                                    std::vector<BitVectorVertexEmbedding>& output,
+                                    std::vector<BitVectorVertexEmbedding>& next_step)
 {  
-  VertexEmbedding* embeddings = (VertexEmbedding*)input;
+  BitVectorVertexEmbedding* embeddings = (BitVectorVertexEmbedding*)input;
   
   for (int i = 0; i < n_embeddings; i++) {
-    VertexEmbedding embedding = embeddings[i];
-    std::vector<VertexEmbedding> extensions;
-    get_extensions (embedding, csr, extensions);
+    BitVectorVertexEmbedding embedding = embeddings[i];
+    std::vector<BitVectorVertexEmbedding> extensions;
+    get_extensions_bitvector (embedding, csr, extensions);
     
     for (auto extension : extensions) {
-      if (clique_filter (csr, extension)) {
-        clique_process (output, extension);
+      if (clique_filter_bitvector (csr, extension)) {
+        clique_process_bitvector (output, extension);
         next_step.push_back (extension);
       }
     }
   }
 }
 
+void run_single_step_initial_vector (void* input, int n_embeddings, CSR* csr,
+                      std::vector<VectorVertexEmbedding<1>>& output,
+                      std::vector<VectorVertexEmbedding<1>>& next_step)
+{
+  VectorVertexEmbedding<0>* embeddings = (VectorVertexEmbedding<0>*)input;
+
+  for (int i = 0; i < n_embeddings; i++) {
+    VectorVertexEmbedding<0> embedding = embeddings[i];
+    std::vector<VectorVertexEmbedding<1>> extensions = get_extensions_vector (embedding, csr);
+    std::cout << "extensions " << extensions.size () << std::endl;
+    for (auto extension : extensions) {
+      if (clique_filter_vector (csr, &extension)) {
+        clique_process_vector (output, extension);
+        next_step.push_back (extension);
+      }
+    }
+  }
+}
 
 __device__ 
-void printf_embedding (VertexEmbedding& embedding) 
+void printf_embedding_bitvector (BitVectorVertexEmbedding& embedding) 
 {
   printf ("[");
   for (int u = 0; u < N; u++) {
@@ -363,22 +580,22 @@ void printf_embedding (VertexEmbedding& embedding)
 }
 
 __global__
-void run_single_step (void* input, int n_embeddings, CSR* csr,
+void run_single_step_bitvector (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr, 
                       int* n_output,
                       void* next_step, int* n_next_step)
 {
   printf ("run_single_step: start, n_embeddings %d\n", n_embeddings);  
-  VertexEmbedding* embeddings = (VertexEmbedding*)input;
-  VertexEmbedding* new_embeddings = (VertexEmbedding*)next_step;
+  BitVectorVertexEmbedding* embeddings = (BitVectorVertexEmbedding*)input;
+  BitVectorVertexEmbedding* new_embeddings = (BitVectorVertexEmbedding*)next_step;
   
   //int i = blockIdx.x*blockDim.x + threadIdx.x;
   //if (i >= n_embeddings)
   //  return;
   for (int i = 0; i < n_embeddings; i++) {
     //printf ("i %d ", i);
-    VertexEmbedding& embedding = embeddings[i];
-    //std::vector<VertexEmbedding> extensions = get_extensions (embedding, csr);
+    BitVectorVertexEmbedding& embedding = embeddings[i];
+    //std::vector<BitVectorVertexEmbedding> extensions = get_extensions (embedding, csr);
     /*if (i ==1500) {
       printf ("Embedding at 1500");
       printf_embedding (embedding);
@@ -392,24 +609,24 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
           if (i == 3311)
             ;//printf ("v = %d\n", v);
           if (embedding.test (v) == false) {
-            VertexEmbedding extension = VertexEmbedding(embedding);
+            BitVectorVertexEmbedding extension = BitVectorVertexEmbedding(embedding);
             extension.set(v);
             /*if (i == 1500) {
               printf ("Extension at 1500");
               printf_embedding (extension);
             }*/
             
-            if (clique_filter (csr, extension)) {
+            if (clique_filter_bitvector (csr, extension)) {
               /*if (i == 1500) printf ("extension passed\n");
               if (i >= 1000 && i < 2000) q[0]++;
               if (i >= 2000 && i < 3000) q[1]++;
               if (i == 1500) q[2]++;*/
               //clique_process (output, extension);
               //(*n_output)++;
-              ((VertexEmbedding*)output_ptr)[*n_output] = VertexEmbedding(extension);
+              ((BitVectorVertexEmbedding*)output_ptr)[*n_output] = BitVectorVertexEmbedding(extension);
               (*n_output)++;
               //(*n_next_step)++; //make it atomic
-              new_embeddings[*n_next_step] = VertexEmbedding(extension);
+              new_embeddings[*n_next_step] = BitVectorVertexEmbedding(extension);
               (*n_next_step)++;
             }
           }
@@ -424,7 +641,54 @@ void run_single_step (void* input, int n_embeddings, CSR* csr,
   printf ("step done\n");
 }
 
-void print_embedding (VertexEmbedding embedding, std::ostream& os)
+template <size_t embedding_size>
+void run_single_step_vector (void* input, int n_embeddings, CSR* csr,
+                      void* output_ptr, 
+                      int* n_output,
+                      void* next_step, int* n_next_step)
+{
+  printf ("run_single_step: start, n_embeddings %d\n", n_embeddings);  
+  VectorVertexEmbedding<embedding_size>* embeddings = (VectorVertexEmbedding<embedding_size>*)input;
+  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step;
+  
+  for (int i = 0; i < n_embeddings; i++) {
+    //printf ("i %d ", i);
+    VectorVertexEmbedding<embedding_size>& embedding = embeddings[i];
+    //std::vector<BitVectorVertexEmbedding> extensions = get_extensions (embedding, csr);
+    /*if (i ==1500) {
+      printf ("Embedding at 1500");
+      printf_embedding (embedding);
+    }*/
+    for (int i = 0; i < embedding.get_n_vertices (); i++) {
+      int u = embedding.get_vertex (i);
+      
+      for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
+        int v = csr->get_edges () [e];
+        
+        if (embedding.has (v) == false) {//TODO:
+          VectorVertexEmbedding<embedding_size+1> extension;
+          vector_embedding_from_one_less_size (embedding, extension);
+          extension.add(v);
+          
+          if (clique_filter_vector (csr, &extension)) {
+
+            ((VectorVertexEmbedding<embedding_size+1>*)output_ptr)[*n_output] = extension;
+            (*n_output)++;
+
+            new_embeddings[*n_next_step] = extension;
+            (*n_next_step)++;
+          }
+          
+          extension.remove_last ();
+        }
+      }
+    }
+  }
+  
+  printf ("step done\n");
+}
+
+void print_embedding_bitvector (BitVectorVertexEmbedding embedding, std::ostream& os)
 {
   os << "[";
   for (int u = 0; u < N; u++) {
@@ -491,53 +755,321 @@ int main (int argc, char* argv[])
   
   csr_from_graph (csr, graph);
 
-  std::vector<VertexEmbedding> initial_embeddings = get_initial_embedding (csr);
-  std::vector<VertexEmbedding> output;
-  std::vector<VertexEmbedding> embeddings = initial_embeddings;
+  std::vector<VectorVertexEmbedding<0>> initial_embeddings = get_initial_embedding_vector (csr);
+  std::vector<VectorVertexEmbedding<1>> output_1;
+  std::vector<VectorVertexEmbedding<2>> output_2;
+  std::vector<VectorVertexEmbedding<3>> output_3;
+  std::vector<VectorVertexEmbedding<4>> output_4;
+  std::vector<VectorVertexEmbedding<5>> output_5;
+  std::vector<VectorVertexEmbedding<6>> output_6;
+  std::vector<VectorVertexEmbedding<7>> output_7;
+  std::vector<VectorVertexEmbedding<8>> output_8;
+  
+  void* embeddings;
   //filter = clique_filter;
   //process = clique_process;
   int iter = 0;
+  size_t new_embeddings_size;
   {
-    std::vector<VertexEmbedding> new_embeddings;
-    run_single_step_initial (&initial_embeddings[0], 1, csr, output, new_embeddings);
+    std::vector<VectorVertexEmbedding<1>> new_embeddings;
+    run_single_step_initial_vector (&initial_embeddings[0], 1, csr, output_1, new_embeddings);
     
-    embeddings = new_embeddings;
+    embeddings = &new_embeddings[0];
+    new_embeddings_size = new_embeddings.size ();
   }
-  
+
   iter = 1;
   
   std::cout << "n_edges " << n_edges << std::endl;
-  for (iter; iter < 10 && embeddings.size () > 0; iter++) {
+  for (iter; iter < 10 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << std::endl;
+    
     char* global_mem_ptr = new char[3*1024*1024*1024UL];
-    int n_embeddings = embeddings.size ();
-    for (int i = 0; i < n_embeddings; i++) {
-      ((VertexEmbedding*)global_mem_ptr)[i] = embeddings[i];
+    int n_embeddings = new_embeddings_size;
+    size_t embedding_size = 0;
+    size_t new_embedding_size = 0;
+    switch (iter) {
+      case 1: {
+        embedding_size = sizeof (VectorVertexEmbedding<1>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<2>);
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<1>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<1>*) embeddings)[i];
+        }
+        break;
+      }      
+      case 2: {
+        embedding_size = sizeof (VectorVertexEmbedding<2>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<3>);
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<2>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<2>*)embeddings)[i];
+        }
+        break;
+      }
+      
+      case 3: {
+        embedding_size = sizeof (VectorVertexEmbedding<3>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<4>);
+        
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<3>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<3>*)embeddings)[i];
+        }
+        break;
+      }
+      
+      case 4: {
+          embedding_size = sizeof (VectorVertexEmbedding<4>);
+          new_embedding_size = sizeof (VectorVertexEmbedding<5>);
+          for (int i = 0; i < n_embeddings; i++) {
+            ((VectorVertexEmbedding<4>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<4>*)embeddings)[i];
+        }
+        break;
+      }
+      case 5: {
+        embedding_size = sizeof (VectorVertexEmbedding<5>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<6>);
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<5>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<5>*)embeddings)[i];
+        }
+        break;
+      }
+      case 6: {
+        embedding_size = sizeof (VectorVertexEmbedding<6>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<7>);
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<6>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<6>*)embeddings)[i];
+        }
+        break;
+      }
+      case 7: {
+        embedding_size = sizeof (VectorVertexEmbedding<7>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<8>);
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<7>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<7>*)embeddings)[i];
+        }
+        break;
+      }
+      case 8: {
+        embedding_size = sizeof (VectorVertexEmbedding<8>);
+        new_embedding_size = sizeof (VectorVertexEmbedding<9>);
+        for (int i = 0; i < n_embeddings; i++) {
+          ((VectorVertexEmbedding<8>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<8>*)embeddings)[i];
+        }
+        break;
+      }
     }
     
     void* embeddings_ptr = global_mem_ptr;
     
     int n_new_embeddings = 0;
-    void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*sizeof(VertexEmbedding);
+    void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*(embedding_size);
     int max_embeddings = 1000000;
-    void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*sizeof(VertexEmbedding);
+    void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*new_embedding_size;
     int n_output = 0;
-    run_single_step (embeddings_ptr, n_embeddings, csr, 
-                     output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+    double t1 = convertTimeValToDouble (getTimeOfDay ());
+    switch (iter) {
+      case 1:
+      {
+        run_single_step_vector<1> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 2:
+      {
+        run_single_step_vector<2> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 3:
+      {
+        run_single_step_vector<3> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 4:
+      {
+        run_single_step_vector<4> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 5:
+      {
+        run_single_step_vector<5> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 6:
+      {
+        run_single_step_vector<6> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 7:
+      {
+        run_single_step_vector<7> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+      case 8:
+      {
+        run_single_step_vector<8> (embeddings_ptr, n_embeddings, csr, 
+                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+        break;
+      }
+    }
     
-    std::cout << "n_new_embeddings "<<n_new_embeddings<<std::endl;
-    std::vector<VertexEmbedding> new_embeddings;
-    for (int i = 0; i < n_new_embeddings; i++) {
-      new_embeddings.push_back (((VertexEmbedding*)new_embeddings_ptr)[i]);
+    double t2 = convertTimeValToDouble (getTimeOfDay ());
+    std::cout << "step execution time " << (t2-t1) << " secs" << std::endl;
+    
+    new_embeddings_size = n_new_embeddings;
+    
+    switch (iter) {
+      case 1: {
+        VectorVertexEmbedding<2>* new_embeddings = new VectorVertexEmbedding<2>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<2> embedding = ((VectorVertexEmbedding<2>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_2.push_back (((VectorVertexEmbedding<2>*)output_ptr)[i]);
+        }
+        
+        break;
+      }
+      
+      case 2: {
+        VectorVertexEmbedding<3>* new_embeddings = new VectorVertexEmbedding<3>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<3> embedding = ((VectorVertexEmbedding<3>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %ld vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_3.push_back (((VectorVertexEmbedding<3>*)output_ptr)[i]);
+        }
+        break;
+      }
+      
+      case 3: {
+        VectorVertexEmbedding<4>* new_embeddings = new VectorVertexEmbedding<4>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<4> embedding = ((VectorVertexEmbedding<4>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_4.push_back (((VectorVertexEmbedding<4>*)output_ptr)[i]);
+        }
+        break;
+      }
+      
+      case 4: {
+        VectorVertexEmbedding<5>* new_embeddings = new VectorVertexEmbedding<5>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<5> embedding = ((VectorVertexEmbedding<5>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_5.push_back (((VectorVertexEmbedding<5>*)output_ptr)[i]);
+        }
+        break;
+      }
+      
+      case 5: {
+        VectorVertexEmbedding<6>* new_embeddings = new VectorVertexEmbedding<6>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<6> embedding = ((VectorVertexEmbedding<6>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_6.push_back (((VectorVertexEmbedding<6>*)output_ptr)[i]);
+        }
+        break;
+      }
+      
+      case 6: {
+        VectorVertexEmbedding<7>* new_embeddings = new VectorVertexEmbedding<7>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<7> embedding = ((VectorVertexEmbedding<7>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_7.push_back (((VectorVertexEmbedding<7>*)output_ptr)[i]);
+        }
+        break;
+      }
+      
+      case 7: {
+        VectorVertexEmbedding<8>* new_embeddings = new VectorVertexEmbedding<8>[n_new_embeddings];
+        
+        for (int i = 0; i < n_new_embeddings; i++) {
+          VectorVertexEmbedding<8> embedding = ((VectorVertexEmbedding<8>*)new_embeddings_ptr)[i];
+          new_embeddings [i] = embedding;
+          #ifdef DEBUG
+          if (embedding.get_n_vertices () != (iter + 1)) {
+            printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+          }
+          #endif
+        }
+        
+        embeddings = &new_embeddings[0];
+        for (int i = 0; i < n_output; i++) {
+          output_8.push_back (((VectorVertexEmbedding<8>*)output_ptr)[i]);
+        }
+        break;
+      }
     }
-    for (int i = 0; i < n_output; i++) {
-      output.push_back (((VertexEmbedding*)output_ptr)[i]);
-    }
-    embeddings = new_embeddings;
+
     delete[] global_mem_ptr;
+    
   }
   
-  std::cout << "Number of embeddings found "<< output.size () << std::endl;
+  std::cout << "Number of embeddings found "<< output_1.size () + output_2.size () + output_3.size () + output_4.size () + output_5.size () + output_6.size () + output_7.size () + output_8.size ()<< std::endl;
   
   /*for (auto embedding : output) {
     print_embedding (embedding, std::cout);
