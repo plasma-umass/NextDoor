@@ -265,10 +265,9 @@ public:
 
 void print_embedding (VertexEmbedding embedding, std::ostream& os);
 
-std::vector<VertexEmbedding> get_extensions (VertexEmbedding& embedding, CSR* csr)
-{
-  std::vector<VertexEmbedding> extensions;
-  
+void get_extensions (VertexEmbedding& embedding, CSR* csr, 
+                std::vector<VertexEmbedding>& extensions)
+{  
   if (embedding.all_false ()) {
     for (int u = 0; u < N; u++) {
       VertexEmbedding extension;
@@ -291,8 +290,6 @@ std::vector<VertexEmbedding> get_extensions (VertexEmbedding& embedding, CSR* cs
       }
     }
   }
-  
-  return extensions;
 }
 
 std::vector<VertexEmbedding> get_initial_embedding (CSR* csr)
@@ -339,7 +336,8 @@ void run_single_step_initial (void* input, int n_embeddings, CSR* csr,
   
   for (int i = 0; i < n_embeddings; i++) {
     VertexEmbedding embedding = embeddings[i];
-    std::vector<VertexEmbedding> extensions = get_extensions (embedding, csr);
+    std::vector<VertexEmbedding> extensions;
+    get_extensions (embedding, csr, extensions);
     
     for (auto extension : extensions) {
       if (clique_filter (csr, extension)) {
