@@ -16,8 +16,13 @@
 #define __device__
 
 #define LINE_SIZE 1024*1024
-const int N = 3312;
-const int N_EDGES = 9079;
+//citeseer.graph
+//const int N = 3312;
+//const int N_EDGES = 9074;
+
+//micro.graph
+const int N = 100000;
+const int N_EDGES = 2160312;
 
 double_t convertTimeValToDouble (struct timeval _time)
 {
@@ -97,10 +102,10 @@ class CSR
 public:
   struct Vertex
   {
-    short int id;
-    short int label;
-    short int start_edge_id;
-    short int end_edge_id;
+    int id;
+    int label;
+    int start_edge_id;
+    int end_edge_id;
     
     Vertex ()
     {
@@ -114,23 +119,29 @@ public:
     {
       id = vertex.get_id ();
       label = vertex.get_label ();
+      assert (id >= 0);
+      assert (label >= 0);
     }
     
     void set_start_edge_id (int start) {start_edge_id = start;}
     void set_end_edge_id (int end) {end_edge_id = end;}
   };
   
-  typedef short int Edge;
+  typedef int Edge;
   
 public:
-  CSR::Vertex vertices[N];
-  CSR::Edge edges[N_EDGES];
+  CSR::Vertex* vertices;
+  CSR::Edge* edges;
   int n_vertices;
   int n_edges;
   
 public:
   CSR (int _n_vertices, int _n_edges) 
-  {
+  { 
+    vertices = new CSR::Vertex[N];
+    edges = new CSR::Edge[N_EDGES];
+    assert (N == _n_vertices);
+    assert (N_EDGES == _n_edges);
     n_vertices = _n_vertices;
     n_edges = _n_edges;
   }
@@ -140,7 +151,7 @@ public:
     for (int i = 0; i < n_vertices; i++) {
       os << vertices[i].id << " " << vertices[i].label << " ";
       for (int edge_iter = vertices[i].start_edge_id; 
-           edge_iter < vertices[i].end_edge_id; edge_iter++) {
+           edge_iter <= vertices[i].end_edge_id; edge_iter++) {
         os << edges[edge_iter] << " ";
       }
       os << std::endl;
@@ -659,15 +670,16 @@ void run_single_step_vector (void* input, int n_embeddings, CSR* csr,
       printf ("Embedding at 1500");
       printf_embedding (embedding);
     }*/
-    for (int i = 0; i < embedding.get_n_vertices (); i++) {
-      int u = embedding.get_vertex (i);
+    VectorVertexEmbedding<embedding_size+1> extension;
+    vector_embedding_from_one_less_size (embedding, extension);
+    for (int j = 0; j < embedding.get_n_vertices (); j++) {
+      int u = embedding.get_vertex (j);
       
       for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
         int v = csr->get_edges () [e];
         
         if (embedding.has (v) == false) {//TODO:
-          VectorVertexEmbedding<embedding_size+1> extension;
-          vector_embedding_from_one_less_size (embedding, extension);
+          
           extension.add(v);
           
           if (clique_filter_vector (csr, &extension)) {
@@ -730,6 +742,7 @@ int main (int argc, char* argv[])
     
     bytes_read = sscanf (line, "%d %d", &id, &label);
     Vertex vertex (id, label);
+    
     char* _line = line + chars_in_int (id) + chars_in_int (label);
     do {
       int num;
@@ -754,7 +767,8 @@ int main (int argc, char* argv[])
   CSR* csr = new CSR(N, N_EDGES); 
   
   csr_from_graph (csr, graph);
-
+  //csr->print (std::cout);
+  
   std::vector<VectorVertexEmbedding<0>> initial_embeddings = get_initial_embedding_vector (csr);
   std::vector<VectorVertexEmbedding<1>> output_1;
   std::vector<VectorVertexEmbedding<2>> output_2;

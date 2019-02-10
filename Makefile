@@ -1,5 +1,7 @@
 all: cpu gpu
 
+cpuO0:
+	g++ src/main.cpp -std=c++11 -O0 -g -o cpu
 cpu: 
 	g++ src/main.cpp -std=c++11 -O2 -o cpu
 
