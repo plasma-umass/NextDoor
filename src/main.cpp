@@ -678,7 +678,8 @@ void run_single_step_vector (void* input, int n_embeddings, CSR* csr,
       for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
         int v = csr->get_edges () [e];
         
-        if (embedding.has (v) == false) {//TODO:
+        if (!(embedding.get_vertex (embedding.get_n_vertices () - 1) > v) &&
+             embedding.has (v) == false) {//TODO:
           
           extension.add(v);
           
@@ -798,7 +799,7 @@ int main (int argc, char* argv[])
   for (iter; iter < 10 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << std::endl;
     
-    char* global_mem_ptr = new char[3*1024*1024*1024UL];
+    char* global_mem_ptr = new char[10*1024*1024*1024UL];
     int n_embeddings = new_embeddings_size;
     size_t embedding_size = 0;
     size_t new_embedding_size = 0;
@@ -876,7 +877,7 @@ int main (int argc, char* argv[])
     
     int n_new_embeddings = 0;
     void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*(embedding_size);
-    int max_embeddings = 1000000;
+    int max_embeddings = 2000000;
     void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*new_embedding_size;
     int n_output = 0;
     double t1 = convertTimeValToDouble (getTimeOfDay ());

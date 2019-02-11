@@ -14,7 +14,7 @@
 #define LINE_SIZE 1024*1024
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
-#define THREAD_BLOCK_SIZE 256
+#define THREAD_BLOCK_SIZE 96
 #define WARP_SIZE 32
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
@@ -1147,10 +1147,11 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
       int u = embedding->get_vertex (i);
       for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
         int v = csr->get_edges () [e];
-        if (embedding->has (v) == false) {
+        if (!(embedding->get_vertex (embedding->get_n_vertices () - 1) > v) &&
+            embedding->has (v) == false) {
           VectorVertexEmbedding<embedding_size+1>* extension = embedding;
           extension->add (v);
-
+          
           if (clique_filter_vector (csr, extension)) {
             memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
             memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
@@ -1295,7 +1296,7 @@ int main (int argc, char* argv[])
     run_single_step_initial_vector (&initial_embeddings[0], 1, csr, 
                                     output_1, new_embeddings);
     new_embeddings_size = new_embeddings.size ();
-    embeddings = new VectorVertexEmbedding<1>[new_embeddings_size];
+    embeddings = malloc (sizeof (VectorVertexEmbedding<1>)*new_embeddings_size);
     for (int i = 0; i < new_embeddings_size; i++) {
       ((VectorVertexEmbedding<1>*)embeddings)[i] = new_embeddings[i];
       int v = ((VectorVertexEmbedding<1>*)embeddings)[i].get_vertex (0);
@@ -1306,7 +1307,7 @@ int main (int argc, char* argv[])
   iter = 1;
 
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 3 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     size_t global_mem_size = 10*1024*1024*1024UL;
     char* global_mem_ptr = new char[global_mem_size];
@@ -1390,16 +1391,16 @@ int main (int argc, char* argv[])
     }
     
     //TODO: delete embeddings too because there is a memory leak?
-    //if (iter > 1) {
-    //  delete[] (char*)embeddings;
-    //}
+    if (iter > 1) {
+      free(embeddings);
+    }
     
     void* embeddings_ptr = global_mem_ptr;
 
     int n_new_embeddings = 0;
     int n_new_embeddings_1 = 0;
     void* new_embeddings_ptr = (char*)embeddings_ptr + (n_embeddings)*(new_embedding_size); //Size of next embedding will be one more
-    size_t max_embeddings = 200000000;
+    size_t max_embeddings = 40000000; 
     printf ("new_embedding_size %ld\n", new_embedding_size);
     void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*(new_embedding_size);
     int n_output = 0;
@@ -1414,9 +1415,10 @@ int main (int argc, char* argv[])
     CSR* device_csr;
     
     const bool unified_mem = false;
-    if (unified_mem = true) {
-      cudaMallocManaged (embeddings_ptr, n_embeddings*embedding_size);
-      device_embeddings = (char*)embeddings_ptr;
+    if (unified_mem == true) {
+      //cudaMallocManaged (embeddings_ptr, n_embeddings*embedding_size);
+      //device_embeddings = (char*)embeddings_ptr;
+      assert(false);
     } else {
       cudaMalloc (&device_embeddings, n_embeddings*embedding_size);
       cudaMemcpy (device_embeddings, embeddings_ptr,
@@ -1543,7 +1545,7 @@ int main (int argc, char* argv[])
     new_embeddings_size = n_new_embeddings;
     switch (iter) {
       case 1: {
-        VectorVertexEmbedding<2>* new_embeddings = new VectorVertexEmbedding<2>[n_new_embeddings];
+        VectorVertexEmbedding<2>* new_embeddings = (VectorVertexEmbedding<2>*)malloc (sizeof (VectorVertexEmbedding<2>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<2> embedding = ((VectorVertexEmbedding<2>*)new_embeddings_ptr)[i];
@@ -1564,7 +1566,7 @@ int main (int argc, char* argv[])
       }
       
       case 2: {
-        VectorVertexEmbedding<3>* new_embeddings = new VectorVertexEmbedding<3>[n_new_embeddings];
+        VectorVertexEmbedding<3>* new_embeddings = (VectorVertexEmbedding<3>*)malloc (sizeof (VectorVertexEmbedding<3>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<3> embedding = ((VectorVertexEmbedding<3>*)new_embeddings_ptr)[i];
@@ -1584,7 +1586,7 @@ int main (int argc, char* argv[])
       }
       
       case 3: {
-        VectorVertexEmbedding<4>* new_embeddings = new VectorVertexEmbedding<4>[n_new_embeddings];
+        VectorVertexEmbedding<4>* new_embeddings = (VectorVertexEmbedding<4>*)malloc (sizeof (VectorVertexEmbedding<4>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<4> embedding = ((VectorVertexEmbedding<4>*)new_embeddings_ptr)[i];
@@ -1604,7 +1606,7 @@ int main (int argc, char* argv[])
       }
       
       case 4: {
-        VectorVertexEmbedding<5>* new_embeddings = new VectorVertexEmbedding<5>[n_new_embeddings];
+        VectorVertexEmbedding<5>* new_embeddings = (VectorVertexEmbedding<5>*)malloc (sizeof (VectorVertexEmbedding<5>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<5> embedding = ((VectorVertexEmbedding<5>*)new_embeddings_ptr)[i];
@@ -1624,7 +1626,7 @@ int main (int argc, char* argv[])
       }
       
       case 5: {
-        VectorVertexEmbedding<6>* new_embeddings = new VectorVertexEmbedding<6>[n_new_embeddings];
+        VectorVertexEmbedding<6>* new_embeddings = (VectorVertexEmbedding<6>*)malloc (sizeof (VectorVertexEmbedding<6>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<6> embedding = ((VectorVertexEmbedding<6>*)new_embeddings_ptr)[i];
@@ -1644,7 +1646,7 @@ int main (int argc, char* argv[])
       }
       
       case 6: {
-        VectorVertexEmbedding<7>* new_embeddings = new VectorVertexEmbedding<7>[n_new_embeddings];
+        VectorVertexEmbedding<7>* new_embeddings = (VectorVertexEmbedding<7>*)malloc (sizeof (VectorVertexEmbedding<7>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<7> embedding = ((VectorVertexEmbedding<7>*)new_embeddings_ptr)[i];
@@ -1664,7 +1666,7 @@ int main (int argc, char* argv[])
       }
       
       case 7: {
-        VectorVertexEmbedding<8>* new_embeddings = new VectorVertexEmbedding<8>[n_new_embeddings];
+        VectorVertexEmbedding<8>* new_embeddings = (VectorVertexEmbedding<8>*)malloc (sizeof(VectorVertexEmbedding<8>)*n_new_embeddings);
         
         for (int i = 0; i < n_new_embeddings; i++) {
           VectorVertexEmbedding<8> embedding = ((VectorVertexEmbedding<8>*)new_embeddings_ptr)[i];
