@@ -14,7 +14,7 @@
 #define LINE_SIZE 1024*1024
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
-#define THREAD_BLOCK_SIZE 96
+#define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
@@ -38,12 +38,12 @@
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 
 class Vertex
 {
@@ -377,21 +377,71 @@ public:
       assert (false);
     }
   #endif
-    array[filled_size++] = v;
+    
+    int pos = 0;
+    
+    for (int i = 0; i < filled_size; i++) {
+      if (array[i] > v) {
+        pos = i;
+        break;
+      }
+    }
+    
+    for (int i = filled_size-1; i >= pos ; i--) {
+      array[i+1] = array[i];
+    }
+    
+    array[pos] = v;
+    filled_size++;
   }
 
+  __host__ __device__
+  void add_last_in_sort_order () 
+  {
+    int v = array[filled_size-1];
+    remove_last ();
+    add (v);
+  }
+
+  __host__ __device__
+  void add_unsorted (int v) 
+  {
+    array[filled_size++] = v;
+  }
+  
   __host__ __device__
   void remove (int v)
   {
     printf ("Do not support remove\n");
     assert (false);
   }
-
+  
   __host__ __device__
-  bool has (int index)
+  bool has_logn (int v)
+  {
+    int l = 0;
+    int r = filled_size-1;
+    
+    while (l <= r) {
+      int m = l+(r-l)/2;
+      
+      if (array[m] == v)
+        return true;
+      
+      if (array[m] < v)
+        l = m + 1;
+      else
+        r = m - 1;
+    }
+    
+    return false;
+  }
+  
+  __host__ __device__
+  bool has (int v)
   {
     for (int i = 0; i < filled_size; i++) {
-      if (array[i] == index) {
+      if (array[i] == v) {
         return true;
       }
     }
@@ -409,6 +459,12 @@ public:
   int get_vertex (int index) const
   {
     return array[index];
+  }
+  
+  __host__ __device__
+  int get_last_vertex () const
+  {
+    return array[filled_size-1];
   }
   
   __host__ __device__
@@ -568,13 +624,11 @@ template <uint32_t size>
 __host__ __device__
 bool clique_filter_vector (CSR* csr, VectorVertexEmbedding<size>* embedding)
 {
-  assert (embedding->get_n_vertices () <= size);
   for (int i = 0; i < embedding->get_n_vertices (); i++) {
     int u = embedding->get_vertex (i);
-    assert (embedding->get_n_vertices () <= size);
     for (int j = 0; j < embedding->get_n_vertices (); j++) {
       int v = embedding->get_vertex (j);
-      if (u != v and embedding->has(v)) {
+      if (u != v and embedding->has (v)) {
         if (!csr->has_edge (u, v)) {
           return false;
         }
@@ -1147,14 +1201,33 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
       int u = embedding->get_vertex (i);
       for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
         int v = csr->get_edges () [e];
-        if (!(embedding->get_vertex (embedding->get_n_vertices () - 1) > v) &&
-            embedding->has (v) == false) {
+        bool is_canonical = true;
+        is_canonical = !(embedding->get_vertex (0) > v);
+        /*if (is_canonical) {
+          bool found_neighbor = false;
+          for (int j = 0; j < embedding->get_n_vertices (); j++) {
+            int v_j = embedding->get_vertex (j);
+            if (found_neighbor == false && csr->has_edge (v_j, v)) {
+              found_neighbor = true;
+            } else if (found_neighbor == true && v_j > v) {
+              is_canonical = false;
+              break;
+            }
+          }
+        }*/
+        if (is_canonical && embedding->has (v) == false) {
           VectorVertexEmbedding<embedding_size+1>* extension = embedding;
-          extension->add (v);
+          extension->add_unsorted (v);
           
           if (clique_filter_vector (csr, extension)) {
-            memcpy (&output[atomicAdd(n_output,1)], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-            memcpy (&new_embeddings[atomicAdd(n_next_step,1)], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+            //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
+            //extension.add_last_in_sort_order ();
+            int o = atomicAdd(n_output,1);
+            int n = atomicAdd(n_next_step,1);
+            memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+            memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+            //output[o].add_last_in_sort_order ();
+            new_embeddings[n].add_last_in_sort_order ();
           }
           extension->remove_last ();
         }
@@ -1447,15 +1520,14 @@ int main (int argc, char* argv[])
     std::cout << "starting kernel with n_embeddings: " << n_embeddings;
   
     double t1 = convertTimeValToDouble (getTimeOfDay ());
+    
 #ifdef USE_FIXED_THREADS
-    std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
-      run_single_step_bitvector_embedding<<<MAX_CUDA_THREADS/THREAD_BLOCK_SIZE,THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
-                              device_outputs, device_n_outputs,
-                              device_new_embeddings, device_n_embeddings,
-                              device_n_outputs_1, device_n_embeddings_1);
+    //std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
+    int thread_blocks = MAX_CUDA_THREADS/THREAD_BLOCK_SIZE;
 #else
     int thread_blocks = (n_embeddings%THREAD_BLOCK_SIZE != 0) ? (n_embeddings/THREAD_BLOCK_SIZE+1) : n_embeddings/THREAD_BLOCK_SIZE;
-    std::cout << " threads: " << n_embeddings/THREAD_BLOCK_SIZE << std::endl;
+#endif
+    std::cout << " threads: " << thread_blocks << std::endl;
     switch (iter) {
       case 1: {
         run_single_step_vectorvertex_embedding<1><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
@@ -1514,7 +1586,6 @@ int main (int argc, char* argv[])
         break;
       }
     }
-#endif
     
     cudaDeviceSynchronize ();
 

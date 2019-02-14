@@ -17,12 +17,12 @@
 
 #define LINE_SIZE 1024*1024
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 
 double_t convertTimeValToDouble (struct timeval _time)
 {
@@ -384,6 +384,181 @@ public:
     //delete[] array;
   }
 };
+
+
+// C++ program for Huffman Coding 
+#include <bits/stdc++.h> 
+using namespace std; 
+  
+// A Huffman tree node 
+struct MinHeapNode { 
+  
+    // One of the input characters 
+    int32_t data; 
+  
+    // Frequency of the character 
+    unsigned freq; 
+  
+    // Left and right child 
+    MinHeapNode *left, *right; 
+  
+    MinHeapNode(int32_t data, unsigned freq) 
+  
+    { 
+  
+        left = right = NULL; 
+        this->data = data; 
+        this->freq = freq; 
+    } 
+}; 
+  
+// For comparison of 
+// two heap nodes (needed in min heap) 
+struct compare { 
+  
+    bool operator()(MinHeapNode* l, MinHeapNode* r) 
+  
+    { 
+        return (l->freq > r->freq); 
+    } 
+}; 
+  
+// Prints huffman codes from 
+// the root of Huffman Tree. 
+void printCodes(std::unordered_map<int, std::string>& codes, struct MinHeapNode* root, string str) 
+{ 
+  if (!root) 
+    return; 
+
+  if (root->data != -1) {
+    codes[root->data] = str; 
+  }
+
+  printCodes(codes, root->left, str + "0"); 
+  printCodes(codes, root->right, str + "1"); 
+}
+  
+// The main function that builds a Huffman Tree and 
+// print codes by traversing the built Huffman Tree 
+void HuffmanCodes(int data[], std::unordered_map<int, int> freq, size_t size,
+                  std::unordered_map<int, std::string>& codes)
+
+{ 
+    struct MinHeapNode *left, *right, *top; 
+  
+    // Create a min heap & inserts all characters of data[] 
+    priority_queue<MinHeapNode*, vector<MinHeapNode*>, compare> minHeap; 
+  
+    for (size_t i = 0; i < size; ++i) 
+        minHeap.push(new MinHeapNode(data[i], freq[i])); 
+  
+    // Iterate while size of heap doesn't become 1 
+    while (minHeap.size() != 1) { 
+  
+        // Extract the two minimum 
+        // freq items from min heap 
+        left = minHeap.top(); 
+        minHeap.pop(); 
+  
+        right = minHeap.top(); 
+        minHeap.pop(); 
+  
+        // Create a new internal node with 
+        // frequency equal to the sum of the 
+        // two nodes frequencies. Make the 
+        // two extracted node as left and right children 
+        // of this new node. Add this node 
+        // to the min heap '$' is a special value 
+        // for internal nodes, not used 
+        top = new MinHeapNode(-1, left->freq + right->freq); 
+  
+        top->left = left; 
+        top->right = right; 
+  
+        minHeap.push(top); 
+    } 
+  
+    // Print Huffman codes using 
+    // the Huffman tree built above 
+    printCodes(codes, minHeap.top(), ""); 
+} 
+
+template <size_t size>
+size_t get_vertex_frequencies (std::unordered_map<int, int>& vertex_freq, 
+                               VectorVertexEmbedding<size>* embeddings, size_t n_embeddings)
+{
+  for (size_t i = 0; i < n_embeddings; i++) {
+    VectorVertexEmbedding<size>& embedding = embeddings[i];
+    for (size_t j = 0; j < embedding.get_n_vertices (); j++) {
+      if (vertex_freq.find (j) == vertex_freq.end ()) {
+        vertex_freq[j] = 0;
+      }
+
+      vertex_freq[j] += 0;
+    }
+  }
+}
+
+template<size_t size>
+void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n_embeddings)
+{
+  return;
+  std::unordered_map<int, int> vertex_freq;
+  //Do it till first vertex is 1.
+  size_t start_2984 = 0;
+  size_t end_2984 = 0;
+  for (int i=0; i < n_embeddings; i++) {
+    if (embeddings[i].get_vertex(0) == 2984) {
+      start_2984 = i;
+      break;
+    }
+  }
+
+  for (int i = start_2984; i < n_embeddings; i++) {
+    if (embeddings[i].get_vertex (0) != 2984) {
+      end_2984 = i;
+      break;
+    }
+  }
+
+  end_2984 = end_2984 - 10;
+  std::cout << "start_2984 " << start_2984 << " end_2984 " << end_2984 << std::endl;
+  
+  n_embeddings = end_2984 - start_2984;
+  embeddings = embeddings + start_2984;
+  get_vertex_frequencies (vertex_freq, embeddings, n_embeddings);
+  int* data = new int[(size*n_embeddings)];
+  for (size_t i = 0; i < n_embeddings; i += size) {
+    assert (embeddings[i].get_n_vertices() == size);
+    for (int j = 0; j < embeddings[i].get_n_vertices (); j++) {
+      data[(i+j)] = embeddings[i].get_vertex (j);
+    }
+  }
+  std::unordered_map<int, std::string> codes;
+  //TODO: We can optimize data here too. No need to create another data array.
+  HuffmanCodes (data, vertex_freq, size*n_embeddings, codes);
+  size_t max_code_size = 0;
+  for (auto iter : codes) {
+    max_code_size = std::max (max_code_size, iter.second.length ());
+  }
+
+  std::cout << "max_code_size = " <<max_code_size <<std::endl;
+}
+
+// Driver program to test above functions 
+// int main() 
+// { 
+  
+//     char arr[] = { 'a', 'b', 'c', 'd', 'e', 'f' }; 
+//     int freq[] = { 5, 9, 12, 13, 16, 45 }; 
+  
+//     int size = sizeof(arr) / sizeof(arr[0]); 
+  
+//     HuffmanCodes(arr, freq, size); 
+  
+//     return 0; 
+// } 
+  
 
 template <size_t size>
 void vector_embedding_from_one_less_size (VectorVertexEmbedding<size>& vec_emb1,
@@ -810,6 +985,7 @@ int main (int argc, char* argv[])
         for (int i = 0; i < n_embeddings; i++) {
           ((VectorVertexEmbedding<1>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<1>*) embeddings)[i];
         }
+        
         break;
       }      
       case 2: {
@@ -828,6 +1004,7 @@ int main (int argc, char* argv[])
         for (int i = 0; i < n_embeddings; i++) {
           ((VectorVertexEmbedding<3>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<3>*)embeddings)[i];
         }
+        //perform_huffman_encoding (((VectorVertexEmbedding<3>*) embeddings), n_embeddings);
         break;
       }
       
@@ -837,6 +1014,7 @@ int main (int argc, char* argv[])
           for (int i = 0; i < n_embeddings; i++) {
             ((VectorVertexEmbedding<4>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<4>*)embeddings)[i];
         }
+        perform_huffman_encoding (((VectorVertexEmbedding<4>*) embeddings), n_embeddings);
         break;
       }
       case 5: {
@@ -845,6 +1023,7 @@ int main (int argc, char* argv[])
         for (int i = 0; i < n_embeddings; i++) {
           ((VectorVertexEmbedding<5>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<5>*)embeddings)[i];
         }
+        perform_huffman_encoding (((VectorVertexEmbedding<5>*) embeddings), n_embeddings);
         break;
       }
       case 6: {
