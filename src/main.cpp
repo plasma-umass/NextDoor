@@ -383,6 +383,13 @@ public:
   {
     //delete[] array;
   }
+
+  void print (std::ostream& os)
+  {
+    for (int i = 0; i < filled_size; i++){
+      os << get_vertex (i) << ", ";
+    }
+  }
 };
 
 
@@ -431,6 +438,7 @@ void printCodes(std::unordered_map<int, std::string>& codes, struct MinHeapNode*
     return; 
 
   if (root->data != -1) {
+    assert (root->data >= 0 && root->data < N);
     codes[root->data] = str; 
   }
 
@@ -440,7 +448,7 @@ void printCodes(std::unordered_map<int, std::string>& codes, struct MinHeapNode*
   
 // The main function that builds a Huffman Tree and 
 // print codes by traversing the built Huffman Tree 
-void HuffmanCodes(int data[], std::unordered_map<int, int> freq, size_t size,
+void HuffmanCodes(std::vector<int>& data, std::unordered_map<int, int>& freq,
                   std::unordered_map<int, std::string>& codes)
 
 { 
@@ -449,8 +457,11 @@ void HuffmanCodes(int data[], std::unordered_map<int, int> freq, size_t size,
     // Create a min heap & inserts all characters of data[] 
     priority_queue<MinHeapNode*, vector<MinHeapNode*>, compare> minHeap; 
   
-    for (size_t i = 0; i < size; ++i) 
-        minHeap.push(new MinHeapNode(data[i], freq[i])); 
+    for (size_t i = 0; i < data.size (); ++i) {
+      assert (data[i]>= 0 && data[i] < N);
+      //std::cout << "d " << data[i] << " " << freq[data[i]] << std::endl;
+      minHeap.push(new MinHeapNode(data[i], freq[data[i]])); 
+    }
   
     // Iterate while size of heap doesn't become 1 
     while (minHeap.size() != 1) { 
@@ -490,59 +501,122 @@ size_t get_vertex_frequencies (std::unordered_map<int, int>& vertex_freq,
   for (size_t i = 0; i < n_embeddings; i++) {
     VectorVertexEmbedding<size>& embedding = embeddings[i];
     for (size_t j = 0; j < embedding.get_n_vertices (); j++) {
-      if (vertex_freq.find (j) == vertex_freq.end ()) {
-        vertex_freq[j] = 0;
+      int v = embedding.get_vertex (j);
+      if (vertex_freq.find (v) == vertex_freq.end ()) {
+        vertex_freq[v] = 0;
       }
 
-      vertex_freq[j] += 0;
+      vertex_freq[v] += 1;
     }
   }
 }
 
 template<size_t size>
+std::string encode_embedding (VectorVertexEmbedding<size>& embedding, std::unordered_map<int, std::string>& codes)
+{
+  std::string encoding = "";
+  for (int i = 0; i < embedding.get_n_vertices (); i++) {
+    int v = embedding.get_vertex (i);
+    assert (codes.find(v) != codes.end ());
+    encoding += codes[v];
+  }
+  return encoding;
+}
+
+template<size_t size>
 void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n_embeddings)
 {
-  return;
-  std::unordered_map<int, int> vertex_freq;
   //Do it till first vertex is 1.
-  size_t start_2984 = 0;
-  size_t end_2984 = 0;
-  for (int i=0; i < n_embeddings; i++) {
-    if (embeddings[i].get_vertex(0) == 2984) {
-      start_2984 = i;
-      break;
+  for (int v = 0; v < N; v++) {
+    //if (v != 3193)
+    //  continue;
+    size_t start_v = -1;
+    size_t end_v = -1;
+    for (int i=0; i < n_embeddings; i++) {
+      if (embeddings[i].get_vertex(0) == v) {
+        start_v = i;
+        break;
+      }
+    }
+
+    if (start_v == -1)
+      continue;
+
+    for (int i = start_v; i < n_embeddings; i++) {
+      if (embeddings[i].get_vertex (0) != v) {
+        end_v = i;
+        break;
+      }
+    }    
+    
+    if (end_v == -1) {
+      end_v = n_embeddings-1;
+    }
+    //end_2984 = end_2984 - 10;
+    //std::cout << "start_2984 " << start_2984 << " end_2984 " << end_2984 << std::endl;
+    int parts = 3;
+    size_t _n_embeddings = end_v+1 - start_v;
+    size_t each_part_size = _n_embeddings/parts;
+    
+    for (int part = 0; part < parts; part++) {
+      std::unordered_map<int, int> vertex_freq;
+      std::unordered_map<int, std::string> codes;
+      vertex_freq.clear ();
+      codes.clear ();
+      int start = start_v + part*each_part_size;
+      VectorVertexEmbedding<size>* _embeddings = &embeddings[start];
+      get_vertex_frequencies (vertex_freq, _embeddings, each_part_size);
+      std::vector <int> data;
+      for (size_t i = 0; i < each_part_size; i++) {
+        VectorVertexEmbedding<size>& e = _embeddings[i];
+        assert (e.get_n_vertices() == size);
+        for (int j = 0; j < e.get_n_vertices (); j++) {
+          int v = e.get_vertex (j);
+          //std::cout << "v : " << v << std::endl;
+          data.push_back (v);
+        }
+      }
+    
+      //TODO: We can optimize data here too. No need to create another data array.
+      
+      HuffmanCodes (data, vertex_freq, codes);
+      size_t max_code_size = 0;
+      for (auto iter : codes) {
+        max_code_size = std::max (max_code_size, iter.second.length ());
+        //std::cout << iter.first << " : " << iter.second << std::endl;
+      }
+
+      for (auto iter : vertex_freq) {
+        //std::cout << iter.first << " : " << iter.second << std::endl;
+      }
+
+      std::cout << "distinct codes " << codes.size () << std::endl;
+      std::cout << "vertex_freqs " << vertex_freq.size () << std::endl;
+      assert (vertex_freq.size () == codes.size ());
+      
+      
+      double_t avg_encoding_len = 0;
+      size_t max_encoding_len = 0;
+      for (size_t i = 0; i < each_part_size; i++) {
+        std::string encoding = encode_embedding (_embeddings[i], codes);
+        avg_encoding_len += encoding.length();
+        max_encoding_len = std::max(max_encoding_len, encoding.length ());
+        if (false and encoding.length () == 53) {
+          std::cout << encoding << std::endl;
+          _embeddings[i].print (std::cout);
+          std::cout << std::endl;
+        }
+
+        if (false and _embeddings[i].has (3154)) {
+          std::cout << "embedding has 3154 "<< std::endl;
+        }
+      }
+
+      avg_encoding_len = avg_encoding_len/each_part_size;
+      std::cout << "v: " << v << " part_size " << each_part_size << " max_code_size = " 
+        <<  max_code_size << " avg_encoding_len = " << avg_encoding_len << " max_encoding_len = " << max_encoding_len << std::endl;      
     }
   }
-
-  for (int i = start_2984; i < n_embeddings; i++) {
-    if (embeddings[i].get_vertex (0) != 2984) {
-      end_2984 = i;
-      break;
-    }
-  }
-
-  end_2984 = end_2984 - 10;
-  std::cout << "start_2984 " << start_2984 << " end_2984 " << end_2984 << std::endl;
-  
-  n_embeddings = end_2984 - start_2984;
-  embeddings = embeddings + start_2984;
-  get_vertex_frequencies (vertex_freq, embeddings, n_embeddings);
-  int* data = new int[(size*n_embeddings)];
-  for (size_t i = 0; i < n_embeddings; i += size) {
-    assert (embeddings[i].get_n_vertices() == size);
-    for (int j = 0; j < embeddings[i].get_n_vertices (); j++) {
-      data[(i+j)] = embeddings[i].get_vertex (j);
-    }
-  }
-  std::unordered_map<int, std::string> codes;
-  //TODO: We can optimize data here too. No need to create another data array.
-  HuffmanCodes (data, vertex_freq, size*n_embeddings, codes);
-  size_t max_code_size = 0;
-  for (auto iter : codes) {
-    max_code_size = std::max (max_code_size, iter.second.length ());
-  }
-
-  std::cout << "max_code_size = " <<max_code_size <<std::endl;
 }
 
 // Driver program to test above functions 
@@ -1032,6 +1106,7 @@ int main (int argc, char* argv[])
         for (int i = 0; i < n_embeddings; i++) {
           ((VectorVertexEmbedding<6>*)global_mem_ptr)[i] = ((VectorVertexEmbedding<6>*)embeddings)[i];
         }
+        perform_huffman_encoding (((VectorVertexEmbedding<6>*) embeddings), n_embeddings);
         break;
       }
       case 7: {
