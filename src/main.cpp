@@ -526,7 +526,10 @@ std::string encode_embedding (VectorVertexEmbedding<size>& embedding, std::unord
 template<size_t size>
 void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n_embeddings)
 {
-  //Do it till first vertex is 1.
+  return;
+  size_t encoded_size = 0;
+  size_t lookup_table_size = 0;
+  //For all vertices
   for (int v = 0; v < N; v++) {
     //if (v != 3193)
     //  continue;
@@ -554,10 +557,12 @@ void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n
     }
     //end_2984 = end_2984 - 10;
     //std::cout << "start_2984 " << start_2984 << " end_2984 " << end_2984 << std::endl;
-    int parts = 3;
+    int parts = 4;
     size_t _n_embeddings = end_v+1 - start_v;
-    size_t each_part_size = _n_embeddings/parts;
-    
+    size_t each_part_size = _n_embeddings/parts; //std::min (_n_embeddings, 10UL); 
+    //parts = _n_embeddings/each_part_size;
+    size_t total_size = 0;
+
     for (int part = 0; part < parts; part++) {
       std::unordered_map<int, int> vertex_freq;
       std::unordered_map<int, std::string> codes;
@@ -585,6 +590,13 @@ void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n
         max_code_size = std::max (max_code_size, iter.second.length ());
         //std::cout << iter.first << " : " << iter.second << std::endl;
       }
+    #if 1
+      if (max_code_size < 8) max_code_size = 8;
+      else if (max_code_size < 16) max_code_size = 16;
+      //else if (max_code_size < 24) max_code_size = 24;
+      //else if (max_code_size < 32) max_code_size = 32;
+      else assert (false);
+    #endif
 
       for (auto iter : vertex_freq) {
         //std::cout << iter.first << " : " << iter.second << std::endl;
@@ -594,7 +606,8 @@ void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n
       std::cout << "vertex_freqs " << vertex_freq.size () << std::endl;
       assert (vertex_freq.size () == codes.size ());
       
-      
+      //lookup_table_size += powl (2, max_code_size);
+      lookup_table_size += codes.size()*max_code_size/8;
       double_t avg_encoding_len = 0;
       size_t max_encoding_len = 0;
       for (size_t i = 0; i < each_part_size; i++) {
@@ -614,25 +627,16 @@ void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n
 
       avg_encoding_len = avg_encoding_len/each_part_size;
       std::cout << "v: " << v << " part_size " << each_part_size << " max_code_size = " 
-        <<  max_code_size << " avg_encoding_len = " << avg_encoding_len << " max_encoding_len = " << max_encoding_len << std::endl;      
+        <<  max_code_size << "bits avg_encoding_len = " << avg_encoding_len << " max_encoding_len = " << max_encoding_len << std::endl;      
+      total_size += max_code_size*size*each_part_size/8;
     }
-  }
-}
 
-// Driver program to test above functions 
-// int main() 
-// { 
-  
-//     char arr[] = { 'a', 'b', 'c', 'd', 'e', 'f' }; 
-//     int freq[] = { 5, 9, 12, 13, 16, 45 }; 
-  
-//     int size = sizeof(arr) / sizeof(arr[0]); 
-  
-//     HuffmanCodes(arr, freq, size); 
-  
-//     return 0; 
-// } 
-  
+    encoded_size += total_size;
+    std::cout << "v: " << v << " encoding_size: " << total_size << " bytes original_size: " << _n_embeddings*size*4 << " bytes"<<std::endl;
+  }
+
+  std::cout << "encoded_size: " << encoded_size << " bytes " << " uncompressed_size: " << n_embeddings*size*4 << " lookup_table_size " << lookup_table_size << std::endl;
+}
 
 template <size_t size>
 void vector_embedding_from_one_less_size (VectorVertexEmbedding<size>& vec_emb1,
@@ -902,6 +906,25 @@ void run_single_step_bitvector (void* input, int n_embeddings, CSR* csr,
 }
 
 template <size_t embedding_size>
+bool is_embedding_canonical (CSR* csr, VectorVertexEmbedding<embedding_size>& embedding, int v)
+{
+  if (embedding.get_vertex (0) > v)
+    return false;
+
+  bool found_neighbor = false;
+  for (int j = 0; j < embedding.get_n_vertices (); j++) {
+    int v_j = embedding.get_vertex (j);
+    if (found_neighbor == false && csr->has_edge (v_j, v)) {
+      found_neighbor = true;
+    } else if (found_neighbor == true && v_j > v) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <size_t embedding_size>
 void run_single_step_vector (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr, 
                       int* n_output,
@@ -927,8 +950,8 @@ void run_single_step_vector (void* input, int n_embeddings, CSR* csr,
       for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
         int v = csr->get_edges () [e];
         
-        if (!(embedding.get_vertex (embedding.get_n_vertices () - 1) > v) &&
-             embedding.has (v) == false) {//TODO:
+        if (embedding.has (v) == false && 
+            is_embedding_canonical (csr, embedding, v)) {
           
           extension.add(v);
           
