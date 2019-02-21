@@ -526,7 +526,6 @@ std::string encode_embedding (VectorVertexEmbedding<size>& embedding, std::unord
 template<size_t size>
 void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n_embeddings)
 {
-  return;
   size_t encoded_size = 0;
   size_t lookup_table_size = 0;
   //For all vertices

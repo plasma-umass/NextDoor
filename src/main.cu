@@ -15,7 +15,7 @@
 #define LINE_SIZE 1024*1024
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
-#define THREAD_BLOCK_SIZE 256
+#define THREAD_BLOCK_SIZE 96
 #define WARP_SIZE 32
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
@@ -39,12 +39,12 @@
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 
 class Vertex
 {
@@ -177,6 +177,7 @@ public:
   __host__ __device__
   bool has_edge (int u, int v)
   {
+    //TODO: Since graph is sorted, do this using binary search
     for (int e = get_start_edge_idx (u); e <= get_end_edge_idx (u); e++) {
       if (edges[e] == v) {
         return true;
@@ -503,10 +504,10 @@ void vector_embedding_from_one_less_size (VectorVertexEmbedding<size>& vec_emb1,
 {
   //TODO: Optimize here, filled_size++ in add is being called several times
   //but can be called only once too
-  if  (false and vec_emb1.get_n_vertices () != size) {
-    printf ("vec_emb1.get_n_vertices () %ld != size %d\n", vec_emb1.get_n_vertices (), size);
-    assert (false);
-  }
+  //if  (false and vec_emb1.get_n_vertices () != size) {
+  //  printf ("vec_emb1.get_n_vertices () %ld != size %d\n", vec_emb1.get_n_vertices (), size);
+  //  assert (false);
+  //}
   for (int i = 0; i < vec_emb1.get_n_vertices (); i++) {
     vec_emb2.add (vec_emb1.get_vertex (i));
   }
@@ -970,7 +971,7 @@ void run_single_step_bitvector_embedding (void* input, int n_embeddings, CSR* cs
 
 template <size_t size>
 __host__ __device__
-bool is_embedding_canonical (CSR* csr, VectorVertexEmbedding<size>* embedding, int v)
+inline bool is_embedding_canonical (CSR* csr, VectorVertexEmbedding<size>* embedding, int v)
 {
   if (embedding->get_vertex (0) > v)
     return false;
@@ -994,7 +995,8 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                       void* output_ptr,
                       int* n_output,
                       void* next_step, int* n_next_step,
-                      int* n_output_1, int* n_next_step_1)
+                      int* n_output_1, int* n_next_step_1,
+                      int only_copy_change)
 {
   int id;
 
@@ -1022,8 +1024,7 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
 #endif
 
   VectorVertexEmbedding<embedding_size>* embeddings = (VectorVertexEmbedding<embedding_size>*)input;
-  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step;
-  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+  
 #ifdef USE_EMBEDDING_IN_LOCAL_MEM
   unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size+1>)];
 #endif
@@ -1240,17 +1241,30 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
             //extension.add_last_in_sort_order ();
             int o = atomicAdd(n_output,1);
             int n = atomicAdd(n_next_step,1);
-            memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-            memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+            
+            if (only_copy_change) {
+              int* new_embeddings = (int*) next_step;
+              int* output = (int*) output_ptr;
+
+              new_embeddings[2*n] = id;
+              new_embeddings[2*n+1] = v;
+              output[2*o] = id;
+              output[2*o+1] = v;
+            }
+            else {
+              VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step;
+              VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+              memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+            }
             //output[o].add_last_in_sort_order ();
-            new_embeddings[n].add_last_in_sort_order ();
+            //new_embeddings[n].add_last_in_sort_order ();
           }
           extension->remove_last ();
         }
       }
     }
   #endif
-
   }
 
   //printf ("embeddings generated [1000, 2000)= %d and [2000, 3000) = %d\n", q[0], q[1]);
@@ -1399,7 +1413,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = 1000000;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 6 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     size_t global_mem_size = 10*1024*1024*1024UL;
     char* global_mem_ptr = new char[global_mem_size];
@@ -1518,7 +1532,7 @@ int main (int argc, char* argv[])
     n_embeddings = 0;
 
     void* new_embeddings_ptr = ((char*)global_mem_ptr) + (global_mem_iter)*(new_embedding_size); //Size of next embedding will be one more
-    size_t max_embeddings = 100000000; //There is something with this value which makes it perform better, may be alignment?
+    size_t max_embeddings = 40000000; //There is something with this value which makes it perform better, may be alignment?
     printf ("new_embedding_size %ld\n", new_embedding_size);
     void* output_ptr = (char*)new_embeddings_ptr + (max_embeddings)*(new_embedding_size);
 
@@ -1584,61 +1598,62 @@ int main (int argc, char* argv[])
       int thread_blocks = (n_embeddings%THREAD_BLOCK_SIZE != 0) ? (n_embeddings/THREAD_BLOCK_SIZE+1) : n_embeddings/THREAD_BLOCK_SIZE;
   #endif
       std::cout << " threads: " << thread_blocks << std::endl;
+      int only_copy_change = 1;
       switch (iter) {
         case 1: {
           run_single_step_vectorvertex_embedding<1><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 2: {
           run_single_step_vectorvertex_embedding<2><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 3: {
           run_single_step_vectorvertex_embedding<3><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 4: {
           run_single_step_vectorvertex_embedding<4><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 5: {
           run_single_step_vectorvertex_embedding<5><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 6: {
           run_single_step_vectorvertex_embedding<6><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 7: {
           run_single_step_vectorvertex_embedding<7><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
         case 8: {
           run_single_step_vectorvertex_embedding<8><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings, n_embeddings, device_csr,
                                 device_outputs, device_n_outputs,
                                 device_new_embeddings, device_n_embeddings,
-                                device_n_outputs_1, device_n_embeddings_1);
+                                device_n_outputs_1, device_n_embeddings_1, only_copy_change);
           break;
         }
       }
@@ -1660,8 +1675,14 @@ int main (int argc, char* argv[])
 
       cudaMemcpy (&n_new_embeddings, device_n_embeddings, sizeof(0), cudaMemcpyDeviceToHost);
       cudaMemcpy (&n_output, device_n_outputs, sizeof(0), cudaMemcpyDeviceToHost);
-      cudaMemcpy (new_embeddings_ptr, device_new_embeddings, n_new_embeddings*(new_embedding_size), cudaMemcpyDeviceToHost);
-      cudaMemcpy (output_ptr, device_outputs, n_output*(new_embedding_size), cudaMemcpyDeviceToHost);
+      if (only_copy_change) {
+        cudaMemcpy (new_embeddings_ptr, device_new_embeddings, n_new_embeddings*2*sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy (output_ptr, device_outputs, n_output*2*sizeof(int), cudaMemcpyDeviceToHost);
+      }
+      else {
+        cudaMemcpy (new_embeddings_ptr, device_new_embeddings, n_new_embeddings*(new_embedding_size), cudaMemcpyDeviceToHost);
+        cudaMemcpy (output_ptr, device_outputs, n_output*(new_embedding_size), cudaMemcpyDeviceToHost);
+      }
       cudaMemcpy (&n_new_embeddings_1, device_n_embeddings_1, sizeof(0), cudaMemcpyDeviceToHost);
       cudaMemcpy (&n_output_1, device_n_outputs_1, sizeof(0), cudaMemcpyDeviceToHost);
 
@@ -1675,18 +1696,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<2>* new_embeddings = (VectorVertexEmbedding<2>*)malloc (sizeof (VectorVertexEmbedding<2>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<2> embedding = ((VectorVertexEmbedding<2>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<2> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<1>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<2> embedding = ((VectorVertexEmbedding<2>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_2.push_back (((VectorVertexEmbedding<2>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<2> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<1>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_2.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_2.push_back (((VectorVertexEmbedding<2>*)output_ptr)[i]);
+            }
           }
           
           break;
@@ -1696,18 +1738,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<3>* new_embeddings = (VectorVertexEmbedding<3>*)malloc (sizeof (VectorVertexEmbedding<3>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<3> embedding = ((VectorVertexEmbedding<3>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %ld vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<3> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<2>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<3> embedding = ((VectorVertexEmbedding<3>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %ld vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_3.push_back (((VectorVertexEmbedding<3>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<3> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<2>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_3.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_3.push_back (((VectorVertexEmbedding<3>*)output_ptr)[i]);
+            }
           }
           break;
         }
@@ -1716,18 +1779,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<4>* new_embeddings = (VectorVertexEmbedding<4>*)malloc (sizeof (VectorVertexEmbedding<4>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<4> embedding = ((VectorVertexEmbedding<4>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<4> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<3>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<4> embedding = ((VectorVertexEmbedding<4>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_4.push_back (((VectorVertexEmbedding<4>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<4> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<3>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_4.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_4.push_back (((VectorVertexEmbedding<4>*)output_ptr)[i]);
+            }
           }
           break;
         }
@@ -1736,18 +1820,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<5>* new_embeddings = (VectorVertexEmbedding<5>*)malloc (sizeof (VectorVertexEmbedding<5>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<5> embedding = ((VectorVertexEmbedding<5>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<5> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<4>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<5> embedding = ((VectorVertexEmbedding<5>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_5.push_back (((VectorVertexEmbedding<5>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<5> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<4>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_5.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_5.push_back (((VectorVertexEmbedding<5>*)output_ptr)[i]);
+            }
           }
           break;
         }
@@ -1756,18 +1861,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<6>* new_embeddings = (VectorVertexEmbedding<6>*)malloc (sizeof (VectorVertexEmbedding<6>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<6> embedding = ((VectorVertexEmbedding<6>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<6> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<5>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<6> embedding = ((VectorVertexEmbedding<6>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_6.push_back (((VectorVertexEmbedding<6>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<6> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<5>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_6.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_6.push_back (((VectorVertexEmbedding<6>*)output_ptr)[i]);
+            }
           }
           break;
         }
@@ -1776,18 +1902,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<7>* new_embeddings = (VectorVertexEmbedding<7>*)malloc (sizeof (VectorVertexEmbedding<7>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<7> embedding = ((VectorVertexEmbedding<7>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<7> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<6>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<7> embedding = ((VectorVertexEmbedding<7>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_7.push_back (((VectorVertexEmbedding<7>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<7> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<6>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_7.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_7.push_back (((VectorVertexEmbedding<7>*)output_ptr)[i]);
+            }
           }
           break;
         }
@@ -1796,18 +1943,39 @@ int main (int argc, char* argv[])
           VectorVertexEmbedding<8>* new_embeddings = (VectorVertexEmbedding<8>*)malloc (sizeof(VectorVertexEmbedding<8>)*n_new_embeddings);
           
           for (int i = 0; i < n_new_embeddings; i++) {
-            VectorVertexEmbedding<8> embedding = ((VectorVertexEmbedding<8>*)new_embeddings_ptr)[i];
-            new_embeddings [i] = embedding;
-            #ifdef DEBUG
-            if (embedding.get_n_vertices () != (iter + 1)) {
-              printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+            if (only_copy_change) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<8> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<7>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              new_embeddings [i] = embedding;
             }
-            #endif
+            else {
+              VectorVertexEmbedding<8> embedding = ((VectorVertexEmbedding<8>*)new_embeddings_ptr)[i];
+              new_embeddings [i] = embedding;
+              #ifdef DEBUG
+              if (embedding.get_n_vertices () != (iter + 1)) {
+                printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
+              }
+              #endif
+            }
           }
           
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_new_embeddings));
-          for (int i = 0; i < n_output; i++) {
-            output_8.push_back (((VectorVertexEmbedding<8>*)output_ptr)[i]);
+          if (only_copy_change) {
+            for (int i = 0; i < n_output; i++) {
+              int id = ((int*)new_embeddings_ptr)[2*i];
+              int v = ((int*)new_embeddings_ptr)[2*i+1];
+              VectorVertexEmbedding<8> embedding;
+              vector_embedding_from_one_less_size (((VectorVertexEmbedding<7>*)embeddings_ptr)[id], embedding);
+              embedding.add (v);
+              output_8.push_back (embedding);
+            }
+          } else {
+            for (int i = 0; i < n_output; i++) {
+              output_8.push_back (((VectorVertexEmbedding<8>*)output_ptr)[i]);
+            }
           }
           break;
         }
