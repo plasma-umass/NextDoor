@@ -1416,13 +1416,21 @@ int main (int argc, char* argv[])
 
   iter = 1;
   double total_stream_time = 0;
+  size_t global_mem_size = 10*1024*1024*1024UL;
+#define PINNED_MEMORY
+#ifdef PINNED_MEMORY
+  char* global_mem_ptr;
+  cudaError_t malloc_error = cudaMallocHost ((void**)&global_mem_ptr, global_mem_size);
+  assert (malloc_error == cudaSuccess);
+#else
+  char* global_mem_ptr = new char[global_mem_size];
+#endif
 
   const size_t max_embedding_size_per_iter = (2000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
   for (iter; iter < 7 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
-    size_t global_mem_size = 10*1024*1024*1024UL;
-    char* global_mem_ptr = new char[global_mem_size];
+    
     size_t remaining_embeddings = new_embeddings_size;
     size_t n_embeddings = new_embeddings_size;
     #ifdef DEBUG
@@ -1555,7 +1563,7 @@ int main (int argc, char* argv[])
       remaining_embeddings -= n_embeddings;
       //n_embeddings = (n_embeddings/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
       
-      const int N_STREAMS = 2;
+      const int N_STREAMS = 1;
       int only_copy_change = 0;
       assert (only_copy_change == 0); //TODO: Streams with only copy change
       void* new_embeddings_ptr[N_STREAMS];
@@ -2096,9 +2104,14 @@ int main (int argc, char* argv[])
       }
     }
     new_embeddings_size = n_next_step_embeddings;
-    delete[] global_mem_ptr;
+    
   }
 
+#ifdef PINNED_MEMORY
+  cudaFree (global_mem_ptr);
+#else
+  delete[] global_mem_ptr;
+#endif
   std::cout << "Number of embeddings found "<< (output_1.size () + output_2.size () + output_3.size () + output_4.size () + output_5.size () + output_6.size () + output_7.size () + output_8.size ()) << std::endl;
   std::cout << "Time spent in GPU kernel execution " << kernelTotalTime << std::endl;
   std::cout << "Time spent in Streams " << total_stream_time << std::endl;
