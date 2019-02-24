@@ -387,7 +387,7 @@ public:
   void print (std::ostream& os)
   {
     for (int i = 0; i < filled_size; i++){
-      os << get_vertex (i) << ", ";
+      os << get_vertex (i) << " ";
     }
   }
 };
@@ -526,6 +526,7 @@ std::string encode_embedding (VectorVertexEmbedding<size>& embedding, std::unord
 template<size_t size>
 void perform_huffman_encoding (VectorVertexEmbedding<size>* embeddings, size_t n_embeddings)
 {
+  return;
   size_t encoded_size = 0;
   size_t lookup_table_size = 0;
   //For all vertices
@@ -948,10 +949,15 @@ void run_single_step_vector (void* input, int n_embeddings, CSR* csr,
       
       for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
         int v = csr->get_edges () [e];
-        
+
         if (embedding.has (v) == false && 
             is_embedding_canonical (csr, embedding, v)) {
           
+          if (embedding_size == 2) {
+            if (embedding.get_vertex (0) == 1372 && embedding.get_vertex (1) == 2171) {
+              std::cout << "For 1372 2171 " << u << " " << v << std::endl;
+            }
+          }
           extension.add(v);
           
           if (clique_filter_vector (csr, &extension)) {
@@ -1173,7 +1179,7 @@ int main (int argc, char* argv[])
       case 3:
       {
         run_single_step_vector<3> (embeddings_ptr, n_embeddings, csr, 
-                                  output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
+                                   output_ptr, &n_output, new_embeddings_ptr, &n_new_embeddings);
         break;
       }
       case 4:
@@ -1229,6 +1235,8 @@ int main (int argc, char* argv[])
         
         embeddings = &new_embeddings[0];
         for (int i = 0; i < n_output; i++) {
+          //((VectorVertexEmbedding<2>*)output_ptr)[i].print (std::cout);
+          //std::cout << std::endl;
           output_2.push_back (((VectorVertexEmbedding<2>*)output_ptr)[i]);
         }
         
@@ -1250,6 +1258,7 @@ int main (int argc, char* argv[])
         
         embeddings = &new_embeddings[0];
         for (int i = 0; i < n_output; i++) {
+          
           output_3.push_back (((VectorVertexEmbedding<3>*)output_ptr)[i]);
         }
         break;

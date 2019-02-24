@@ -39,12 +39,12 @@
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 
 class Vertex
 {
@@ -1411,9 +1411,9 @@ int main (int argc, char* argv[])
 
   iter = 1;
 
-  const size_t max_embedding_size_per_iter = 1000000;
+  const size_t max_embedding_size_per_iter = 2000000;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 3 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     size_t global_mem_size = 10*1024*1024*1024UL;
     char* global_mem_ptr = new char[global_mem_size];
