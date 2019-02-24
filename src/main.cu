@@ -22,7 +22,9 @@
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 #define USE_EMBEDDING_IN_LOCAL_MEM
 //#define SHARED_MEM_NON_COALESCING
-
+/**
+  * The commit performing better is 698368fa19d023e3cb09705d820d333f79d0bf46.
+  */
 #ifdef SHARED_MEM_NON_COALESCING
   #ifndef USE_EMBEDDING_IN_SHARED_MEM
     #error "USE_EMBEDDING_IN_SHARED_MEM must be enabled with SHARED_MEM_NON_COALESCING"
