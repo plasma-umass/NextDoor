@@ -41,12 +41,12 @@
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 
 class Vertex
 {
@@ -1416,7 +1416,7 @@ int main (int argc, char* argv[])
 
   iter = 1;
   double total_stream_time = 0;
-  size_t global_mem_size = 2*1024*1024*1024UL;
+  size_t global_mem_size = 15*1024*1024*1024UL;
 #define PINNED_MEMORY
 #ifdef PINNED_MEMORY
   char* global_mem_ptr;
@@ -1428,7 +1428,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (2000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 7 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 3 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
@@ -1550,7 +1550,7 @@ int main (int argc, char* argv[])
     printf ("new_embedding_size %ld\n", new_embedding_size);
     void* orig_output_ptr = (char*)orig_new_embeddings_ptr + (max_embeddings)*(new_embedding_size);
 
-    
+    cudaError_t error;
     double stream_time_1 = convertTimeValToDouble (getTimeOfDay ());
 
     while (remaining_embeddings != 0) {      
@@ -1563,7 +1563,8 @@ int main (int argc, char* argv[])
       remaining_embeddings -= n_embeddings;
       //n_embeddings = (n_embeddings/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
       
-      const int N_STREAMS = 2;
+      const int N_STREAMS = 1;
+      assert (max_embeddings/N_STREAMS >= 30000000);
       int only_copy_change = 0;
       assert (only_copy_change == 0); //TODO: Streams with only copy change
       void* new_embeddings_ptr[N_STREAMS];
@@ -1574,7 +1575,7 @@ int main (int argc, char* argv[])
 
       void* output_ptr[N_STREAMS];
       for (int i = 0; i < N_STREAMS; i++) {
-        output_ptr[i] = (char*)orig_output_ptr + i*new_embedding_size*max_embeddings;
+        output_ptr[i] = (char*)orig_output_ptr + i*new_embedding_size*max_embeddings/N_STREAMS;
       }
       int n_new_embeddings[N_STREAMS] = {0};
       int n_new_embeddings_1[N_STREAMS] = {0};
@@ -1635,10 +1636,11 @@ int main (int argc, char* argv[])
         } else {
           std::cout << "Cuda host to device copy success " << std::endl;
         }
+      }
 
+      double t1 = convertTimeValToDouble (getTimeOfDay ());
+      for (int i = 0; i < N_STREAMS; i++) {
         std::cout << "starting kernel with n_embeddings: " << n_embeddings/N_STREAMS ;
-      
-        double t1 = convertTimeValToDouble (getTimeOfDay ());
         
     #ifdef USE_FIXED_THREADS
         //std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
@@ -1708,11 +1710,7 @@ int main (int argc, char* argv[])
         }
         
         //cudaDeviceSynchronize ();
-        cudaStreamSynchronize (streams[i]);
-        double t2 = convertTimeValToDouble (getTimeOfDay ());
-
-        std::cout << "Execution time " << (t2-t1) << " secs" << std::endl;
-        kernelTotalTime += (t2-t1);
+        //cudaStreamSynchronize (streams[i]);
 
         error = cudaGetLastError ();
         if (error != cudaSuccess) {
@@ -1721,10 +1719,19 @@ int main (int argc, char* argv[])
         } else {
           std::cout << "Cuda success " << std::endl;
         }
-      
-        cudaMemcpyAsync (&n_new_embeddings[i], device_n_embeddings[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
-        cudaMemcpyAsync (&n_output[i], device_n_outputs[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
-        
+      }
+
+      double t2 = convertTimeValToDouble (getTimeOfDay ());
+
+      std::cout << "Execution time " << (t2-t1) << " secs" << std::endl;
+      kernelTotalTime += (t2-t1);
+
+      for (int i = 0; i < N_STREAMS; i++) 
+      {        
+        assert (cudaMemcpyAsync (&n_new_embeddings[i], device_n_embeddings[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
+        assert (cudaMemcpyAsync (&n_output[i], device_n_outputs[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
+        //cudaStreamSynchronize (streams[i]);
+
         if (only_copy_change) {
           assert (false);
           //TODO: Change this to make an array of such ptrs
@@ -1732,8 +1739,10 @@ int main (int argc, char* argv[])
           cudaMemcpyAsync (output_ptr, device_outputs[i], n_output[i]*2*sizeof(int), cudaMemcpyDeviceToHost, streams[i]);
         }
         else {
+          std::cout << "n_output[" << i << "] = " << n_output[i] << std::endl;
           assert (cudaMemcpyAsync (new_embeddings_ptr[i], device_new_embeddings[i], n_new_embeddings[i]*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
-          assert (cudaMemcpyAsync (output_ptr[i], device_outputs[i], n_output[i]*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i])== cudaSuccess);
+          //assert (cudaMemcpyAsync (output_ptr[i], device_outputs[i], n_output[i]*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i])== cudaSuccess);
+          n_output[i] = 0;
         }
         cudaMemcpyAsync (&n_new_embeddings_1[i], device_n_embeddings_1[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
         cudaMemcpyAsync (&n_output_1[i], device_n_outputs_1[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
