@@ -1563,7 +1563,7 @@ int main (int argc, char* argv[])
       remaining_embeddings -= n_embeddings;
       //n_embeddings = (n_embeddings/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
       
-      const int N_STREAMS = 1;
+      const int N_STREAMS = 2;
       int only_copy_change = 0;
       assert (only_copy_change == 0); //TODO: Streams with only copy change
       void* new_embeddings_ptr[N_STREAMS];
@@ -1591,6 +1591,12 @@ int main (int argc, char* argv[])
       
       assert (N_STREAMS >= 1);
 
+      cudaStream_t streams[N_STREAMS];
+      for (int i = 0; i < N_STREAMS; i++) {
+        cudaError_t err = cudaStreamCreate (&streams[i]);
+        assert (err == cudaSuccess);
+      }
+
       for (int i = 0; i < N_STREAMS; i++) {
         const bool unified_mem = false;
         if (unified_mem == true) {
@@ -1599,8 +1605,8 @@ int main (int argc, char* argv[])
           assert(false);
         } else {
           cudaMalloc (&device_embeddings[i], n_embeddings/N_STREAMS*embedding_size);
-          cudaMemcpy (device_embeddings[i], (char*)embeddings_ptr + i*n_embeddings/N_STREAMS*embedding_size,
-                      n_embeddings/N_STREAMS*embedding_size, cudaMemcpyHostToDevice);
+          cudaMemcpyAsync (device_embeddings[i], (char*)embeddings_ptr + i*n_embeddings/N_STREAMS*embedding_size,
+                           n_embeddings/N_STREAMS*embedding_size, cudaMemcpyHostToDevice, streams[i]);
         }
         cudaMalloc (&device_new_embeddings[i], max_embeddings/N_STREAMS*(new_embedding_size));
         cudaMalloc (&device_outputs[i], max_embeddings/N_STREAMS*(new_embedding_size));
@@ -1610,17 +1616,17 @@ int main (int argc, char* argv[])
         cudaMalloc (&device_n_outputs_1[i], sizeof (0));
         cudaMalloc (&device_csr[i], sizeof(CSR)); //TODO: Remove copying CSR graph again and again
         
-        cudaMemcpy (device_n_embeddings[i], &n_new_embeddings[i],
-                    sizeof (n_new_embeddings[i]), cudaMemcpyHostToDevice);
-        cudaMemcpy (device_n_outputs[i], &n_output[i], sizeof (n_output[i]),
-                    cudaMemcpyHostToDevice);
+        cudaMemcpyAsync (device_n_embeddings[i], &n_new_embeddings[i],
+                         sizeof (n_new_embeddings[i]), cudaMemcpyHostToDevice, streams[i]);
+        cudaMemcpyAsync (device_n_outputs[i], &n_output[i], sizeof (n_output[i]),
+                         cudaMemcpyHostToDevice, streams[i]);
 
-        cudaMemcpy (device_n_embeddings_1[i], &n_new_embeddings_1[i],
-                    sizeof (n_new_embeddings_1[i]), cudaMemcpyHostToDevice);
-        cudaMemcpy (device_n_outputs_1[i], &n_output_1[i], sizeof (n_output_1[i]),
-                    cudaMemcpyHostToDevice);
+        cudaMemcpyAsync (device_n_embeddings_1[i], &n_new_embeddings_1[i],
+                         sizeof (n_new_embeddings_1[i]), cudaMemcpyHostToDevice, streams[i]);
+        cudaMemcpyAsync (device_n_outputs_1[i], &n_output_1[i], sizeof (n_output_1[i]),
+                         cudaMemcpyHostToDevice, streams[i]);
 
-        cudaMemcpy (device_csr[i], csr, sizeof (CSR), cudaMemcpyHostToDevice);
+        cudaMemcpyAsync (device_csr[i], csr, sizeof (CSR), cudaMemcpyHostToDevice, streams[i]);
         
         cudaError_t error = cudaGetLastError ();
         if (error != cudaSuccess) {
@@ -1630,7 +1636,7 @@ int main (int argc, char* argv[])
           std::cout << "Cuda host to device copy success " << std::endl;
         }
 
-        std::cout << "starting kernel with n_embeddings: " << n_embeddings;
+        std::cout << "starting kernel with n_embeddings: " << n_embeddings/N_STREAMS ;
       
         double t1 = convertTimeValToDouble (getTimeOfDay ());
         
@@ -1644,56 +1650,56 @@ int main (int argc, char* argv[])
         
         switch (iter) {
           case 1: {
-            run_single_step_vectorvertex_embedding<1><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<1><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 2: {
-            run_single_step_vectorvertex_embedding<2><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<2><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 3: {
-            run_single_step_vectorvertex_embedding<3><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<3><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 4: {
-            run_single_step_vectorvertex_embedding<4><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<4><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 5: {
-            run_single_step_vectorvertex_embedding<5><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<5><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 6: {
-            run_single_step_vectorvertex_embedding<6><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<6><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 7: {
-            run_single_step_vectorvertex_embedding<7><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<7><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
             break;
           }
           case 8: {
-            run_single_step_vectorvertex_embedding<8><<<thread_blocks, THREAD_BLOCK_SIZE>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
+            run_single_step_vectorvertex_embedding<8><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], n_embeddings/N_STREAMS, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings[i], device_n_embeddings[i],
                                   device_n_outputs_1[i], device_n_embeddings_1[i], only_copy_change);
@@ -1701,8 +1707,8 @@ int main (int argc, char* argv[])
           }
         }
         
-        cudaDeviceSynchronize ();
-
+        //cudaDeviceSynchronize ();
+        cudaStreamSynchronize (streams[i]);
         double t2 = convertTimeValToDouble (getTimeOfDay ());
 
         std::cout << "Execution time " << (t2-t1) << " secs" << std::endl;
@@ -1715,22 +1721,22 @@ int main (int argc, char* argv[])
         } else {
           std::cout << "Cuda success " << std::endl;
         }
-
-        cudaMemcpy (&n_new_embeddings[i], device_n_embeddings[i], sizeof(0), cudaMemcpyDeviceToHost);
-
-        cudaMemcpy (&n_output[i], device_n_outputs[i], sizeof(0), cudaMemcpyDeviceToHost);
+      
+        cudaMemcpyAsync (&n_new_embeddings[i], device_n_embeddings[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
+        cudaMemcpyAsync (&n_output[i], device_n_outputs[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
+        
         if (only_copy_change) {
           assert (false);
           //TODO: Change this to make an array of such ptrs
-          cudaMemcpy (new_embeddings_ptr, device_new_embeddings[i], n_new_embeddings[i]*2*sizeof(int), cudaMemcpyDeviceToHost);
-          cudaMemcpy (output_ptr, device_outputs[i], n_output[i]*2*sizeof(int), cudaMemcpyDeviceToHost);
+          cudaMemcpyAsync (new_embeddings_ptr, device_new_embeddings[i], n_new_embeddings[i]*2*sizeof(int), cudaMemcpyDeviceToHost, streams[i]);
+          cudaMemcpyAsync (output_ptr, device_outputs[i], n_output[i]*2*sizeof(int), cudaMemcpyDeviceToHost, streams[i]);
         }
         else {
-          cudaMemcpy (new_embeddings_ptr[i], device_new_embeddings[i], n_new_embeddings[i]*(new_embedding_size), cudaMemcpyDeviceToHost);
-          cudaMemcpy (output_ptr[i], device_outputs[i], n_output[i]*(new_embedding_size), cudaMemcpyDeviceToHost);
+          assert (cudaMemcpyAsync (new_embeddings_ptr[i], device_new_embeddings[i], n_new_embeddings[i]*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
+          assert (cudaMemcpyAsync (output_ptr[i], device_outputs[i], n_output[i]*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i])== cudaSuccess);
         }
-        cudaMemcpy (&n_new_embeddings_1[i], device_n_embeddings_1[i], sizeof(0), cudaMemcpyDeviceToHost);
-        cudaMemcpy (&n_output_1[i], device_n_outputs_1[i], sizeof(0), cudaMemcpyDeviceToHost);
+        cudaMemcpyAsync (&n_new_embeddings_1[i], device_n_embeddings_1[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
+        cudaMemcpyAsync (&n_output_1[i], device_n_outputs_1[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]);
 
         error = cudaGetLastError ();
         if (error != cudaSuccess) {
@@ -1747,9 +1753,16 @@ int main (int argc, char* argv[])
         std::cout << " n_output_1 "<<n_output_1[i]<<std::endl;
       }
       
+      for (int i = 0; i < N_STREAMS; i++) {
+        cudaStreamSynchronize (streams[i]);
+        cudaError_t err = cudaStreamDestroy (streams[i]);
+        assert (err == cudaSuccess);
+      }
+
       double stream_time_2 = convertTimeValToDouble (getTimeOfDay ());
 
       total_stream_time += (stream_time_2-stream_time_1);
+
       //TODO: wait for all kernels and data transfers to finish
       for (int i = 0; i < N_STREAMS; i++) {
         n_next_step_embeddings += n_new_embeddings[i];
@@ -2103,6 +2116,7 @@ int main (int argc, char* argv[])
         cudaFree (device_csr[i]);
       }
     }
+
     new_embeddings_size = n_next_step_embeddings;
     
   }
