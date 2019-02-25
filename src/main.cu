@@ -1416,7 +1416,7 @@ int main (int argc, char* argv[])
 
   iter = 1;
   double total_stream_time = 0;
-  size_t global_mem_size = 10*1024*1024*1024UL;
+  size_t global_mem_size = 2*1024*1024*1024UL;
 #define PINNED_MEMORY
 #ifdef PINNED_MEMORY
   char* global_mem_ptr;
