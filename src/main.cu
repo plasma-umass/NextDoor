@@ -1272,24 +1272,44 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                 case 0: {
                   int o = atomicAdd(n_output, 1);
                   n = atomicAdd(n_next_step_1, 1);
-                  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
-                  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                  memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                  memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  if (n >= max_n_embeddings) {
+                    n = atomicAdd (n_next_step_2, 1);
+                    atomicSub (n_next_step_1, 1); //TODO: can remove that
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    *curr_step_storage_id = 1;
+                  } else {
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  }
                   break;
                 }
 
                 case 1: {
                   int o = atomicAdd(n_output, 1);
                   n = atomicAdd(n_next_step_2, 1);
-                  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
-                  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                  memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                  memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  if (n >= max_n_embeddings) {
+                    n = atomicAdd (n_next_step_1, 1);
+                    atomicSub (n_next_step_2, 1); //TODO: can remove that
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    *curr_step_storage_id = 0;
+                  } else {
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  }
                 }
               }
 
-              if (n > max_n_embeddings) {
+              /*if (n > max_n_embeddings) {
                 switch (storage_id) {
                   case 0: {
                     *curr_step_storage_id = 1;
@@ -1303,7 +1323,7 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                     //assert (*n_next_step_1 == 0);
                   }
                 }
-              }
+              }*/
             }
             //output[o].add_last_in_sort_order ();
             //new_embeddings[n].add_last_in_sort_order ();
