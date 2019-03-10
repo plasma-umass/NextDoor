@@ -1008,9 +1008,9 @@ __global__
 void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR* csr,
                       void* output_ptr,
                       int* n_output,
-                      void* next_step_1, int* n_next_step_1, BUFFER_STATUS* buff_1_status,
-                      void* next_step_2, int* n_next_step_2, BUFFER_STATUS* buff_2_status,
-                      int* curr_step_storage_id,
+                      void* next_step_1, int* n_next_step_1, volatile BUFFER_STATUS* buff_1_status, //Should be volatile because of the busy wait loop
+                      void* next_step_2, int* n_next_step_2, volatile BUFFER_STATUS* buff_2_status, //Should be volatile because of the busy wait loop
+                      volatile int* curr_step_storage_id, //Should be volatile because threads coordinate based on this value
                       int only_copy_change)
 {
   int id;
@@ -1283,7 +1283,12 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                     atomicSub (n_next_step_1, 1); //TODO: can remove that
                     *curr_step_storage_id = 1;
                     *buff_1_status = BUFFER_STATUS::CPU_COPYING;
-                    while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {}
+                    while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
+                      /*unsigned long i = 0;
+                      while (i <= (1UL<<30)) {
+                        i++;
+                      }*/
+                    }
                     *buff_2_status = BUFFER_STATUS::GPU_USING;
                     n = atomicAdd (n_next_step_2, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
@@ -1307,7 +1312,12 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                     atomicSub (n_next_step_2, 1); //TODO: can remove that
                     *curr_step_storage_id = 0;
                     *buff_2_status = BUFFER_STATUS::CPU_COPYING;
-                    while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {}
+                    while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
+                      /*unsigned long i = 0;
+                      while (i <= (1UL<<30)) {
+                        i++;
+                      }*/
+                    }
                     *buff_1_status = BUFFER_STATUS::GPU_USING;
                     n = atomicAdd (n_next_step_1, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
