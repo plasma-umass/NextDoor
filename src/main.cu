@@ -1290,6 +1290,7 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                           i++;
                         }*/
                       }
+                      *buff_2_status = BUFFER_STATUS::GPU_USING;
                       n = atomicAdd(n_next_step_2, 1);
                     } else {
                       n = atomicSub (n_next_step_2, 1); //TODO: can remove that
@@ -1301,11 +1302,11 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                           i++;
                         }*/
                       }
-
+                      *buff_1_status = BUFFER_STATUS::GPU_USING;
                       n = atomicAdd(n_next_step_1, 1);
                     }
                   }
-                  *buff_2_status = BUFFER_STATUS::GPU_USING;
+                  
                   if (*curr_step_storage_id == 1) {
                     //n = atomicAdd (n_next_step_2, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
