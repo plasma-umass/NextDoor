@@ -18,10 +18,12 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false //TODO: there is bug with citeseer.graph when this is enabled
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 #define USE_EMBEDDING_IN_LOCAL_MEM
+#define PROCESS_EMBEDDINGS_PER_VERTEX
 //#define SHARED_MEM_NON_COALESCING
 /**
   * The commit performing better is 698368fa19d023e3cb09705d820d333f79d0bf46.
@@ -37,19 +39,19 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //1 GB //Size in terms of Bytes
+#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes
 
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -69,6 +71,7 @@ public:
   {
   }
 
+  int set_id (int _id) {id = _id;}
   int get_id () {return id;}
   int get_label () {return label;}
   void add_edge (int vertexID) {edges.push_back (vertexID);}
@@ -82,6 +85,11 @@ public:
     }
 
     os << std::endl;
+  }
+
+  static bool compare_vertex (Vertex& v1, Vertex& v2) 
+  {
+    return v1.edges.size () > v2.edges.size ();
   }
 };
 
@@ -1459,6 +1467,35 @@ int main (int argc, char* argv[])
 
   std::cout << "n_edges "<<n_edges <<std::endl;
   std::cout << "vertices " << vertices.size () << std::endl; 
+
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+  std::cout << "Sorting " << std::endl;
+  std::vector <Vertex> old_vertices = vertices;
+  std::vector <int> new_to_old_vertex_ids;
+  std::vector <int> old_to_new_vertex_ids;
+  for (size_t i = 0; i < vertices.size (); i++) {
+    new_to_old_vertex_ids.push_back (vertices[i].get_id ());
+    old_to_new_vertex_ids.push_back (vertices[i].get_id ());
+  }
+
+  std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
+  assert (vertices[0].get_edges ().size () >= vertices[vertices.size () - 1].get_edges ().size ());
+  for (size_t i = 0; i < vertices.size (); i++) {
+    int old_id = vertices[i].get_id ();
+    int new_id = i;
+    vertices[i].set_id (new_id);
+    new_to_old_vertex_ids[new_id] = old_id;
+    old_to_new_vertex_ids[old_id] = new_id;
+  }
+
+  for (size_t i = 0; i < vertices.size (); i++) {
+    std::vector <int>& edges = vertices[i].get_edges ();
+    for (size_t j = 0; j < edges.size (); j++) {
+      edges[j] = old_to_new_vertex_ids[edges[j]];
+    }
+  }
+#endif 
+
   Graph graph (vertices, n_edges);
 
   CSR* csr = new CSR(N, N_EDGES);
@@ -1517,7 +1554,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 3 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
@@ -1882,7 +1919,7 @@ int main (int argc, char* argv[])
         }
         
         //cudaDeviceSynchronize ();
-        if (iter >= 2 && true) {
+        if (iter >= 2 && ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING) {
           int curr_step_storage_id = 0;
           std::cout << "copying to n_outputs_1" << std::endl; 
           cudaStream_t t;
