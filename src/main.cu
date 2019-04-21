@@ -89,7 +89,7 @@ public:
 
   static bool compare_vertex (Vertex& v1, Vertex& v2) 
   {
-    return v1.edges.size () > v2.edges.size ();
+    return v1.edges.size () < v2.edges.size ();
   }
 };
 
@@ -647,6 +647,15 @@ bool clique_filter (CSR* csr, BitVectorVertexEmbedding* embedding)
   return true;
 }
 
+template <int size>
+void print_embedding (VectorVertexEmbedding<size>* embedding)
+{
+  std::cout << "{";
+  for (int i = 0; i < size; i++) {
+    std::cout << embedding->get_vertex (i) << ", ";
+  }
+  std::cout << "}";
+}
 
 template <uint32_t size>
 __host__ __device__
@@ -1376,6 +1385,221 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
   //}
 }
 
+__host__ __device__ struct PairEmbIdxVertexIdx {
+  int emb_idx;
+  int vertex_idx;
+
+  PairEmbIdxVertexIdx (long _emb_idx, int _vertex_idx) {
+    emb_idx = _emb_idx;
+    vertex_idx = _vertex_idx;
+  }
+};
+
+template <size_t embedding_size> 
+__global__
+void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embeddings, CSR* csr,
+                      void* embs_per_parts, 
+                      void* output_ptr,
+                      int* n_output,
+                      void* next_step_1, int* n_next_step_1, volatile BUFFER_STATUS* buff_1_status, //Should be volatile because of the busy wait loop
+                      void* next_step_2, int* n_next_step_2, volatile BUFFER_STATUS* buff_2_status, //Should be volatile because of the busy wait loop
+                      volatile int* curr_step_storage_id, //Should be volatile because threads coordinate based on this value
+                      int only_copy_change)
+{
+  int id;
+
+#ifdef USE_CSR_IN_SHARED
+  __shared__ unsigned char csr_shared_buff[sizeof (CSR)];
+  id = threadIdx.x;
+  CSR* csr_shared = (CSR*) csr_shared_buff;
+  csr_shared->n_vertices = csr->get_n_vertices ();
+  csr_shared->n_edges = csr->get_n_edges ();
+
+  int vertices_per_thread = csr->get_n_vertices ()/THREAD_BLOCK_SIZE + 1;
+  csr_shared->copy_vertices (csr, id*vertices_per_thread,
+                             (id+1)*vertices_per_thread < csr->get_n_vertices () ? (id+1)*vertices_per_thread : csr->get_n_vertices ());
+
+  int edges_per_thread = csr->get_n_edges ()/THREAD_BLOCK_SIZE + 1;
+  csr_shared->copy_edges (csr, id*edges_per_thread,
+                          (id+1)*edges_per_thread < csr->get_n_edges () ? (id+1)*edges_per_thread : csr->get_n_edges ());
+  csr = csr_shared;
+  __syncthreads ();
+#else
+#ifdef USE_CONSTANT_MEM
+  csr = (CSR*) csr_constant_buff;
+#endif
+
+#endif
+
+  VectorVertexEmbedding<embedding_size>* embeddings = (VectorVertexEmbedding<embedding_size>*)input;
+  PairEmbIdxVertexIdx* embeddings_per_partitions = (PairEmbIdxVertexIdx*) embs_per_parts;
+#ifdef USE_EMBEDDING_IN_LOCAL_MEM
+  unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size+1>)];
+#endif
+  id = blockIdx.x*blockDim.x + threadIdx.x;
+  int start = id, end = id+1;
+  //printf ("running id %d\n", id);
+  if (id >= n_embeddings*embedding_size)
+      return;
+
+  start = id;
+  end = id+1;
+
+  int q[1000] = {0};
+
+#ifdef USE_EMBEDDING_IN_SHARED_MEM
+//TODO: Support VectorVertexEmbedding
+  #if 0
+    const int shared_mem_size = 49152;
+    const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
+
+    assert (per_thread_shared_mem_size >= sizeof (VectorVertexEmbedding<embedding_size>));
+    //per_thread_shared_mem_size = sizeof (VertexEmbedding);
+    __shared__ SharedMemElem shared_buff[per_thread_shared_mem_size/sizeof (SharedMemElem)];
+
+    SharedMemElem* local_shared_buff = &shared_buff[0];
+  #else
+    const int shared_mem_size = 49152;
+    const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
+
+    //assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
+    //per_thread_shared_mem_size = sizeof (VertexEmbedding);
+    __shared__ SharedMemElem shared_buff[shared_mem_size/sizeof (SharedMemElem)];
+
+    SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
+  #endif
+#endif
+
+  const int warp_id = threadIdx.x / WARP_SIZE;
+  const int lane_id = threadIdx.x % WARP_SIZE;
+
+  VectorVertexEmbedding<embedding_size+1>* embedding = (VectorVertexEmbedding<embedding_size+1>*)&temp_buffer[0];
+  embedding->clear ();
+  vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[id].emb_idx], *embedding);
+
+  int u = embedding->get_vertex (embeddings_per_partitions[id].vertex_idx);
+  for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
+    
+    int v = csr->get_edges () [e];
+
+    if (is_embedding_canonical<embedding_size+1> (csr, embedding, v) && embedding->has (v) == false) {
+      VectorVertexEmbedding<embedding_size+1>* extension = embedding;
+      extension->add_unsorted (v);
+      
+      if (clique_filter_vector (csr, extension)) {
+        //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
+        //extension.add_last_in_sort_order ();
+        //int o = atomicAdd(n_output,1);
+        //int n = atomicAdd(n_next_step_1,1);
+        
+        if (only_copy_change) {
+          int o = atomicAdd(n_output, 1);
+          int n = atomicAdd(n_next_step_1, 1);
+          int* new_embeddings = (int*) next_step_1;
+          int* output = (int*) output_ptr;
+
+          new_embeddings[2*n] = id;
+          new_embeddings[2*n+1] = v;
+          output[2*o] = id;
+          output[2*o+1] = v;
+        }
+        else {
+          int storage_id = *curr_step_storage_id;
+          const size_t max_n_embeddings = NEW_EMBEDDING_BUFFER_SIZE/sizeof (VectorVertexEmbedding<embedding_size+1>);
+          //const int storage_id = 0;
+          int n = 0;
+          switch (storage_id) {
+            case 0: {
+              int o = atomicAdd(n_output, 1);
+              n = atomicAdd(n_next_step_1, 1);
+              //Switch from buff1 to buff2
+              while (n >= max_n_embeddings) {//TODO: change it to do-while 
+                if (*curr_step_storage_id == 0) {
+                  n = atomicSub (n_next_step_1, 1); //TODO: can remove that
+                  *curr_step_storage_id = 1;
+                  *buff_1_status = BUFFER_STATUS::CPU_COPYING;
+                  while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
+                    /*unsigned long i = 0;
+                    while (i <= (1UL<<30)) {
+                      i++;
+                    }*/
+                  }
+                  *buff_2_status = BUFFER_STATUS::GPU_USING;
+                  n = atomicAdd(n_next_step_2, 1);
+                } else {
+                  n = atomicSub (n_next_step_2, 1); //TODO: can remove that
+                  *curr_step_storage_id = 0;
+                  *buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                  while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
+                    /*unsigned long i = 0;
+                    while (i <= (1UL<<30)) {
+                      i++;
+                    }*/
+                  }
+                  *buff_1_status = BUFFER_STATUS::GPU_USING;
+                  n = atomicAdd(n_next_step_1, 1);
+                }
+              }
+              
+              if (*curr_step_storage_id == 1) {
+                //n = atomicAdd (n_next_step_2, 1);
+                VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              } else {
+                VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              }
+              break;
+            }
+
+            case 1: {
+              int o = atomicAdd(n_output, 1);
+              n = atomicAdd(n_next_step_2, 1);
+              if (n >= max_n_embeddings) {
+                //Switch from buff2 to buff1
+                atomicSub (n_next_step_2, 1); //TODO: can remove that
+                *curr_step_storage_id = 0;
+                *buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
+                  /*unsigned long i = 0;
+                  while (i <= (1UL<<30)) {
+                    i++;
+                  }*/
+                }
+                *buff_1_status = BUFFER_STATUS::GPU_USING;
+                n = atomicAdd (n_next_step_1, 1);
+                VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              } else {
+                VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              }
+            }
+          }
+        }
+        //output[o].add_last_in_sort_order ();
+        //new_embeddings[n].add_last_in_sort_order ();
+      }
+      extension->remove_last ();
+    }
+  }
+
+  //printf ("embeddings generated [1000, 2000)= %d and [2000, 3000) = %d\n", q[0], q[1]);
+  //printf ("embeddings at i = 1500: %d\n", q[2]);
+  //for (int i = 100; i < 1000; i++) {
+  //  printf ("embeddings at i = %d %d\n", i, q[i]);
+  //}
+}
+
+
 void print_embedding (BitVectorVertexEmbedding embedding, std::ostream& os)
 {
   os << "[";
@@ -1413,6 +1637,67 @@ enum EmbeddingType {
   VectorVertex,
   BitVector,
 };
+
+class Partition
+{
+private:
+  int start_vertex;
+  int end_vertex;
+  int id;
+  int start_idx;
+  int end_idx;
+
+public:
+  Partition (int s, int e) : start_vertex (s), end_vertex (e)
+  {}
+  
+};
+
+template <uint size>
+void collect_vertex_embeddings_in_partitions (CSR* csr, VectorVertexEmbedding<size>* embeddings, size_t n_embeddings,
+                                              std::vector<std::vector<int>>& partitions, std::vector<int>& vertex_to_partition,
+                                              PairEmbIdxVertexIdx* embs_for_parts, size_t embs_for_parts_size)
+{
+  std::vector<int> embs_per_parts_size(partitions.size (), 0);
+  
+  for (int i = 0; i < n_embeddings; i++) {
+    VectorVertexEmbedding<size>& emb = embeddings[i];
+    //print_embedding<size> (&emb);
+    //std::cout << std::endl;
+    for (int v_i = 0; v_i < size; v_i++) {
+      int v = emb.get_vertex (v_i);
+      int part_idx = vertex_to_partition [v];
+      embs_per_parts_size[part_idx]++;
+    }
+  }
+
+  /*for (int i = 0; i < embs_per_parts_size.size (); i++) {
+    std::cout << i << ":" << embs_per_parts_size[i] << std::endl;
+  }*/
+  std::vector<int> parts_pushed_idx (partitions.size (), 0);
+  std::vector<int> part_idx_in_embs_for_parts (partitions.size (), 0);
+  for (int i = 1; i < embs_per_parts_size.size (); i++) {
+    part_idx_in_embs_for_parts[i] = part_idx_in_embs_for_parts[i-1] + embs_per_parts_size[i-1];
+  }
+
+  
+  /*for (int i = 0; i < embs_per_parts_size.size (); i++) {
+    std::cout << "part_idx_in_embs_for_parts " << i << ":" << part_idx_in_embs_for_parts[i] << std::endl;
+  }*/
+
+  std::cout << "embs_for_parts_size " << embs_for_parts_size <<  ":" << sizeof (uint32_t) * sizeof (PairEmbIdxVertexIdx) * n_embeddings *size << std::endl;
+  assert (sizeof (uint32_t) * sizeof (PairEmbIdxVertexIdx) * n_embeddings *size == embs_for_parts_size);
+
+  for (int i = 0; i < n_embeddings; i++) {
+    VectorVertexEmbedding<size>& emb = embeddings[i];
+    for (int v_i = 0; v_i < size; v_i++) {
+      int v = emb.get_vertex (v_i);
+      int part_idx = vertex_to_partition [v];
+      embs_for_parts[part_idx_in_embs_for_parts[part_idx] + parts_pushed_idx[part_idx]] = PairEmbIdxVertexIdx (i, v_i);
+      parts_pushed_idx[part_idx]++;
+    }
+  }
+}
 
 int main (int argc, char* argv[])
 {
@@ -1479,7 +1764,7 @@ int main (int argc, char* argv[])
   }
 
   std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
-  assert (vertices[0].get_edges ().size () >= vertices[vertices.size () - 1].get_edges ().size ());
+  assert (Vertex::compare_vertex(vertices[0], vertices[vertices.size () - 1]));
   for (size_t i = 0; i < vertices.size (); i++) {
     int old_id = vertices[i].get_id ();
     int new_id = i;
@@ -1494,7 +1779,18 @@ int main (int argc, char* argv[])
       edges[j] = old_to_new_vertex_ids[edges[j]];
     }
   }
-#endif 
+
+  int partition_size = 1;
+  assert (vertices.size () % partition_size == 0);
+  int num_partition = vertices.size ()/partition_size;
+  std::vector <std::vector <int> > partitions;
+  std::vector <int> vertex_to_partition (vertices.size (), 0);
+
+  for (int i = 0; i < vertices.size (); i++) {
+    partitions.push_back (std::vector<int> {i});
+    vertex_to_partition[i] = i;
+  }
+#endif
 
   Graph graph (vertices, n_edges);
 
@@ -1523,6 +1819,7 @@ int main (int argc, char* argv[])
   std::vector<VectorVertexEmbedding<7>> output_7;
   std::vector<VectorVertexEmbedding<8>> output_8;
   std::vector<std::pair<void*, size_t>> embeddings;
+
   //filter = clique_filter;
   //process = clique_process;
   size_t new_embeddings_size = 0;
@@ -1554,7 +1851,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 7 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
@@ -1676,7 +1973,7 @@ int main (int argc, char* argv[])
     size_t max_embeddings = NEW_EMBEDDING_BUFFER_SIZE/(new_embedding_size);
     printf ("new_embedding_size %ld\n", new_embedding_size);
     void* orig_output_ptr = (char*)orig_new_embeddings_ptr + (max_embeddings)*(new_embedding_size);
-
+    size_t orig_outputs_size = max_embeddings*(new_embedding_size);
     cudaError_t error;
     double stream_time_1 = convertTimeValToDouble (getTimeOfDay ());
     
@@ -1702,8 +1999,9 @@ int main (int argc, char* argv[])
 
       void* output_ptr[N_STREAMS];
       for (int i = 0; i < N_STREAMS; i++) {
-        output_ptr[i] = (char*)orig_output_ptr + i*new_embedding_size*max_embeddings/N_STREAMS;
+        output_ptr[i] = (char*)orig_output_ptr + i*orig_outputs_size/N_STREAMS;
       }
+
       int n_new_embeddings_1[N_STREAMS] = {0};
       int n_new_embeddings_2[N_STREAMS] = {0};
       int n_output[N_STREAMS] = {0};
@@ -1722,6 +2020,7 @@ int main (int argc, char* argv[])
       int* device_n_outputs_1[N_STREAMS];
       BUFFER_STATUS new_embeddings_1_status[N_STREAMS];
       BUFFER_STATUS new_embeddings_2_status[N_STREAMS];
+      char *device_embeddings_per_partitions[N_STREAMS];
       for (int i = 0; i < N_STREAMS; i++) {
         new_embeddings_1_status[i] = BUFFER_STATUS::FREE;
         new_embeddings_2_status[i] = BUFFER_STATUS::FREE;
@@ -1750,6 +2049,99 @@ int main (int argc, char* argv[])
             per_stream_n_embeddings = (n_embeddings*1)/10;
           }
         }
+
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+        assert (N_STREAMS == 1);
+        char* embeddings_per_partitions_ptr = (char*)orig_output_ptr + orig_outputs_size;
+        size_t embeddings_per_partitions_ptr_size = sizeof (uint32_t)* iter * sizeof (PairEmbIdxVertexIdx)*per_stream_n_embeddings;
+        char* input_embeddings_ptr = (char*)embeddings_ptr + per_stream_embeddings_done*embedding_size;
+        switch (iter) {
+          case 1: {
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<1>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                     (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+            break;
+          }
+          case 2: {
+  
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<2>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                     (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+            std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
+            
+            for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
+              //PairEmbIdxVertexIdx p = ((PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr)[i];
+              //printf ("%d: [%d, %d]:", i, p.emb_idx, p.vertex_idx);
+              //VectorVertexEmbedding<2>* emb = &((VectorVertexEmbedding<2>*)input_embeddings_ptr)[p.emb_idx];
+              //print_embedding<2> (emb);
+              //std::cout << std::endl;
+            }
+            break;
+          } 
+          case 3: {
+  
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<3>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                     (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+            std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
+            
+            for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
+              //PairEmbIdxVertexIdx p = ((PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr)[i];
+              //printf ("%d: [%d, %d]:", i, p.emb_idx, p.vertex_idx);
+              //VectorVertexEmbedding<3>* emb = &((VectorVertexEmbedding<2>*)input_embeddings_ptr)[p.emb_idx];
+              //print_embedding<2> (emb);
+              //std::cout << std::endl;
+            }
+            break;
+          }
+          case 4: {
+  
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<4>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                     (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+            std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
+            
+            for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
+              //PairEmbIdxVertexIdx p = ((PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr)[i];
+              //printf ("%d: [%d, %d]:", i, p.emb_idx, p.vertex_idx);
+              //VectorVertexEmbedding<2>* emb = &((VectorVertexEmbedding<2>*)input_embeddings_ptr)[p.emb_idx];
+              //print_embedding<2> (emb);
+              //std::cout << std::endl;
+            }
+            break;
+          }
+          case 5: {
+  
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<5>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                     (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+            std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
+            
+            for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
+              //PairEmbIdxVertexIdx p = ((PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr)[i];
+              //printf ("%d: [%d, %d]:", i, p.emb_idx, p.vertex_idx);
+              //VectorVertexEmbedding<2>* emb = &((VectorVertexEmbedding<2>*)input_embeddings_ptr)[p.emb_idx];
+              //print_embedding<2> (emb);
+              //std::cout << std::endl;
+            }
+            break;
+          }
+          case 6: {
+  
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<6>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                     (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+            std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
+            
+            for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
+              //PairEmbIdxVertexIdx p = ((PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr)[i];
+              //printf ("%d: [%d, %d]:", i, p.emb_idx, p.vertex_idx);
+              //VectorVertexEmbedding<2>* emb = &((VectorVertexEmbedding<2>*)input_embeddings_ptr)[p.emb_idx];
+              //print_embedding<2> (emb);
+              //std::cout << std::endl;
+            }
+            break;
+          }
+          default: {
+            assert (false);
+          }
+        }
+#endif
+
         if (unified_mem == true) {
           //cudaMallocManaged (embeddings_ptr, n_embeddings*embedding_size);
           //device_embeddings = (char*)embeddings_ptr;
@@ -1758,12 +2150,27 @@ int main (int argc, char* argv[])
           cudaMalloc (&device_embeddings[i], per_stream_n_embeddings*embedding_size);
           cudaMemcpyAsync (device_embeddings[i], (char*)embeddings_ptr + per_stream_embeddings_done*embedding_size,
                            per_stream_n_embeddings*embedding_size, cudaMemcpyHostToDevice, streams[i]);
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+          cudaMalloc (&device_embeddings_per_partitions[i], embeddings_per_partitions_ptr_size);
+          cudaMemcpyAsync (device_embeddings_per_partitions[i], 
+                           (char*)embeddings_per_partitions_ptr, 
+                           embeddings_per_partitions_ptr_size, cudaMemcpyHostToDevice, streams[i]);                           
+          {
+            cudaError_t error = cudaGetLastError ();
+            if (error != cudaSuccess) {
+              const char* error_string = cudaGetErrorString (error);
+              std::cout << "embeddings_per_partitions Cuda host to device copy error " << error_string << std::endl;
+            } else {
+              std::cout << "Cuda host to device copy success " << std::endl;
+            }
+          }
+#endif
         }
 
         cudaMalloc (&device_new_embeddings_1[i], max_embeddings/N_STREAMS*(new_embedding_size));
         cudaMalloc (&device_new_embeddings_2[i], max_embeddings/N_STREAMS*(new_embedding_size));
         cudaMalloc (&device_n_embeddings_1[i], sizeof(int));
-        cudaMalloc (&device_outputs[i], max_embeddings/N_STREAMS*(new_embedding_size));
+        cudaMalloc (&device_outputs[i], orig_outputs_size/N_STREAMS);
         cudaMalloc (&device_n_embeddings_1[i], sizeof (int));
         cudaMalloc (&device_n_embeddings_2[i], sizeof (int));
         cudaMalloc (&device_n_outputs[i], sizeof (int));
@@ -1772,6 +2179,7 @@ int main (int argc, char* argv[])
         cudaMalloc (&device_curr_new_embeddings_idx[i], sizeof (int));
         cudaMalloc (&device_new_embeddings_1_status[i], sizeof (BUFFER_STATUS));
         cudaMalloc (&device_new_embeddings_2_status[i], sizeof (BUFFER_STATUS));
+        assert (N_STREAMS == 1); //TODO: for more than 1 N_STREAMS
         cudaMemcpyAsync (device_new_embeddings_1_status[i], &new_embeddings_1_status[i], 
                          sizeof (new_embeddings_1_status[i]), cudaMemcpyHostToDevice, streams[i]);
         cudaMemcpyAsync (device_new_embeddings_2_status[i], &new_embeddings_2_status[i], 
@@ -1835,69 +2243,115 @@ int main (int argc, char* argv[])
         double t1 = convertTimeValToDouble (getTimeOfDay ());
         if (stream_synchronize)
           cudaStreamSynchronize (streams[i]);
-        if (false && iter == 2) {
-          if (i == 0) {
-            per_stream_n_embeddings = (n_embeddings*9)/10;
-          } else {
-            per_stream_n_embeddings = (n_embeddings*1)/10;
-          }
-        }
+        
         std::cout << "starting kernel with n_embeddings: " << per_stream_n_embeddings ;
     #ifdef USE_FIXED_THREADS
         //std::cout << " threads: " << MAX_CUDA_THREADS/THREAD_BLOCK_SIZE << std::endl;
         int thread_blocks = MAX_CUDA_THREADS/THREAD_BLOCK_SIZE;
     #else
-        int thread_blocks = (per_stream_n_embeddings%THREAD_BLOCK_SIZE != 0) ? (per_stream_n_embeddings/THREAD_BLOCK_SIZE+1) : per_stream_n_embeddings/THREAD_BLOCK_SIZE;
+        #ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+          int thread_blocks = (per_stream_n_embeddings*iter%THREAD_BLOCK_SIZE != 0) ? ((per_stream_n_embeddings*iter)/THREAD_BLOCK_SIZE+1) : (per_stream_n_embeddings*iter)/THREAD_BLOCK_SIZE;
+        #else
+          int thread_blocks = (per_stream_n_embeddings%THREAD_BLOCK_SIZE != 0) ? (per_stream_n_embeddings/THREAD_BLOCK_SIZE+1) : per_stream_n_embeddings/THREAD_BLOCK_SIZE;
+        #endif
     #endif
         std::cout << " threads: " << thread_blocks << std::endl;
         
         switch (iter) {
           case 1: {
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+            run_single_step_vectorvertex_embedding_per_vertex <1><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
+              device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
+              device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
+              device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
+              device_curr_new_embeddings_idx[i], only_copy_change);
+#else
             run_single_step_vectorvertex_embedding<1><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
                                   device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
                                   device_curr_new_embeddings_idx[i], only_copy_change);
+#endif                                  
             break;
           }
           case 2: {
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+            run_single_step_vectorvertex_embedding_per_vertex <2><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
+              device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
+              device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
+              device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
+              device_curr_new_embeddings_idx[i], only_copy_change);
+#else
             run_single_step_vectorvertex_embedding<2><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
                                   device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i],
                                   device_curr_new_embeddings_idx[i], only_copy_change);
+#endif
             break;
           }
           case 3: {
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+            run_single_step_vectorvertex_embedding_per_vertex <3><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
+              device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
+              device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
+              device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
+              device_curr_new_embeddings_idx[i], only_copy_change);
+#else
             run_single_step_vectorvertex_embedding<3><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
                                   device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i],
                                   device_curr_new_embeddings_idx[i], only_copy_change);
+#endif                                  
             break;
           }
           case 4: {
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+            run_single_step_vectorvertex_embedding_per_vertex <4><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
+              device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
+              device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
+              device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
+              device_curr_new_embeddings_idx[i], only_copy_change);
+#else
             run_single_step_vectorvertex_embedding<4><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
                                   device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i],
                                   device_curr_new_embeddings_idx[i], only_copy_change);
+#endif
             break;
           }
           case 5: {
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+            run_single_step_vectorvertex_embedding_per_vertex <5><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
+              device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
+              device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
+              device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
+              device_curr_new_embeddings_idx[i], only_copy_change);
+#else
             run_single_step_vectorvertex_embedding<5><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
                                   device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i],
                                   device_curr_new_embeddings_idx[i], only_copy_change);
+#endif
             break;
           }
           case 6: {
+#ifdef PROCESS_EMBEDDINGS_PER_VERTEX
+            run_single_step_vectorvertex_embedding_per_vertex <6><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
+              device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
+              device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
+              device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
+              device_curr_new_embeddings_idx[i], only_copy_change);
+#else
             run_single_step_vectorvertex_embedding<6><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
                                   device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
                                   device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i],
                                   device_curr_new_embeddings_idx[i], only_copy_change);
+#endif
             break;
           }
           case 7: {
@@ -2104,6 +2558,8 @@ int main (int argc, char* argv[])
               else {
                 VectorVertexEmbedding<2> embedding = ((VectorVertexEmbedding<2>*)(new_embeddings_ptr[stream]))[i];
                 new_embeddings [j] = embedding;
+                //print_embedding<2> (&embedding);
+                //std::cout << std::endl;
                 #ifdef DEBUG
                 if (embedding.get_n_vertices () != (iter + 1)) {
                   printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
@@ -2113,7 +2569,7 @@ int main (int argc, char* argv[])
               }
             }
           }
-          
+          //return;
           assert (j == n_next_step_embeddings);
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_next_step_embeddings));
           
@@ -2155,6 +2611,8 @@ int main (int argc, char* argv[])
               else {
                 VectorVertexEmbedding<3> embedding = ((VectorVertexEmbedding<3>*)(new_embeddings_ptr[stream]))[i];
                 new_embeddings [j] = embedding;
+                //print_embedding<3> (&embedding);
+                //std::cout << std::endl;
                 #ifdef DEBUG
                 if (embedding.get_n_vertices () != (iter + 1)) {
                   printf ("embedding has %ld vertices\n", embedding.get_n_vertices ());
