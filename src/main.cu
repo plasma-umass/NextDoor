@@ -1436,16 +1436,6 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
 #ifdef USE_EMBEDDING_IN_LOCAL_MEM
   unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size+1>)];
 #endif
-  id = blockIdx.x*blockDim.x + threadIdx.x;
-  int start = id, end = id+1;
-  //printf ("running id %d\n", id);
-  if (id >= n_embeddings)
-      return;
-
-  start = id;
-  end = id+1;
-
-  int q[1000] = {0};
 
 #ifdef USE_EMBEDDING_IN_SHARED_MEM
 //TODO: Support VectorVertexEmbedding
@@ -1473,63 +1463,152 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
   const int warp_id = threadIdx.x / WARP_SIZE;
   const int lane_id = threadIdx.x % WARP_SIZE;
 
+  id = blockIdx.x*blockDim.x + threadIdx.x;
+  int start = id, end = id+1;
+  //printf ("running id %d\n", id);
+  if (id >= n_embeddings)
+      return;
+  
+  const bool enable_edge_pulling = true;
   for (int load = 0; load < embedding_size; load++) {
-    int load_id = id + load*n_embeddings;
-    VectorVertexEmbedding<embedding_size+1>* embedding = (VectorVertexEmbedding<embedding_size+1>*)&temp_buffer[0];
-    embedding->clear ();
-    vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_id].emb_idx], *embedding);
+    //printf ("load %d embedding_size %d\n", load, embedding_size);
+    int load_ids[2];
+    load_ids[0] = id + load*n_embeddings;
+    load_ids[1] = (load+1)*n_embeddings - 1 - id;
+    
+    //printf ("t-id %d ; load_ids[0] %d ; load_ids[1] %d\n", id, load_ids[0], load_ids[1]);
+    int n_loads;
+    if (enable_edge_pulling && id < n_embeddings/2) {
+      //Vertices are sorted in increasing order. a vertex in first half will pull edges from 
+      //vertex in second half.
+      n_loads = 2;
+    } else {
+      n_loads = 1;
+    }
 
-    int u = embedding->get_vertex (embeddings_per_partitions[load_id].vertex_idx);
-    for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
-      
-      int v = csr->get_edges () [e];
+    for (int i = 0; i < n_loads; i++) {
+      VectorVertexEmbedding<embedding_size+1>* embedding = (VectorVertexEmbedding<embedding_size+1>*)&temp_buffer[0];
+      embedding->clear ();
+      vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
 
-      if (is_embedding_canonical<embedding_size+1> (csr, embedding, v) && embedding->has (v) == false) {
-        VectorVertexEmbedding<embedding_size+1>* extension = embedding;
-        extension->add_unsorted (v);
+      int u = embedding->get_vertex (embeddings_per_partitions[load_ids[i]].vertex_idx);
+      int start_edge_idx;
+      int end_edge_idx;
+
+      if (enable_edge_pulling && i == 1) {
+        //Can only happen when vertex is in first half
+        assert (n_loads == 2);
+        int v = embeddings[embeddings_per_partitions[load_ids[0]].emb_idx].get_vertex (embeddings_per_partitions[load_ids[0]].vertex_idx);
+        int first_n_edges = csr->get_end_edge_idx (v) - csr->get_start_edge_idx (v) + 1;
+        int second_n_edges = csr->get_end_edge_idx (u) - csr->get_start_edge_idx (u) + 1;
+        assert (first_n_edges <= second_n_edges);
+        int total_edges_to_process = (second_n_edges + first_n_edges)/2;
+        int remaining_edges = total_edges_to_process - first_n_edges; //first n edges have already been done
+        start_edge_idx = csr->get_end_edge_idx (u) - remaining_edges + 1;
+        end_edge_idx = csr->get_end_edge_idx (u);
+      } else {
+        if (enable_edge_pulling && n_loads == 1) {
+          //Can only happen when vertex is in second half
+          int v = embeddings[embeddings_per_partitions[load_ids[1]].emb_idx].get_vertex (embeddings_per_partitions[load_ids[1]].vertex_idx);
+          int first_n_edges = csr->get_end_edge_idx(u) - csr->get_start_edge_idx(u) + 1;
+          int second_n_edges = csr->get_end_edge_idx(v) - csr->get_start_edge_idx(v) + 1;
+          assert (first_n_edges >= second_n_edges);
+          int edges_to_process = ((second_n_edges + first_n_edges) % 2 == 0) ? (second_n_edges + first_n_edges)/2 : (second_n_edges + first_n_edges)/2+1;
+          //int edges_to_process = (second_n_edges + first_n_edges)/2;
+          start_edge_idx = csr->get_start_edge_idx (u);
+          end_edge_idx = start_edge_idx + edges_to_process - 1;
+        }
+        else {
+          //Can only happen when vertex is in first half
+          start_edge_idx = csr->get_start_edge_idx(u);
+          end_edge_idx = csr->get_end_edge_idx(u);
+        }
+      }
+
+      for (int e = start_edge_idx; e <= end_edge_idx; e++) {
         
-        if (clique_filter_vector (csr, extension)) {
-          //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
-          //extension.add_last_in_sort_order ();
-          //int o = atomicAdd(n_output,1);
-          //int n = atomicAdd(n_next_step_1,1);
-          
-          if (only_copy_change) {
-            int o = atomicAdd(n_output, 1);
-            int n = atomicAdd(n_next_step_1, 1);
-            int* new_embeddings = (int*) next_step_1;
-            int* output = (int*) output_ptr;
+        int v = csr->get_edges () [e];
 
-            new_embeddings[2*n] = id;
-            new_embeddings[2*n+1] = v;
-            output[2*o] = id;
-            output[2*o+1] = v;
-          }
-          else {
-            int storage_id = *curr_step_storage_id;
-            const size_t max_n_embeddings = NEW_EMBEDDING_BUFFER_SIZE/sizeof (VectorVertexEmbedding<embedding_size+1>);
-            //const int storage_id = 0;
-            int n = 0;
-            switch (storage_id) {
-              case 0: {
-                int o = atomicAdd(n_output, 1);
-                n = atomicAdd(n_next_step_1, 1);
-                //Switch from buff1 to buff2
-                while (n >= max_n_embeddings) {//TODO: change it to do-while 
-                  if (*curr_step_storage_id == 0) {
-                    n = atomicSub (n_next_step_1, 1); //TODO: can remove that
-                    *curr_step_storage_id = 1;
-                    *buff_1_status = BUFFER_STATUS::CPU_COPYING;
-                    while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
-                      /*unsigned long i = 0;
-                      while (i <= (1UL<<30)) {
-                        i++;
-                      }*/
+        if (is_embedding_canonical<embedding_size+1> (csr, embedding, v) && embedding->has (v) == false) {
+          VectorVertexEmbedding<embedding_size+1>* extension = embedding;
+          extension->add_unsorted (v);
+          
+          if (clique_filter_vector (csr, extension)) {
+            //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
+            //extension.add_last_in_sort_order ();
+            //int o = atomicAdd(n_output,1);
+            //int n = atomicAdd(n_next_step_1,1);
+            
+            if (only_copy_change) {
+              int o = atomicAdd(n_output, 1);
+              int n = atomicAdd(n_next_step_1, 1);
+              int* new_embeddings = (int*) next_step_1;
+              int* output = (int*) output_ptr;
+
+              new_embeddings[2*n] = id;
+              new_embeddings[2*n+1] = v;
+              output[2*o] = id;
+              output[2*o+1] = v;
+            }
+            else {
+              int storage_id = *curr_step_storage_id;
+              const size_t max_n_embeddings = NEW_EMBEDDING_BUFFER_SIZE/sizeof (VectorVertexEmbedding<embedding_size+1>);
+              //const int storage_id = 0;
+              int n = 0;
+              switch (storage_id) {
+                case 0: {
+                  int o = atomicAdd(n_output, 1);
+                  n = atomicAdd(n_next_step_1, 1);
+                  //Switch from buff1 to buff2
+                  while (n >= max_n_embeddings) {//TODO: change it to do-while 
+                    if (*curr_step_storage_id == 0) {
+                      n = atomicSub (n_next_step_1, 1); //TODO: can remove that
+                      *curr_step_storage_id = 1;
+                      *buff_1_status = BUFFER_STATUS::CPU_COPYING;
+                      while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
+                        /*unsigned long i = 0;
+                        while (i <= (1UL<<30)) {
+                          i++;
+                        }*/
+                      }
+                      *buff_2_status = BUFFER_STATUS::GPU_USING;
+                      n = atomicAdd(n_next_step_2, 1);
+                    } else {
+                      n = atomicSub (n_next_step_2, 1); //TODO: can remove that
+                      *curr_step_storage_id = 0;
+                      *buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                      while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
+                        /*unsigned long i = 0;
+                        while (i <= (1UL<<30)) {
+                          i++;
+                        }*/
+                      }
+                      *buff_1_status = BUFFER_STATUS::GPU_USING;
+                      n = atomicAdd(n_next_step_1, 1);
                     }
-                    *buff_2_status = BUFFER_STATUS::GPU_USING;
-                    n = atomicAdd(n_next_step_2, 1);
+                  }
+                  
+                  if (*curr_step_storage_id == 1) {
+                    //n = atomicAdd (n_next_step_2, 1);
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                   } else {
-                    n = atomicSub (n_next_step_2, 1); //TODO: can remove that
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  }
+                  break;
+                }
+
+                case 1: {
+                  int o = atomicAdd(n_output, 1);
+                  n = atomicAdd(n_next_step_2, 1);
+                  if (n >= max_n_embeddings) {
+                    //Switch from buff2 to buff1
+                    atomicSub (n_next_step_2, 1); //TODO: can remove that
                     *curr_step_storage_id = 0;
                     *buff_2_status = BUFFER_STATUS::CPU_COPYING;
                     while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
@@ -1539,58 +1618,25 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                       }*/
                     }
                     *buff_1_status = BUFFER_STATUS::GPU_USING;
-                    n = atomicAdd(n_next_step_1, 1);
+                    n = atomicAdd (n_next_step_1, 1);
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  } else {
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                   }
-                }
-                
-                if (*curr_step_storage_id == 1) {
-                  //n = atomicAdd (n_next_step_2, 1);
-                  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
-                  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                  memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                  memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                } else {
-                  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
-                  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                  memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                  memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                }
-                break;
-              }
-
-              case 1: {
-                int o = atomicAdd(n_output, 1);
-                n = atomicAdd(n_next_step_2, 1);
-                if (n >= max_n_embeddings) {
-                  //Switch from buff2 to buff1
-                  atomicSub (n_next_step_2, 1); //TODO: can remove that
-                  *curr_step_storage_id = 0;
-                  *buff_2_status = BUFFER_STATUS::CPU_COPYING;
-                  while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
-                    /*unsigned long i = 0;
-                    while (i <= (1UL<<30)) {
-                      i++;
-                    }*/
-                  }
-                  *buff_1_status = BUFFER_STATUS::GPU_USING;
-                  n = atomicAdd (n_next_step_1, 1);
-                  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
-                  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                  memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                  memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                } else {
-                  VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
-                  VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                  memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                  memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                 }
               }
             }
+            //output[o].add_last_in_sort_order ();
+            //new_embeddings[n].add_last_in_sort_order ();
           }
-          //output[o].add_last_in_sort_order ();
-          //new_embeddings[n].add_last_in_sort_order ();
+          extension->remove_last ();
         }
-        extension->remove_last ();
       }
     }
   }
@@ -1854,7 +1900,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 7 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
