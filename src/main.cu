@@ -676,6 +676,21 @@ bool clique_filter_vector (CSR* csr, VectorVertexEmbedding<size>* embedding)
   return true;
 }
 
+template <uint32_t size>
+__host__ __device__
+bool clique_filter_vector_optimized (CSR* csr, VectorVertexEmbedding<size>* embedding)
+{
+  int last_vertex = embedding->get_vertex (size-1);
+  for (int i = 0; i < embedding->get_n_vertices () - 1; i++) {
+    int u = embedding->get_vertex (i);
+    if (!csr->has_edge (u, last_vertex)) {
+        return false;
+    }
+  }
+
+  return true;
+}
+
 void clique_process_bit_vector (std::vector<BitVectorVertexEmbedding>& output, BitVectorVertexEmbedding& embedding)
 {
   output.push_back (embedding);
@@ -1533,7 +1548,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
           VectorVertexEmbedding<embedding_size+1>* extension = embedding;
           extension->add_unsorted (v);
           
-          if (clique_filter_vector (csr, extension)) {
+          if (clique_filter_vector_optimized (csr, extension)) {
             //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
             //extension.add_last_in_sort_order ();
             //int o = atomicAdd(n_output,1);
