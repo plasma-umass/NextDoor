@@ -2437,7 +2437,7 @@ int main (int argc, char* argv[])
         }
         
         //cudaDeviceSynchronize ();
-        if (iter >= 2 && ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING) {
+        if (iter >= 1 && ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING) {
           int curr_step_storage_id = 0;
           std::cout << "copying to n_outputs_1" << std::endl; 
           cudaStream_t t;
@@ -2448,15 +2448,19 @@ int main (int argc, char* argv[])
             do {
               assert (cudaMemcpyAsync (&curr_step_storage_id, device_curr_new_embeddings_idx[i], sizeof (curr_step_storage_id), cudaMemcpyDeviceToHost, t) == cudaSuccess);
               cudaStreamSynchronize (t);
-              usleep (10000);
+              usleep (10);
             } while (prev_curr_step_storage_id == curr_step_storage_id &&
                      cudaStreamQuery (streams[i]) == cudaErrorNotReady);
-            
+            //Above loop ends only when the storage id has changed or 
+            //the stream's kernel has ended.
             std::cout << "prev_curr_step_storage_id = " << prev_curr_step_storage_id <<
                          " curr_step_storage_id = " << curr_step_storage_id << 
                          " cudaStreamQuery (streams[i]) == cudaErrorNotReady " << 
                          (cudaStreamQuery (streams[i]) == cudaErrorNotReady) << std::endl;
-            
+            if (cudaStreamQuery (streams[i]) == cudaSuccess) {
+              //Stream's kernel has completed, get out of loop.
+              break;
+            }
             //copy
             switch (prev_curr_step_storage_id) {
               case 0: {
