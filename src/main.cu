@@ -18,7 +18,7 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false //TODO: there is bug with citeseer.graph when this is enabled
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true //TODO: there is bug with citeseer.graph when this is enabled
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
@@ -46,12 +46,12 @@
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -1576,9 +1576,10 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                   n = atomicAdd(n_next_step_1, 1);
                   //Switch from buff1 to buff2
                   while (n >= max_n_embeddings) {//TODO: change it to do-while 
-                    if (*curr_step_storage_id == 0) {
+                    if (storage_id == 0) {
                       n = atomicSub (n_next_step_1, 1); //TODO: can remove that
                       *curr_step_storage_id = 1;
+                      storage_id = 1;
                       *buff_1_status = BUFFER_STATUS::CPU_COPYING;
                       while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
                         /*unsigned long i = 0;
@@ -1591,6 +1592,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                     } else {
                       n = atomicSub (n_next_step_2, 1); //TODO: can remove that
                       *curr_step_storage_id = 0;
+                      storage_id = 0;
                       *buff_2_status = BUFFER_STATUS::CPU_COPYING;
                       while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
                         /*unsigned long i = 0;
@@ -1603,7 +1605,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                     }
                   }
                   
-                  if (*curr_step_storage_id == 1) {
+                  if (storage_id == 1) {
                     //n = atomicAdd (n_next_step_2, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
