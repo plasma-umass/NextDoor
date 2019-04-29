@@ -18,12 +18,14 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true //TODO: there is bug with citeseer.graph when this is enabled
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 #define USE_EMBEDDING_IN_LOCAL_MEM
 #define PROCESS_EMBEDDINGS_PER_VERTEX
+#define GPU_QUERY_WAIT_TIME 100
+//#define ADD_TO_OUTPUT
 //#define SHARED_MEM_NON_COALESCING
 /**
   * The commit performing better is 698368fa19d023e3cb09705d820d333f79d0bf46.
@@ -39,19 +41,19 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 1024*1024*1024 //Size in terms of Bytes
+#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -1484,7 +1486,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
   if (id >= n_embeddings)
       return;
   
-  const bool enable_edge_pulling = false;
+  const bool enable_edge_pulling = true;
   for (int load = 0; load < embedding_size; load++) {
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
@@ -1572,7 +1574,6 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
               int n = 0;
               switch (storage_id) {
                 case 0: {
-                  int o = atomicAdd(n_output, 1);
                   n = atomicAdd(n_next_step_1, 1);
                   //Switch from buff1 to buff2
                   while (n >= max_n_embeddings) {//TODO: change it to do-while 
@@ -1609,19 +1610,24 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                     //n = atomicAdd (n_next_step_2, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                    //memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #ifdef ADD_TO_OUTPUT
+                    int o = atomicAdd(n_output, 1);
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #endif
                     memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                   } else {
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                    //memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #ifdef ADD_TO_OUTPUT
+                    int o = atomicAdd(n_output, 1);
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #endif
                     memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                   }
                   break;
                 }
 
                 case 1: {
-                  int o = atomicAdd(n_output, 1);
                   n = atomicAdd(n_next_step_2, 1);
                   if (n >= max_n_embeddings) {
                     //Switch from buff2 to buff1
@@ -1638,12 +1644,18 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                     n = atomicAdd (n_next_step_1, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                    //memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #ifdef ADD_TO_OUTPUT
+                    int o = atomicAdd(n_output, 1);
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #endif
                     memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                   } else {
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                    //memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #ifdef ADD_TO_OUTPUT
+                    int o = atomicAdd(n_output, 1);
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #endif
                     memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                   }
                 }
@@ -1915,9 +1927,9 @@ int main (int argc, char* argv[])
   char* global_mem_ptr = new char[global_mem_size];
 #endif
 
-  const size_t max_embedding_size_per_iter = (26000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
+  const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 4 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 5 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
@@ -2457,7 +2469,7 @@ int main (int argc, char* argv[])
             do {
               assert (cudaMemcpyAsync (&curr_step_storage_id, device_curr_new_embeddings_idx[i], sizeof (curr_step_storage_id), cudaMemcpyDeviceToHost, t) == cudaSuccess);
               cudaStreamSynchronize (t);
-              usleep (10000);
+              usleep (GPU_QUERY_WAIT_TIME);
             } while (prev_curr_step_storage_id == curr_step_storage_id &&
                      cudaStreamQuery (streams[i]) == cudaErrorNotReady);
             //Above loop ends only when the storage id has changed or 
