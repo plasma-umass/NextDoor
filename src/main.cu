@@ -18,7 +18,7 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 //#define USE_CSR_IN_SHARED
 //#define USE_EMBEDDING_IN_SHARED_MEM
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
@@ -42,19 +42,19 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
+#define NEW_EMBEDDING_BUFFER_SIZE 1024*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -1492,11 +1492,22 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
     load_ids[0] = id + load*n_embeddings;
+#ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+    load_ids[1] = blockIdx.x*blockDim.x + load*n_embeddings + (load+1)*blockDim.x - 1 - threadIdx.x;
+#else
     load_ids[1] = (load+1)*n_embeddings - 1 - id;
-    
+    //printf ("id: %d blockIdx: %d threadIdx: %d load_ids[0]: %d load_idx[1]: %d\n",
+    //        id, blockIdx.x, threadIdx.x, load_ids[0], load_ids[1]);
+#endif
     //printf ("t-id %d ; load_ids[0] %d ; load_ids[1] %d\n", id, load_ids[0], load_ids[1]);
     int n_loads;
+#ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+    if (enable_edge_pulling && threadIdx.x < THREAD_BLOCK_SIZE/2 && 
+        load_ids[1] < n_embeddings) {
+#else
     if (enable_edge_pulling && id < n_embeddings/2) {
+#endif
+
       //Vertices are sorted in increasing order. a vertex in first half will pull edges from 
       //vertex in second half.
       n_loads = 2;
@@ -1519,17 +1530,25 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
         int v = embeddings[embeddings_per_partitions[load_ids[0]].emb_idx].get_vertex (embeddings_per_partitions[load_ids[0]].vertex_idx);
         int first_n_edges = csr->get_end_edge_idx (v) - csr->get_start_edge_idx (v) + 1;
         int second_n_edges = csr->get_end_edge_idx (u) - csr->get_start_edge_idx (u) + 1;
+        /*if (!(first_n_edges <= second_n_edges)) {
+          printf ("id: %d blockIdx: %d threadIdx: %d load_ids[0]: %d load_idx[1]: %d first %d second %d\n",
+          id, blockIdx.x, threadIdx.x, load_ids[0], load_ids[1], first_n_edges, second_n_edges);
+        }*/
         assert (first_n_edges <= second_n_edges);
         int total_edges_to_process = (second_n_edges + first_n_edges)/2;
         int remaining_edges = total_edges_to_process - first_n_edges; //first n edges have already been done
         start_edge_idx = csr->get_end_edge_idx (u) - remaining_edges + 1;
         end_edge_idx = csr->get_end_edge_idx (u);
       } else {
-        if (enable_edge_pulling && n_loads == 1) {
+        if (enable_edge_pulling && n_loads == 1 && load_ids[1] < n_embeddings) {
           //Can only happen when vertex is in second half
           int v = embeddings[embeddings_per_partitions[load_ids[1]].emb_idx].get_vertex (embeddings_per_partitions[load_ids[1]].vertex_idx);
           int first_n_edges = csr->get_end_edge_idx(u) - csr->get_start_edge_idx(u) + 1;
           int second_n_edges = csr->get_end_edge_idx(v) - csr->get_start_edge_idx(v) + 1;
+          /*if (!(first_n_edges >= second_n_edges)) {
+            printf ("id: %d blockIdx: %d threadIdx: %d load_ids[0]: %d load_idx[1]: %d first %d second %d\n",
+            id, blockIdx.x, threadIdx.x, load_ids[0], load_ids[1], first_n_edges, second_n_edges);
+          }*/
           assert (first_n_edges >= second_n_edges);
           int edges_to_process = ((second_n_edges + first_n_edges) % 2 == 0) ? (second_n_edges + first_n_edges)/2 : (second_n_edges + first_n_edges)/2+1;
           //int edges_to_process = (second_n_edges + first_n_edges)/2;
@@ -1769,7 +1788,7 @@ void collect_vertex_embeddings_in_partitions (CSR* csr, VectorVertexEmbedding<si
     std::cout << "part_idx_in_embs_for_parts " << i << ":" << part_idx_in_embs_for_parts[i] << std::endl;
   }*/
 
-  std::cout << "embs_for_parts_size " << embs_for_parts_size <<  ":" << get_emb_per_parts_size (n_embeddings, size) << std::endl;
+  //std::cout << "embs_for_parts_size " << embs_for_parts_size <<  ":" << get_emb_per_parts_size (n_embeddings, size) << std::endl;
   assert (get_emb_per_parts_size (n_embeddings, size) == embs_for_parts_size);
 
   for (int i = start_idx; i < start_idx + n_embeddings; i++) {
@@ -1797,7 +1816,7 @@ void collect_vertex_embeddings_in_partitions_per_threadblock (CSR* csr, VectorVe
                                              THREAD_BLOCK_SIZE, partitions, vertex_to_partition,
                                              embs_for_parts + embs_for_parts_processed, 
                                              embs_for_parts_size_per_threadblock);
-    std::cout << "embs_for_parts_processed " << embs_for_parts_processed << std::endl;
+    //std::cout << "embs_for_parts_processed " << embs_for_parts_processed << std::endl;
     embs_for_parts_processed += embs_for_parts_size_per_threadblock/sizeof (PairEmbIdxVertexIdx);
     n_embeddings_processed += THREAD_BLOCK_SIZE;    
   }
