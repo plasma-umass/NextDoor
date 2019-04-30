@@ -24,6 +24,7 @@
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 #define USE_EMBEDDING_IN_LOCAL_MEM
 #define PROCESS_EMBEDDINGS_PER_VERTEX
+#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
 #define GPU_QUERY_WAIT_TIME 100
 //#define ADD_TO_OUTPUT
 //#define SHARED_MEM_NON_COALESCING
@@ -1486,7 +1487,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
   if (id >= n_embeddings)
       return;
   
-  const bool enable_edge_pulling = true;
+  const bool enable_edge_pulling = false;
   for (int load = 0; load < embedding_size; load++) {
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
@@ -1731,14 +1732,20 @@ public:
   
 };
 
+size_t get_emb_per_parts_size (size_t n_embeddings, int vertices_per_embedding) 
+{
+  return vertices_per_embedding * n_embeddings * sizeof(PairEmbIdxVertexIdx);
+}
+
 template <uint size>
-void collect_vertex_embeddings_in_partitions (CSR* csr, VectorVertexEmbedding<size>* embeddings, size_t n_embeddings,
+void collect_vertex_embeddings_in_partitions (CSR* csr, VectorVertexEmbedding<size>* embeddings, size_t start_idx, 
+                                              size_t n_embeddings,
                                               std::vector<std::vector<int>>& partitions, std::vector<int>& vertex_to_partition,
                                               PairEmbIdxVertexIdx* embs_for_parts, size_t embs_for_parts_size)
 {
   std::vector<int> embs_per_parts_size(partitions.size (), 0);
   
-  for (int i = 0; i < n_embeddings; i++) {
+  for (int i = start_idx; i < start_idx + n_embeddings; i++) {
     VectorVertexEmbedding<size>& emb = embeddings[i];
     //print_embedding<size> (&emb);
     //std::cout << std::endl;
@@ -1758,15 +1765,14 @@ void collect_vertex_embeddings_in_partitions (CSR* csr, VectorVertexEmbedding<si
     part_idx_in_embs_for_parts[i] = part_idx_in_embs_for_parts[i-1] + embs_per_parts_size[i-1];
   }
 
-  
   /*for (int i = 0; i < embs_per_parts_size.size (); i++) {
     std::cout << "part_idx_in_embs_for_parts " << i << ":" << part_idx_in_embs_for_parts[i] << std::endl;
   }*/
 
-  std::cout << "embs_for_parts_size " << embs_for_parts_size <<  ":" << sizeof (uint32_t) * sizeof (PairEmbIdxVertexIdx) * n_embeddings *size << std::endl;
-  assert (sizeof (uint32_t) * sizeof (PairEmbIdxVertexIdx) * n_embeddings *size == embs_for_parts_size);
+  std::cout << "embs_for_parts_size " << embs_for_parts_size <<  ":" << get_emb_per_parts_size (n_embeddings, size) << std::endl;
+  assert (get_emb_per_parts_size (n_embeddings, size) == embs_for_parts_size);
 
-  for (int i = 0; i < n_embeddings; i++) {
+  for (int i = start_idx; i < start_idx + n_embeddings; i++) {
     VectorVertexEmbedding<size>& emb = embeddings[i];
     for (int v_i = 0; v_i < size; v_i++) {
       int v = emb.get_vertex (v_i);
@@ -1775,6 +1781,44 @@ void collect_vertex_embeddings_in_partitions (CSR* csr, VectorVertexEmbedding<si
       parts_pushed_idx[part_idx]++;
     }
   }
+}
+
+template <uint size>
+void collect_vertex_embeddings_in_partitions_per_threadblock (CSR* csr, VectorVertexEmbedding<size>* embeddings, size_t n_embeddings,
+                                                              std::vector<std::vector<int>>& partitions, std::vector<int>& vertex_to_partition,
+                                                              PairEmbIdxVertexIdx* embs_for_parts, size_t embs_for_parts_size)
+{
+  int n_threadblocks = n_embeddings%THREAD_BLOCK_SIZE == 0 ? n_embeddings/THREAD_BLOCK_SIZE : n_embeddings/THREAD_BLOCK_SIZE + 1;
+  size_t embs_for_parts_size_per_threadblock = get_emb_per_parts_size (THREAD_BLOCK_SIZE, size);
+  size_t embs_for_parts_processed = 0;
+  size_t n_embeddings_processed = 0;
+  for (int i = 0; i < ((n_embeddings%THREAD_BLOCK_SIZE == 0) ? n_threadblocks : n_threadblocks - 1); i++) {
+    collect_vertex_embeddings_in_partitions (csr, embeddings, n_embeddings_processed, 
+                                             THREAD_BLOCK_SIZE, partitions, vertex_to_partition,
+                                             embs_for_parts + embs_for_parts_processed, 
+                                             embs_for_parts_size_per_threadblock);
+    std::cout << "embs_for_parts_processed " << embs_for_parts_processed << std::endl;
+    embs_for_parts_processed += embs_for_parts_size_per_threadblock/sizeof (PairEmbIdxVertexIdx);
+    n_embeddings_processed += THREAD_BLOCK_SIZE;    
+  }
+
+  if (n_embeddings%THREAD_BLOCK_SIZE != 0) {
+    size_t remaining = n_embeddings - n_embeddings_processed;
+    collect_vertex_embeddings_in_partitions (csr, embeddings, n_embeddings_processed, 
+                                             remaining, partitions, vertex_to_partition,
+                                             embs_for_parts + embs_for_parts_processed, 
+                                             get_emb_per_parts_size (remaining, size));
+    embs_for_parts_processed += embs_for_parts_size_per_threadblock;
+  }
+
+
+  //for (int i = 0; i < n_embeddings*size; i++) {
+  //  PairEmbIdxVertexIdx p = embs_for_parts[i];
+  //  printf ("%d: [%d, %d]:\n", i, p.emb_idx, p.vertex_idx);
+    //VectorVertexEmbedding<2>* emb = &((VectorVertexEmbedding<2>*)input_embeddings_ptr)[p.emb_idx];
+    //print_embedding<2> (emb);
+    //std::cout << std::endl;
+  //}
 }
 
 int main (int argc, char* argv[])
@@ -1929,7 +1973,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 5 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
@@ -2131,20 +2175,29 @@ int main (int argc, char* argv[])
 #ifdef PROCESS_EMBEDDINGS_PER_VERTEX
         assert (N_STREAMS == 1);
         char* embeddings_per_partitions_ptr = (char*)orig_output_ptr + orig_outputs_size;
-        size_t embeddings_per_partitions_ptr_size = sizeof (uint32_t)* iter * sizeof (PairEmbIdxVertexIdx)*per_stream_n_embeddings;
+        size_t embeddings_per_partitions_ptr_size = get_emb_per_parts_size (per_stream_n_embeddings, iter);
         assert ((size_t)embeddings_per_partitions_ptr + embeddings_per_partitions_ptr_size < (size_t)global_mem_ptr + global_mem_size);
         std::cout << "embeddings_per_partitions_ptr_size: " << embeddings_per_partitions_ptr_size << std::endl;
         char* input_embeddings_ptr = (char*)embeddings_ptr + per_stream_embeddings_done*embedding_size;
         switch (iter) {
           case 1: {
-            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<1>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+#   ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+            collect_vertex_embeddings_in_partitions_per_threadblock (csr, (VectorVertexEmbedding<1>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                                    (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   else
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<1>*)input_embeddings_ptr, 0, per_stream_n_embeddings, partitions, vertex_to_partition, 
                                                      (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   endif
             break;
           }
           case 2: {
-  
-            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<2>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+#   ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+            collect_vertex_embeddings_in_partitions_per_threadblock (csr, (VectorVertexEmbedding<2>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                                    (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   else
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<2>*)input_embeddings_ptr, 0, per_stream_n_embeddings, partitions, vertex_to_partition, 
                                                      (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   endif
             std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
             
             for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
@@ -2157,9 +2210,13 @@ int main (int argc, char* argv[])
             break;
           } 
           case 3: {
-  
-            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<3>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+#   ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+            collect_vertex_embeddings_in_partitions_per_threadblock (csr, (VectorVertexEmbedding<3>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                                    (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   else
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<3>*)input_embeddings_ptr, 0, per_stream_n_embeddings, partitions, vertex_to_partition, 
                                                      (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   endif
             std::cout << "iter = 3 elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
             
             for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
@@ -2177,9 +2234,13 @@ int main (int argc, char* argv[])
             break;
           }
           case 4: {
-  
-            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<4>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+#   ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+            collect_vertex_embeddings_in_partitions_per_threadblock (csr, (VectorVertexEmbedding<4>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                                    (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   else
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<4>*)input_embeddings_ptr, 0, per_stream_n_embeddings, partitions, vertex_to_partition, 
                                                      (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   endif
             std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
             
             for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
@@ -2192,9 +2253,13 @@ int main (int argc, char* argv[])
             break;
           }
           case 5: {
-  
-            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<5>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+#   ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+            collect_vertex_embeddings_in_partitions_per_threadblock (csr, (VectorVertexEmbedding<5>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                                    (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   else
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<5>*)input_embeddings_ptr, 0, per_stream_n_embeddings, partitions, vertex_to_partition, 
                                                      (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   endif
             std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
             
             for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
@@ -2207,9 +2272,13 @@ int main (int argc, char* argv[])
             break;
           }
           case 6: {
-  
-            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<6>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+#   ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+            collect_vertex_embeddings_in_partitions_per_threadblock (csr, (VectorVertexEmbedding<6>*)input_embeddings_ptr, per_stream_n_embeddings, partitions, vertex_to_partition, 
+                                                                    (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   else
+            collect_vertex_embeddings_in_partitions (csr, (VectorVertexEmbedding<6>*)input_embeddings_ptr, 0, per_stream_n_embeddings, partitions, vertex_to_partition, 
                                                      (PairEmbIdxVertexIdx*)embeddings_per_partitions_ptr, embeddings_per_partitions_ptr_size);
+#   endif
             std::cout << "elements in embs_per_parts: " << per_stream_n_embeddings*iter << std::endl;
             
             for (int i = 0; i < per_stream_n_embeddings*iter; i++) {
