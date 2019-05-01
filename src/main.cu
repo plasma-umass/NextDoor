@@ -42,19 +42,19 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 1024*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
+#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -1484,20 +1484,31 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
   id = blockIdx.x*blockDim.x + threadIdx.x;
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
-  if (id >= n_embeddings)
-      return;
+  //if (id >= n_embeddings)
+  //    return;
   
+  int thread_block_start_idx = blockIdx.x*blockDim.x * embedding_size;
   const bool enable_edge_pulling = false;
   for (int load = 0; load < embedding_size; load++) {
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
-    load_ids[0] = id + load*n_embeddings;
+    
 #ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+    load_ids[0] = thread_block_start_idx + threadIdx.x + load*blockDim.x;
     load_ids[1] = blockIdx.x*blockDim.x + load*n_embeddings + (load+1)*blockDim.x - 1 - threadIdx.x;
+    /*if (load == 0)
+      printf ("P1 id: %d blockIdx: %d threadIdx: %d load_ids[0]: %d load: %d\n",
+            id, blockIdx.x, threadIdx.x, load_ids[0], load);
+            */
+    if (load_ids[0] >= n_embeddings*embedding_size)
+            return;
+    /*if (load == 0)
+      printf ("P2 id: %d blockIdx: %d threadIdx: %d load_ids[0]: %d load: %d\n",
+            id, blockIdx.x, threadIdx.x, load_ids[0], load);
+    */
 #else
+    load_ids[0] = id + load*n_embeddings;
     load_ids[1] = (load+1)*n_embeddings - 1 - id;
-    //printf ("id: %d blockIdx: %d threadIdx: %d load_ids[0]: %d load_idx[1]: %d\n",
-    //        id, blockIdx.x, threadIdx.x, load_ids[0], load_ids[1]);
 #endif
     //printf ("t-id %d ; load_ids[0] %d ; load_ids[1] %d\n", id, load_ids[0], load_ids[1]);
     int n_loads;
