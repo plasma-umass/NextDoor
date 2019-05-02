@@ -18,10 +18,11 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 //#define USE_CSR_IN_SHARED
-//#define USE_EMBEDDING_IN_SHARED_MEM
+#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
+//#define USE_EMBEDDING_IN_SHARED_MEM
 #define USE_EMBEDDING_IN_LOCAL_MEM
 #define PROCESS_EMBEDDINGS_PER_VERTEX
 #define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
@@ -1451,11 +1452,10 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
 
   VectorVertexEmbedding<embedding_size>* embeddings = (VectorVertexEmbedding<embedding_size>*)input;
   PairEmbIdxVertexIdx* embeddings_per_partitions = (PairEmbIdxVertexIdx*) embs_per_parts;
-#ifdef USE_EMBEDDING_IN_LOCAL_MEM
-  unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size+1>)];
-#endif
 
-#ifdef USE_EMBEDDING_IN_SHARED_MEM
+id = blockIdx.x*blockDim.x + threadIdx.x;
+
+#ifdef EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //TODO: Support VectorVertexEmbedding
   #if 0
     const int shared_mem_size = 49152;
@@ -1467,21 +1467,27 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
 
     SharedMemElem* local_shared_buff = &shared_buff[0];
   #else
-    const int shared_mem_size = 49152;
+    const int shared_mem_size = THREAD_BLOCK_SIZE*sizeof(VectorVertexEmbedding<embedding_size+1>);
+    //std::static_assert (shared_mem_size <= 49152);
+    assert (shared_mem_size <= 49152);
     const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
 
     //assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
     //per_thread_shared_mem_size = sizeof (VertexEmbedding);
-    __shared__ SharedMemElem shared_buff[shared_mem_size/sizeof (SharedMemElem)];
+    __shared__ SharedMemElem shared_buff[shared_mem_size];///sizeof (SharedMemElem)];
 
-    SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
+    /*SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
+    memcpy (local_shared_buff, &embeddings[id], embedding_size);
+    __syncthreads ();
+    */
   #endif
+#else //#ifdef USE_EMBEDDING_IN_LOCAL_MEM
+  unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size+1>)];
 #endif
 
   const int warp_id = threadIdx.x / WARP_SIZE;
   const int lane_id = threadIdx.x % WARP_SIZE;
-
-  id = blockIdx.x*blockDim.x + threadIdx.x;
+  
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
 #ifndef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
@@ -1531,9 +1537,16 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
     }
 
     for (int i = 0; i < n_loads; i++) {
+#ifdef EMBEDDING_IN_SHARED_MEM_PER_VERTEX
+      int emb_idx = embeddings_per_partitions[load_ids[i]].emb_idx;
+      VectorVertexEmbedding<embedding_size+1>* embedding = &((VectorVertexEmbedding<embedding_size+1>*)&shared_buff[0])[threadIdx.x];
+      embedding->clear ();
+      vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
+#else
       VectorVertexEmbedding<embedding_size+1>* embedding = (VectorVertexEmbedding<embedding_size+1>*)&temp_buffer[0];
       embedding->clear ();
       vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
+#endif
 
       int u = embedding->get_vertex (embeddings_per_partitions[load_ids[i]].vertex_idx);
       int start_edge_idx;
@@ -2629,6 +2642,7 @@ int main (int argc, char* argv[])
                 if (true) {
                   cudaError_t err = cudaMemcpyAsync ((char*)new_embeddings_ptr[i]+(n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size, device_new_embeddings_2[i], max_embeddings/N_STREAMS*new_embedding_size, cudaMemcpyDeviceToHost, t);
                   if (err != cudaSuccess) {
+                    std::cout << "total embeddings found: " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << std::endl;
                     std::cout << cudaGetErrorString (err) << std::endl;
                     assert (false);
                   }
