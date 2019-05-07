@@ -18,15 +18,16 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 //#define USE_CSR_IN_SHARED
-#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
+//#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 //#define USE_EMBEDDING_IN_SHARED_MEM
+//#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
 #define USE_EMBEDDING_IN_LOCAL_MEM
 #define PROCESS_EMBEDDINGS_PER_VERTEX
-#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
-#define GPU_QUERY_WAIT_TIME 100
+//#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+#define GPU_QUERY_WAIT_TIME 100UL
 //#define ADD_TO_OUTPUT
 //#define SHARED_MEM_NON_COALESCING
 /**
@@ -43,7 +44,7 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
+#define NEW_EMBEDDING_BUFFER_SIZE 128UL*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
@@ -682,10 +683,9 @@ bool clique_filter_vector (CSR* csr, VectorVertexEmbedding<size>* embedding)
 
 template <uint32_t size>
 __host__ __device__
-bool clique_filter_vector_optimized (CSR* csr, VectorVertexEmbedding<size>* embedding)
+bool clique_filter_vector_optimized (CSR* csr, VectorVertexEmbedding<size>* embedding, int last_vertex)
 {
-  int last_vertex = embedding->get_vertex (size-1);
-  for (int i = 0; i < embedding->get_n_vertices () - 1; i++) {
+  for (int i = 0; i < embedding->get_n_vertices (); i++) {
     int u = embedding->get_vertex (i);
     if (!csr->has_edge (u, last_vertex)) {
         return false;
@@ -1023,8 +1023,8 @@ inline bool is_embedding_canonical (CSR* csr, VectorVertexEmbedding<size>* embed
   if (embedding->get_vertex (0) > v)
     return false;
   
-  if (size <= 2)
-    return true;
+  //if (size <= 2)
+  //  return true;
   
   bool found_neighbor = false;
   for (int j = 0; j < embedding->get_n_vertices (); j++) {
@@ -1455,7 +1455,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
 
 id = blockIdx.x*blockDim.x + threadIdx.x;
 
-#ifdef EMBEDDING_IN_SHARED_MEM_PER_VERTEX
+#if defined(EMBEDDING_IN_SHARED_MEM_PER_VERTEX)
 //TODO: Support VectorVertexEmbedding
   #if 0
     const int shared_mem_size = 49152;
@@ -1481,27 +1481,42 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
     __syncthreads ();
     */
   #endif
-#else //#ifdef USE_EMBEDDING_IN_LOCAL_MEM
-  unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size+1>)];
-#endif
+#else 
+#  if defined(ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)
+  const int shared_mem_size = THREAD_BLOCK_SIZE*sizeof(VectorVertexEmbedding<embedding_size>);
+  //std::static_assert (shared_mem_size <= 49152);
+  assert (shared_mem_size <= 49152);
+  const int per_thread_shared_mem_size = shared_mem_size/THREAD_BLOCK_SIZE;
 
+  //assert (per_thread_shared_mem_size >= sizeof (VertexEmbedding));
+  //per_thread_shared_mem_size = sizeof (VertexEmbedding);
+  __shared__ SharedMemElem shared_buff[shared_mem_size];
+
+  SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
+  memcpy (local_shared_buff, &embeddings[id], embedding_size);
+  __syncthreads ();
+
+#  else //#ifdef USE_EMBEDDING_IN_LOCAL_MEM
+  unsigned char temp_buffer [sizeof(VectorVertexEmbedding<embedding_size>)];
+#  endif
+#endif
   const int warp_id = threadIdx.x / WARP_SIZE;
   const int lane_id = threadIdx.x % WARP_SIZE;
   
   int start = id, end = id+1;
   //printf ("running id %d\n", id);
-#ifndef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+#ifndef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK 
   if (id >= n_embeddings)
       return;
 #endif
 
   int thread_block_start_idx = blockIdx.x*blockDim.x * embedding_size;
-  const bool enable_edge_pulling = true;
+  const bool enable_edge_pulling = false;
   for (int load = 0; load < embedding_size; load++) {
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
     
-#ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+#if defined (EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK)
     load_ids[0] = thread_block_start_idx + threadIdx.x + load*blockDim.x;
     load_ids[1] = thread_block_start_idx + embedding_size*THREAD_BLOCK_SIZE - 1 - (threadIdx.x + load*blockDim.x);
     
@@ -1522,7 +1537,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
 #endif
     //printf ("t-id %d ; load_ids[0] %d ; load_ids[1] %d\n", id, load_ids[0], load_ids[1]);
     int n_loads;
-#ifdef EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+#if defined (EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK)
     if (enable_edge_pulling && threadIdx.x + load*blockDim.x < embedding_size*THREAD_BLOCK_SIZE/2 && 
         load_ids[1] < n_embeddings*embedding_size) {
 #else
@@ -1537,15 +1552,22 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
     }
 
     for (int i = 0; i < n_loads; i++) {
-#ifdef EMBEDDING_IN_SHARED_MEM_PER_VERTEX
+#if defined (EMBEDDING_IN_SHARED_MEM_PER_VERTEX)
       int emb_idx = embeddings_per_partitions[load_ids[i]].emb_idx;
       VectorVertexEmbedding<embedding_size+1>* embedding = &((VectorVertexEmbedding<embedding_size+1>*)&shared_buff[0])[threadIdx.x];
       embedding->clear ();
       vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
 #else
-      VectorVertexEmbedding<embedding_size+1>* embedding = (VectorVertexEmbedding<embedding_size+1>*)&temp_buffer[0];
+#  if defined (ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)
+      int emb_idx = embeddings_per_partitions[load_ids[i]].emb_idx;
+      VectorVertexEmbedding<embedding_size>* embedding = &((VectorVertexEmbedding<embedding_size>*)&shared_buff[0])[emb_idx];
+      //embedding->clear ();
+      //vector_embedding_from_one_less_size (embeddings[emb_idx], *embedding);
+#  else
+      VectorVertexEmbedding<embedding_size>* embedding = (VectorVertexEmbedding<embedding_size>*)&temp_buffer[0];
       embedding->clear ();
-      vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
+      memcpy (embedding, &embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], sizeof (VectorVertexEmbedding<embedding_size>));
+#  endif
 #endif
 
       int u = embedding->get_vertex (embeddings_per_partitions[load_ids[i]].vertex_idx);
@@ -1594,11 +1616,11 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
         
         int v = csr->get_edges () [e];
 
-        if (is_embedding_canonical<embedding_size+1> (csr, embedding, v) && embedding->has (v) == false) {
-          VectorVertexEmbedding<embedding_size+1>* extension = embedding;
-          extension->add_unsorted (v);
+        if (is_embedding_canonical<embedding_size> (csr, embedding, v) && embedding->has (v) == false) { //TODO: Make both these checks in same loop
+          VectorVertexEmbedding<embedding_size>* extension = embedding;
+          //extension->add_unsorted (v);
           
-          if (clique_filter_vector_optimized (csr, extension)) {
+          if (clique_filter_vector_optimized (csr, extension, v)) {
             //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
             //extension.add_last_in_sort_order ();
             //int o = atomicAdd(n_output,1);
@@ -1662,7 +1684,9 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     int o = atomicAdd(n_output, 1);
                     memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     #endif
-                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                    new_embeddings[n].add_unsorted (v);
                   } else {
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
@@ -1670,7 +1694,9 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     int o = atomicAdd(n_output, 1);
                     memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     #endif
-                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                    new_embeddings[n].add_unsorted (v);
                   }
                   break;
                 }
@@ -1696,7 +1722,9 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     int o = atomicAdd(n_output, 1);
                     memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     #endif
-                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                    new_embeddings[n].add_unsorted (v);
                   } else {
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
@@ -1704,7 +1732,9 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     int o = atomicAdd(n_output, 1);
                     memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     #endif
-                    memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                    new_embeddings[n].add_unsorted (v);
                   }
                 }
               }
@@ -1712,7 +1742,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
             //output[o].add_last_in_sort_order ();
             //new_embeddings[n].add_last_in_sort_order ();
           }
-          extension->remove_last ();
+          //extension->remove_last ();
         }
       }
     }
@@ -2613,7 +2643,12 @@ int main (int argc, char* argv[])
                 } 
                 if (true) {
                   cudaError_t err = cudaMemcpyAsync ((char*)new_embeddings_ptr[i] + (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size, device_new_embeddings_1[i], max_embeddings/N_STREAMS*new_embedding_size, cudaMemcpyDeviceToHost, t);
+                  //if (n_new_embeddings_1[i] + n_new_embeddings_2[i] >= 778462776)
+                  //    exit(EXIT_SUCCESS);
+                  //std::cout << "total embeddings found: " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << std::endl;
                   if (err != cudaSuccess) {
+                    //if (n_new_embeddings_1[i] + n_new_embeddings_2[i] >= 778462776)
+                    //  exit(EXIT_SUCCESS);
                     std::cout << cudaGetErrorString (err) << std::endl;
                     assert (false);
                   }
@@ -2641,7 +2676,12 @@ int main (int argc, char* argv[])
                 } 
                 if (true) {
                   cudaError_t err = cudaMemcpyAsync ((char*)new_embeddings_ptr[i]+(n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size, device_new_embeddings_2[i], max_embeddings/N_STREAMS*new_embedding_size, cudaMemcpyDeviceToHost, t);
+                  //if (n_new_embeddings_1[i] + n_new_embeddings_2[i] >= 778462776)
+                   //   exit(EXIT_SUCCESS);
+                  //std::cout << "total embeddings found: " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << std::endl;
                   if (err != cudaSuccess) {
+                   // if (n_new_embeddings_1[i] + n_new_embeddings_2[i] >= 778462776)
+                   //   exit(EXIT_SUCCESS);
                     std::cout << "total embeddings found: " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << std::endl;
                     std::cout << cudaGetErrorString (err) << std::endl;
                     assert (false);
