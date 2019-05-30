@@ -20,14 +20,15 @@
 #define WARP_SIZE 32
 #define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 //#define USE_CSR_IN_SHARED
-//#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
+#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 //#define USE_EMBEDDING_IN_SHARED_MEM
 //#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
 #define USE_EMBEDDING_IN_LOCAL_MEM
 #define PROCESS_EMBEDDINGS_PER_VERTEX
 //#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
-#define GPU_QUERY_WAIT_TIME 100UL
+#define GPU_QUERY_WAIT_TIME 1000UL
+
 //#define ADD_TO_OUTPUT
 //#define SHARED_MEM_NON_COALESCING
 /**
@@ -446,7 +447,7 @@ public:
   }
   
   __host__ __device__
-  bool has_logn (int v)
+  const bool has_logn (int v)
   {
     int l = 0;
     int r = filled_size-1;
@@ -467,7 +468,7 @@ public:
   }
   
   __host__ __device__
-  bool has (int v)
+  const bool has (int v)
   {
     for (int i = 0; i < filled_size; i++) {
       if (array[i] == v) {
@@ -479,19 +480,19 @@ public:
   }
   
   __host__ __device__
-  size_t get_n_vertices () const
+  const size_t get_n_vertices () const
   {
     return filled_size;
   }
   
   __host__ __device__
-  int get_vertex (int index) const
+  const int get_vertex (int index) const
   {
     return array[index];
   }
   
   __host__ __device__
-  int get_last_vertex () const
+  const int get_last_vertex () const
   {
     return array[filled_size-1];
   }
@@ -523,7 +524,7 @@ public:
 
 template <uint32_t size>
 __host__ __device__
-void vector_embedding_from_one_less_size (VectorVertexEmbedding<size>& vec_emb1,
+void vector_embedding_from_one_less_size (VectorVertexEmbedding<size> const & vec_emb1,
                                           VectorVertexEmbedding<size+1>& vec_emb2)
 {
   //TODO: Optimize here, filled_size++ in add is being called several times
@@ -683,7 +684,7 @@ bool clique_filter_vector (CSR* csr, VectorVertexEmbedding<size>* embedding)
 
 template <uint32_t size>
 __host__ __device__
-bool clique_filter_vector_optimized (CSR* csr, VectorVertexEmbedding<size>* embedding, int last_vertex)
+bool clique_filter_vector_optimized (CSR* csr, VectorVertexEmbedding<size> const * embedding, int last_vertex)
 {
   for (int i = 0; i < embedding->get_n_vertices (); i++) {
     int u = embedding->get_vertex (i);
@@ -1018,7 +1019,7 @@ void run_single_step_bitvector_embedding (void* input, int n_embeddings, CSR* cs
 
 template <size_t size>
 __host__ __device__
-inline bool is_embedding_canonical (CSR* csr, VectorVertexEmbedding<size>* embedding, int v)
+inline bool is_embedding_canonical (CSR* csr, VectorVertexEmbedding<size> const * embedding, int v)
 {
   if (embedding->get_vertex (0) > v)
     return false;
@@ -1493,7 +1494,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
   __shared__ SharedMemElem shared_buff[shared_mem_size];
 
   SharedMemElem* local_shared_buff = &shared_buff[per_thread_shared_mem_size/sizeof(SharedMemElem)*threadIdx.x];
-  memcpy (local_shared_buff, &embeddings[id], embedding_size);
+  memcpy (local_shared_buff, &embeddings[id], sizeof (VectorVertexEmbedding<embedding_size>));
   __syncthreads ();
 
 #  else //#ifdef USE_EMBEDDING_IN_LOCAL_MEM
@@ -1554,13 +1555,14 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
     for (int i = 0; i < n_loads; i++) {
 #if defined (EMBEDDING_IN_SHARED_MEM_PER_VERTEX)
       int emb_idx = embeddings_per_partitions[load_ids[i]].emb_idx;
-      VectorVertexEmbedding<embedding_size+1>* embedding = &((VectorVertexEmbedding<embedding_size+1>*)&shared_buff[0])[threadIdx.x];
-      embedding->clear ();
-      vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
+      VectorVertexEmbedding<embedding_size>* embedding = &((VectorVertexEmbedding<embedding_size>*)&shared_buff[0])[threadIdx.x];
+      memcpy (embedding, &embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], sizeof (VectorVertexEmbedding<embedding_size>));
+      //embedding->clear ();
+      //vector_embedding_from_one_less_size (embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], *embedding);
 #else
 #  if defined (ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)
       int emb_idx = embeddings_per_partitions[load_ids[i]].emb_idx;
-      VectorVertexEmbedding<embedding_size>* embedding = &((VectorVertexEmbedding<embedding_size>*)&shared_buff[0])[emb_idx];
+      VectorVertexEmbedding<embedding_size> const * embedding = &((VectorVertexEmbedding<embedding_size>*)&shared_buff[0])[emb_idx%256];
       //embedding->clear ();
       //vector_embedding_from_one_less_size (embeddings[emb_idx], *embedding);
 #  else
@@ -1616,8 +1618,9 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
         
         int v = csr->get_edges () [e];
 
-        if (is_embedding_canonical<embedding_size> (csr, embedding, v) && embedding->has (v) == false) { //TODO: Make both these checks in same loop
-          VectorVertexEmbedding<embedding_size>* extension = embedding;
+        if (is_embedding_canonical<embedding_size> (csr, embedding, v) && 
+            ((VectorVertexEmbedding<embedding_size>*)embedding)->has (v) == false) { //TODO: Make both these checks in same loop
+          VectorVertexEmbedding<embedding_size> const * extension = embedding;
           //extension->add_unsorted (v);
           
           if (clique_filter_vector_optimized (csr, extension, v)) {
@@ -2390,7 +2393,7 @@ int main (int argc, char* argv[])
             cudaError_t error = cudaGetLastError ();
             if (error != cudaSuccess) {
               const char* error_string = cudaGetErrorString (error);
-              std::cout << "embeddings_per_partitions Cuda host to device copy error " << error_string << std::endl;
+              std::cout << __LINE__<<" embeddings_per_partitions Cuda host to device copy error " << error_string << std::endl;
             } else {
               std::cout << "Cuda host to device copy success " << std::endl;
             }
@@ -2419,9 +2422,9 @@ int main (int argc, char* argv[])
           cudaError_t error = cudaGetLastError ();
           if (error != cudaSuccess) {
             const char* error_string = cudaGetErrorString (error);
-            std::cout << "Cuda host to device copy error " << error_string << std::endl;
+            std::cout << __LINE__<<" Cuda host to device copy error " << error_string << std::endl;
           } else {
-            std::cout << "Cuda host to device copy success " << std::endl;
+            std::cout << __LINE__<< " Cuda host to device copy success " << std::endl;
           }
         }
         cudaMemcpyAsync (device_n_embeddings_1[i], &n_new_embeddings_1[i],
@@ -2433,9 +2436,9 @@ int main (int argc, char* argv[])
           cudaError_t error = cudaGetLastError ();
           if (error != cudaSuccess) {
             const char* error_string = cudaGetErrorString (error);
-            std::cout << "Cuda host to device copy error " << error_string << std::endl;
+            std::cout << __LINE__<<" Cuda host to device copy error " << error_string << std::endl;
           } else {
-            std::cout << "Cuda host to device copy success " << std::endl;
+            std::cout << __LINE__<< " Cuda host to device copy success " << std::endl;
           }
         }                         
         
@@ -2448,9 +2451,9 @@ int main (int argc, char* argv[])
           cudaError_t error = cudaGetLastError ();
           if (error != cudaSuccess) {
             const char* error_string = cudaGetErrorString (error);
-            std::cout << "Cuda host to device copy error " << error_string << std::endl;
+            std::cout << __LINE__<<" Cuda host to device copy error " << error_string << std::endl;
           } else {
-            std::cout << "Cuda host to device copy success " << std::endl;
+            std::cout << __LINE__<<" Cuda host to device copy success " << std::endl;
           }
         }
         cudaMemcpyAsync (device_csr[i], csr, sizeof (CSR), cudaMemcpyHostToDevice, streams[i]);
@@ -2462,9 +2465,9 @@ int main (int argc, char* argv[])
         cudaError_t error = cudaGetLastError ();
         if (error != cudaSuccess) {
           const char* error_string = cudaGetErrorString (error);
-          std::cout << "Cuda host to device copy error " << error_string << std::endl;
+          std::cout << __LINE__<<" Cuda host to device copy error " << error_string << std::endl;
         } else {
-          std::cout << "Cuda host to device copy success " << std::endl;
+          std::cout << __LINE__<<" Cuda host to device copy success " << std::endl;
         }
 
         per_stream_embeddings_done += per_stream_n_embeddings;
@@ -3133,6 +3136,7 @@ int main (int argc, char* argv[])
         cudaFree (device_embeddings_per_partitions[i]);
         cudaFree (device_embeddings[i]);
         cudaFree (device_new_embeddings_1[i]);
+        cudaFree (device_new_embeddings_2[i]);
         cudaFree (device_n_embeddings_1[i]);
         cudaFree (device_outputs[i]);
         cudaFree (device_n_outputs[i]);
@@ -3141,7 +3145,6 @@ int main (int argc, char* argv[])
     }
 
     new_embeddings_size = n_next_step_embeddings;
-    
   }
 
 #ifdef PINNED_MEMORY
