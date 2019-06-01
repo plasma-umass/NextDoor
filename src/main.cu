@@ -18,9 +18,9 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 //#define USE_CSR_IN_SHARED
-#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
+//#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 //#define USE_EMBEDDING_IN_SHARED_MEM
 //#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
@@ -45,7 +45,7 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 128UL*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
+#define NEW_EMBEDDING_BUFFER_SIZE 10*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
@@ -661,6 +661,18 @@ void print_embedding (VectorVertexEmbedding<size>* embedding)
     std::cout << embedding->get_vertex (i) << ", ";
   }
   std::cout << "}";
+}
+
+template <int size>
+std::string embedding_to_string (VectorVertexEmbedding<size>* embedding)
+{
+  std::string s = "";
+  s = "{";
+  for (int i = 0; i < size; i++) {
+    s += embedding->get_vertex (i) + ", ";
+  }
+  s += "}";
+  return s;
 }
 
 template <uint32_t size>
@@ -1319,26 +1331,26 @@ void run_single_step_vectorvertex_embedding (void* input, int n_embeddings, CSR*
                   while (n >= max_n_embeddings) {//TODO: change it to do-while 
                     if (*curr_step_storage_id == 0) {
                       n = atomicSub (n_next_step_1, 1); //TODO: can remove that
-                      *curr_step_storage_id = 1;
-                      *buff_1_status = BUFFER_STATUS::CPU_COPYING;
                       while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
                         /*unsigned long i = 0;
                         while (i <= (1UL<<30)) {
                           i++;
                         }*/
                       }
+                      *curr_step_storage_id = 1;
+                      *buff_1_status = BUFFER_STATUS::CPU_COPYING;
                       *buff_2_status = BUFFER_STATUS::GPU_USING;
                       n = atomicAdd(n_next_step_2, 1);
                     } else {
                       n = atomicSub (n_next_step_2, 1); //TODO: can remove that
-                      *curr_step_storage_id = 0;
-                      *buff_2_status = BUFFER_STATUS::CPU_COPYING;
                       while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
                         /*unsigned long i = 0;
                         while (i <= (1UL<<30)) {
                           i++;
                         }*/
                       }
+                      *curr_step_storage_id = 0;
+                      *buff_2_status = BUFFER_STATUS::CPU_COPYING;
                       *buff_1_status = BUFFER_STATUS::GPU_USING;
                       n = atomicAdd(n_next_step_1, 1);
                     }
@@ -1424,6 +1436,7 @@ void run_single_step_vectorvertex_embedding_per_vertex (void* input, int n_embed
                       void* next_step_1, int* n_next_step_1, volatile BUFFER_STATUS* buff_1_status, //Should be volatile because of the busy wait loop
                       void* next_step_2, int* n_next_step_2, volatile BUFFER_STATUS* buff_2_status, //Should be volatile because of the busy wait loop
                       volatile int* curr_step_storage_id, //Should be volatile because threads coordinate based on this value
+                      int* n_next_step_1_done, int* n_next_step_2_done, 
                       int only_copy_change)
 {
   int id;
@@ -1642,6 +1655,14 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
             }
             else {
               int storage_id = *curr_step_storage_id;
+              /*assert (! (*buff_1_status == BUFFER_STATUS::CPU_COPYING) && (*buff_2_status == BUFFER_STATUS::CPU_COPYING));
+              assert (! (*buff_1_status == BUFFER_STATUS::GPU_USING) && (*buff_2_status == BUFFER_STATUS::GPU_USING));
+              if ((*buff_1_status == BUFFER_STATUS::FREE) && (*buff_2_status == BUFFER_STATUS::FREE)) {
+                storage_id = 0;
+              } else {
+                
+              }*/
+              
               const size_t max_n_embeddings = NEW_EMBEDDING_BUFFER_SIZE/sizeof (VectorVertexEmbedding<embedding_size+1>);
               //const int storage_id = 0;
               int n = 0;
@@ -1652,28 +1673,27 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                   while (n >= max_n_embeddings) {//TODO: change it to do-while 
                     if (storage_id == 0) {
                       n = atomicSub (n_next_step_1, 1); //TODO: can remove that
-                      *curr_step_storage_id = 1;
-                      storage_id = 1;
-                      *buff_1_status = BUFFER_STATUS::CPU_COPYING;
                       while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
                         /*unsigned long i = 0;
                         while (i <= (1UL<<30)) {
                           i++;
                         }*/
                       }
+                      *curr_step_storage_id = 1;
+                      storage_id = 1;
                       *buff_2_status = BUFFER_STATUS::GPU_USING;
                       n = atomicAdd(n_next_step_2, 1);
                     } else {
                       n = atomicSub (n_next_step_2, 1); //TODO: can remove that
-                      *curr_step_storage_id = 0;
-                      storage_id = 0;
-                      *buff_2_status = BUFFER_STATUS::CPU_COPYING;
                       while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
                         /*unsigned long i = 0;
                         while (i <= (1UL<<30)) {
                           i++;
                         }*/
                       }
+                      *curr_step_storage_id = 0;
+                      storage_id = 0;
+                      
                       *buff_1_status = BUFFER_STATUS::GPU_USING;
                       n = atomicAdd(n_next_step_1, 1);
                     }
@@ -1690,6 +1710,9 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
                     new_embeddings[n].add_unsorted (v);
+                    if (atomicAdd ((int*)n_next_step_2_done, 1) >= max_n_embeddings) {
+                      *buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                    }
                   } else {
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
@@ -1700,35 +1723,49 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
                     new_embeddings[n].add_unsorted (v);
+                    if (atomicAdd ((int*)n_next_step_1_done, 1) >= max_n_embeddings) {
+                      *buff_1_status = BUFFER_STATUS::CPU_COPYING;
+                    }
                   }
                   break;
                 }
 
                 case 1: {
                   n = atomicAdd(n_next_step_2, 1);
-                  if (n >= max_n_embeddings) {
-                    //Switch from buff2 to buff1
-                    atomicSub (n_next_step_2, 1); //TODO: can remove that
-                    *curr_step_storage_id = 0;
-                    *buff_2_status = BUFFER_STATUS::CPU_COPYING;
-                    while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
-                      /*unsigned long i = 0;
-                      while (i <= (1UL<<30)) {
-                        i++;
-                      }*/
+
+                  while (n >= max_n_embeddings) {//TODO: change it to do-while 
+                    if (storage_id == 0) {
+                      n = atomicSub (n_next_step_1, 1); //TODO: can remove that
+                      
+                      while (*buff_2_status == BUFFER_STATUS::CPU_COPYING) {
+                        /*unsigned long i = 0;
+                        while (i <= (1UL<<30)) {
+                          i++;
+                        }*/
+                      }
+                      *buff_2_status = BUFFER_STATUS::GPU_USING;
+                      *curr_step_storage_id = 1;
+                      storage_id = 1;
+                      //*buff_1_status = BUFFER_STATUS::CPU_COPYING;
+                      n = atomicAdd(n_next_step_2, 1);
+                    } else {
+                      n = atomicSub (n_next_step_2, 1); //TODO: can remove that
+                      while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
+                        /*unsigned long i = 0;
+                        while (i <= (1UL<<30)) {
+                          i++;
+                        }*/
+                      }
+                      *curr_step_storage_id = 0;
+                      storage_id = 0;
+                      //*buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                      *buff_1_status = BUFFER_STATUS::GPU_USING;
+                      n = atomicAdd(n_next_step_1, 1);
                     }
-                    *buff_1_status = BUFFER_STATUS::GPU_USING;
-                    n = atomicAdd (n_next_step_1, 1);
-                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
-                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
-                    #ifdef ADD_TO_OUTPUT
-                    int o = atomicAdd(n_output, 1);
-                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                    #endif
-                    //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
-                    vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
-                    new_embeddings[n].add_unsorted (v);
-                  } else {
+                  }
+                  
+                  if (storage_id == 1) {
+                    //n = atomicAdd (n_next_step_2, 1);
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
                     #ifdef ADD_TO_OUTPUT
@@ -1738,7 +1775,57 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
                     vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
                     new_embeddings[n].add_unsorted (v);
+                    if (atomicAdd ((int*)n_next_step_2_done, 1) >= max_n_embeddings) {
+                      *buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                    }
+                  } else {
+                    VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                    VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                    #ifdef ADD_TO_OUTPUT
+                    int o = atomicAdd(n_output, 1);
+                    memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    #endif
+                    //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                    vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                    new_embeddings[n].add_unsorted (v);
+                    if (atomicAdd ((int*)n_next_step_1_done, 1) >= max_n_embeddings) {
+                      *buff_1_status = BUFFER_STATUS::CPU_COPYING;
+                    }
                   }
+
+                  // if (n >= max_n_embeddings) {
+                  //   //Switch from buff2 to buff1
+                  //   atomicSub (n_next_step_2, 1); //TODO: can remove that
+                  //   *curr_step_storage_id = 0;
+                  //   *buff_2_status = BUFFER_STATUS::CPU_COPYING;
+                  //   while (*buff_1_status == BUFFER_STATUS::CPU_COPYING) {
+                  //     /*unsigned long i = 0;
+                  //     while (i <= (1UL<<30)) {
+                  //       i++;
+                  //     }*/
+                  //   }
+                  //   *buff_1_status = BUFFER_STATUS::GPU_USING;
+                  //   n = atomicAdd (n_next_step_1, 1);
+                  //   VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+                  //   VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                  //   #ifdef ADD_TO_OUTPUT
+                  //   int o = atomicAdd(n_output, 1);
+                  //   memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  //   #endif
+                  //   //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  //   vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                  //   new_embeddings[n].add_unsorted (v);
+                  // } else {
+                  //   VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
+                  //   VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+                  //   #ifdef ADD_TO_OUTPUT
+                  //   int o = atomicAdd(n_output, 1);
+                  //   memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  //   #endif
+                  //   //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+                  //   vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+                  //   new_embeddings[n].add_unsorted (v);
+                  // }
                 }
               }
             }
@@ -2490,7 +2577,15 @@ int main (int argc, char* argv[])
         #endif
     #endif
         std::cout << " threads: " << thread_blocks << std::endl;
-        
+        int* device_n_next_step_1_done;
+        int* device_n_next_step_2_done;
+        cudaMalloc (&device_n_next_step_1_done, sizeof(int));
+        cudaMalloc (&device_n_next_step_2_done, sizeof(int));
+        int qq = 0;
+        cudaMemcpyAsync (device_n_next_step_1_done, &qq, 
+          sizeof (qq), cudaMemcpyHostToDevice, streams[i]);
+          cudaMemcpyAsync (device_n_next_step_2_done, &qq, 
+            sizeof (qq), cudaMemcpyHostToDevice, streams[i]);
         switch (iter) {
           case 1: {
 #ifdef PROCESS_EMBEDDINGS_PER_VERTEX
@@ -2498,7 +2593,10 @@ int main (int argc, char* argv[])
               device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
               device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
               device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
-              device_curr_new_embeddings_idx[i], only_copy_change);
+              device_curr_new_embeddings_idx[i], 
+              device_n_next_step_1_done,
+              device_n_next_step_2_done,
+              only_copy_change);
 #else
             run_single_step_vectorvertex_embedding<1><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
@@ -2514,7 +2612,8 @@ int main (int argc, char* argv[])
               device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
               device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
               device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
-              device_curr_new_embeddings_idx[i], only_copy_change);
+              device_curr_new_embeddings_idx[i], device_n_next_step_1_done,
+              device_n_next_step_2_done, only_copy_change);
 #else
             run_single_step_vectorvertex_embedding<2><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
@@ -2530,7 +2629,8 @@ int main (int argc, char* argv[])
               device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
               device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
               device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
-              device_curr_new_embeddings_idx[i], only_copy_change);
+              device_curr_new_embeddings_idx[i], device_n_next_step_1_done,
+              device_n_next_step_2_done, only_copy_change);
 #else
             run_single_step_vectorvertex_embedding<3><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
@@ -2546,7 +2646,8 @@ int main (int argc, char* argv[])
               device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
               device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
               device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
-              device_curr_new_embeddings_idx[i], only_copy_change);
+              device_curr_new_embeddings_idx[i], device_n_next_step_1_done,
+              device_n_next_step_2_done, only_copy_change);
 #else
             run_single_step_vectorvertex_embedding<4><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
@@ -2562,7 +2663,8 @@ int main (int argc, char* argv[])
               device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
               device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
               device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
-              device_curr_new_embeddings_idx[i], only_copy_change);
+              device_curr_new_embeddings_idx[i], device_n_next_step_1_done,
+              device_n_next_step_2_done, only_copy_change);
 #else
             run_single_step_vectorvertex_embedding<5><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
@@ -2578,7 +2680,8 @@ int main (int argc, char* argv[])
               device_embeddings_per_partitions[i], device_outputs[i], device_n_outputs[i],
               device_new_embeddings_1[i], device_n_embeddings_1[i], device_new_embeddings_1_status[i],
               device_new_embeddings_2[i], device_n_embeddings_2[i], device_new_embeddings_2_status[i], 
-              device_curr_new_embeddings_idx[i], only_copy_change);
+              device_curr_new_embeddings_idx[i], device_n_next_step_1_done,
+              device_n_next_step_2_done, only_copy_change);
 #else
             run_single_step_vectorvertex_embedding<6><<<thread_blocks, THREAD_BLOCK_SIZE, 0, streams[i]>>> (device_embeddings[i], per_stream_n_embeddings, device_csr[i],
                                   device_outputs[i], device_n_outputs[i],
@@ -2615,14 +2718,23 @@ int main (int argc, char* argv[])
           cudaStreamCreate (&t);
 
           while (cudaStreamQuery (streams[i]) == cudaErrorNotReady) {
+            BUFFER_STATUS __buff_1_status, __buff_2_status;
             do {
-              assert (cudaMemcpyAsync (&curr_step_storage_id, device_curr_new_embeddings_idx[i], sizeof (curr_step_storage_id), cudaMemcpyDeviceToHost, t) == cudaSuccess);
+              assert (cudaMemcpyAsync (&__buff_1_status, device_new_embeddings_1_status[i], sizeof (__buff_1_status), cudaMemcpyDeviceToHost, t) == cudaSuccess);
+              assert (cudaMemcpyAsync (&__buff_2_status, device_new_embeddings_2_status[i], sizeof (__buff_2_status), cudaMemcpyDeviceToHost, t) == cudaSuccess);
               cudaStreamSynchronize (t);
               usleep (GPU_QUERY_WAIT_TIME);
-            } while (prev_curr_step_storage_id == curr_step_storage_id &&
+            } while (__buff_1_status != BUFFER_STATUS::CPU_COPYING &&
+                     __buff_2_status != BUFFER_STATUS::CPU_COPYING &&
                      cudaStreamQuery (streams[i]) == cudaErrorNotReady);
             //Above loop ends only when the storage id has changed or 
             //the stream's kernel has ended.
+            usleep (1000000UL);
+            if (__buff_1_status == BUFFER_STATUS::CPU_COPYING)
+              prev_curr_step_storage_id = 0;
+            else if (__buff_2_status == BUFFER_STATUS::CPU_COPYING)
+              prev_curr_step_storage_id = 1;
+
             std::cout << "prev_curr_step_storage_id = " << prev_curr_step_storage_id <<
                          " curr_step_storage_id = " << curr_step_storage_id << 
                          " cudaStreamQuery (streams[i]) == cudaErrorNotReady " << 
@@ -2631,6 +2743,8 @@ int main (int argc, char* argv[])
               //Stream's kernel has completed, get out of loop.
               break;
             }
+            std::cout << "n_new_embeddings_1[i] + n_new_embeddings_2[i] " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << " * new_embedding_size " << 
+            (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size << std::endl;
             //copy
             switch (prev_curr_step_storage_id) {
               case 0: {
@@ -2640,12 +2754,22 @@ int main (int argc, char* argv[])
                 int p = 0;
                 assert (cudaMemcpyAsync (&p, device_n_embeddings_1[i], sizeof (p), cudaMemcpyDeviceToHost, t) == cudaSuccess);
                 std::cout << "Copying " << p << " new embeddings each of size " << new_embedding_size << std::endl;
-                n_new_embeddings_1[i] += p;
-                if (p > max_embeddings/N_STREAMS) {
+                
+                if (p != max_embeddings/N_STREAMS) {
                   std::cout << "SYNCHRONIZATION ISSUE: device_n_embeddings_1[i] " << p << " > per_stream_n_embeddings " << max_embeddings/N_STREAMS << std::endl;
                 } 
                 if (true) {
                   cudaError_t err = cudaMemcpyAsync ((char*)new_embeddings_ptr[i] + (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size, device_new_embeddings_1[i], max_embeddings/N_STREAMS*new_embedding_size, cudaMemcpyDeviceToHost, t);
+                  cudaStreamSynchronize (t);
+                  char* __new_ptr = (char*)malloc (p*new_embedding_size);
+                  cudaMemcpyAsync (__new_ptr, device_new_embeddings_1[i], p*new_embedding_size, cudaMemcpyDeviceToHost, t);
+                  for (int ii = 0; ii < p; ii++) {
+                    VectorVertexEmbedding<2>& e = ((VectorVertexEmbedding<2>*)__new_ptr)[ii];
+                    print_embedding<2> (&e);
+                    std::cout << std::endl;
+                  }
+                  free (__new_ptr);
+                  cudaStreamSynchronize (t);
                   //if (n_new_embeddings_1[i] + n_new_embeddings_2[i] >= 778462776)
                   //    exit(EXIT_SUCCESS);
                   //std::cout << "total embeddings found: " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << std::endl;
@@ -2655,7 +2779,11 @@ int main (int argc, char* argv[])
                     std::cout << cudaGetErrorString (err) << std::endl;
                     assert (false);
                   }
+
+                  // char* __new_ptr = (char*)new_embeddings_ptr[i] + (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size;
+                  //exit (EXIT_SUCCESS);
                 }
+                n_new_embeddings_1[i] += p;
                 p = 0;
                 assert (cudaMemcpyAsync (device_n_embeddings_1[i], &p, sizeof (p), cudaMemcpyHostToDevice, t) == cudaSuccess);
                 new_embeddings_1_status[i] = BUFFER_STATUS::FREE;
@@ -2673,12 +2801,21 @@ int main (int argc, char* argv[])
                 //        sizeof (new_embeddings_2_status[i]), cudaMemcpyHostToDevice, t) == 0);
                 assert (cudaMemcpyAsync (&p, device_n_embeddings_2[i], sizeof (p), cudaMemcpyDeviceToHost, t) == cudaSuccess);
                 std::cout << "Copying " << p << " new embeddings each of size " << new_embedding_size << std::endl;
-                n_new_embeddings_2[i] += p;
                 if (p > max_embeddings/N_STREAMS) {
                   std::cout << "SYNCHRONIZATION ISSUE: device_n_embeddings_1[i] " << p << " > per_stream_n_embeddings " << max_embeddings/N_STREAMS << std::endl;
                 } 
                 if (true) {
                   cudaError_t err = cudaMemcpyAsync ((char*)new_embeddings_ptr[i]+(n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size, device_new_embeddings_2[i], max_embeddings/N_STREAMS*new_embedding_size, cudaMemcpyDeviceToHost, t);
+                  cudaStreamSynchronize (t);
+                  char* __new_ptr = (char*)malloc (p*new_embedding_size);
+                  cudaMemcpyAsync (__new_ptr, device_new_embeddings_2[i], p*new_embedding_size, cudaMemcpyDeviceToHost, t);
+                  for (int ii = 0; ii < p; ii++) {
+                    VectorVertexEmbedding<2>& e = ((VectorVertexEmbedding<2>*)__new_ptr)[ii];
+                    print_embedding<2> (&e);
+                    std::cout << std::endl;
+                  }
+                  free (__new_ptr);
+                  cudaStreamSynchronize (t);
                   //if (n_new_embeddings_1[i] + n_new_embeddings_2[i] >= 778462776)
                    //   exit(EXIT_SUCCESS);
                   //std::cout << "total embeddings found: " << n_new_embeddings_1[i] + n_new_embeddings_2[i] << std::endl;
@@ -2689,7 +2826,10 @@ int main (int argc, char* argv[])
                     std::cout << cudaGetErrorString (err) << std::endl;
                     assert (false);
                   }
+
+                  // char* __new_ptr = (char*)new_embeddings_ptr[i] + (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size;
                 }
+                n_new_embeddings_2[i] += p;
                 p = 0;
                 assert (cudaMemcpyAsync (device_n_embeddings_2[i], &p, sizeof (p), cudaMemcpyHostToDevice, t) == cudaSuccess);
                 new_embeddings_2_status[i] = BUFFER_STATUS::FREE;
@@ -2707,6 +2847,7 @@ int main (int argc, char* argv[])
           cudaStreamDestroy (t);
         }
 
+        //cudaDeviceSynchronize ();
         if (stream_synchronize)
           cudaStreamSynchronize (streams[i]);
 
@@ -2724,6 +2865,14 @@ int main (int argc, char* argv[])
         }
       }
 
+      // char* __new_ptr = (char*)new_embeddings_ptr[0];
+
+      // for (int ii = 0; ii < n_new_embeddings_1[0] + n_new_embeddings_2[0]; ii++) {
+      //   VectorVertexEmbedding<2>& e = ((VectorVertexEmbedding<2>*)__new_ptr)[ii];
+      //   print_embedding<2> (&e);
+      //   std::cout << ii << std::endl;
+      // }
+
       for (int i = 0; i < N_STREAMS; i++) 
       {
         //cudaStreamSynchronize (streams[i]);
@@ -2738,21 +2887,43 @@ int main (int argc, char* argv[])
           std::cout << "n_output[" << i << "] = " << n_output[i] << std::endl;
           int _n_new = 0;
           assert (cudaMemcpyAsync (&_n_new, device_n_embeddings_1[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
-          
+          std::cout << "_n_new " << _n_new << std::endl;
           if (_n_new > 0 ) {
             assert (cudaMemcpyAsync ((char*)new_embeddings_ptr[i] + (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size,
                                      device_new_embeddings_1[i], _n_new*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
+            int p = _n_new;
+            char* __new_ptr = (char*)malloc (p*new_embedding_size);
+            cudaMemcpyAsync (__new_ptr, device_new_embeddings_1[i], p*new_embedding_size, cudaMemcpyDeviceToHost, streams[i]);
+            for (int ii = 0; ii < p; ii++) {
+              VectorVertexEmbedding<2>& e = ((VectorVertexEmbedding<2>*)__new_ptr)[ii];
+              print_embedding<2> (&e);
+              std::cout << std::endl;
+            }
+            free (__new_ptr);
+            cudaStreamSynchronize(streams[i]);
+            n_new_embeddings_1[i] += _n_new;
           }
-          n_new_embeddings_1[i] += _n_new;
+         
           assert (cudaMemcpyAsync (&_n_new, device_n_embeddings_2[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
-          
+          std::cout << "_n_new " << _n_new << std::endl;
           if (_n_new > 0 ) {
             assert (cudaMemcpyAsync ((char*)new_embeddings_ptr[i] + (n_new_embeddings_1[i] + n_new_embeddings_2[i])*new_embedding_size,
                                      device_new_embeddings_2[i], _n_new*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
+            int p = _n_new;
+            char* __new_ptr = (char*)malloc (p*new_embedding_size);
+            cudaMemcpyAsync (__new_ptr, device_new_embeddings_2[i], p*new_embedding_size, cudaMemcpyDeviceToHost, streams[i]);
+            for (int ii = 0; ii < p; ii++) {
+              VectorVertexEmbedding<2>& e = ((VectorVertexEmbedding<2>*)__new_ptr)[ii];
+              print_embedding<2> (&e);
+              std::cout << std::endl;
+            }
+            free (__new_ptr);
+            cudaStreamSynchronize(streams[i]);
+            n_new_embeddings_2[i] += _n_new;
           }
-          n_new_embeddings_2[i] += _n_new;
-          assert (cudaMemcpyAsync (&n_output[i], device_n_outputs[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
           
+          assert (cudaMemcpyAsync (&n_output[i], device_n_outputs[i], sizeof(0), cudaMemcpyDeviceToHost, streams[i]) == cudaSuccess);
+
           //assert (cudaMemcpyAsync (output_ptr[i], device_outputs[i], n_output[i]*(new_embedding_size), cudaMemcpyDeviceToHost, streams[i])== cudaSuccess);
           n_output[i] = 0;
         }
@@ -2794,7 +2965,7 @@ int main (int argc, char* argv[])
           
           size_t j = 0;
           for (int stream = 0; stream < N_STREAMS; stream++) {
-            for (int i = 0; i < n_new_embeddings_1[stream]; i++) {
+            for (int i = 0; i < n_new_embeddings_1[stream] + n_new_embeddings_2[stream]; i++) {
               if (only_copy_change) {
                 int id = ((int*)new_embeddings_ptr)[2*i];
                 int v = ((int*)new_embeddings_ptr)[2*i+1];
@@ -2809,6 +2980,7 @@ int main (int argc, char* argv[])
                 new_embeddings [j] = embedding;
                 //print_embedding<2> (&embedding);
                 //std::cout << std::endl;
+                
                 #ifdef DEBUG
                 if (embedding.get_n_vertices () != (iter + 1)) {
                   printf ("embedding has %d vertices\n", embedding.get_n_vertices ());
@@ -2821,7 +2993,7 @@ int main (int argc, char* argv[])
           //return;
           assert (j == n_next_step_embeddings);
           embeddings.push_back (std::make_pair (&new_embeddings[0], n_next_step_embeddings));
-          
+          exit (EXIT_SUCCESS);
           for (int stream = 0; stream < N_STREAMS; stream++) {
             if (only_copy_change) {
               for (int i = 0; i < n_output[stream]; i++) {
@@ -2847,7 +3019,7 @@ int main (int argc, char* argv[])
           
           size_t j = 0;
           for (int stream = 0; stream < N_STREAMS; stream++) {
-            for (int i = 0; i < n_new_embeddings_1[stream]; i++) {
+            for (int i = 0; i < n_new_embeddings_1[stream] + n_new_embeddings_2[stream]; i++) {
               if (only_copy_change) {
                 int id = ((int*)new_embeddings_ptr)[2*i];
                 int v = ((int*)new_embeddings_ptr)[2*i+1];
@@ -2862,11 +3034,12 @@ int main (int argc, char* argv[])
                 new_embeddings [j] = embedding;
                 //print_embedding<3> (&embedding);
                 //std::cout << std::endl;
-                #ifdef DEBUG
-                if (embedding.get_n_vertices () != (iter + 1)) {
-                  printf ("embedding has %ld vertices\n", embedding.get_n_vertices ());
-                }
-                #endif
+                //s = embedding_to_string<3> (&embedding);
+                //#ifdef DEBUG
+                //if (embedding.get_n_vertices () != (iter + 1)) {
+                //  printf ("embedding has %ld vertices\n", embedding.get_n_vertices ());
+                //}
+                //#endif
                 j++;
               }
             }
