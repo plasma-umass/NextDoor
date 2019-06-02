@@ -1689,7 +1689,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                     n = atomicAdd(n_next_step_1, 1);
                     if (n >= max_n_embeddings) {
                       *buff_1_status = BUFFER_STATUS::READY_CPU_COPYING;
-                    }                  
+                    }
                     break;
                   }
                   case 1: {
@@ -1707,13 +1707,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                 //printf ("n %d id %d max_n_embeddings %d storage_id %d\n", n, id, max_n_embeddings, storage_id);
                 if (storage_id == 0) {
                   assert (max_n_embeddings > 0);
-                  if (n > max_n_embeddings - 10 && n < max_n_embeddings) {
-                    printf ("n %d max_n_embeddings %d id %d\n", n, max_n_embeddings, id);
-                  }
                   if (n < max_n_embeddings) {
-                    if (n > max_n_embeddings - 10 && n < max_n_embeddings) {
-                      printf ("n %d max_n_embeddings %d id %d\n", n, max_n_embeddings, id);
-                    }
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
                     #ifdef ADD_TO_OUTPUT
@@ -1729,26 +1723,13 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                       atomicExch (n_next_step_1_done, 0);
                       //printf ("Setting buff_1_status to CPU Copying\n");
                     }
-
-                    if (n > max_n_embeddings - 10 && n < max_n_embeddings) {
-                      printf ("n %d max_n_embeddings %d id %d\n", n, max_n_embeddings, id);
-                    }
                     break;
                   } else {
                     atomicSub (n_next_step_1, 1);
                   }
-                  //printf ("*n_next_step_1_done %d *n_next_step_1 %d\n", *n_next_step_1_done, *n_next_step_1);
-                  if (*n_next_step_1_done >= max_n_embeddings) {
-                    *buff_1_status = BUFFER_STATUS::CPU_COPYING;
-                    atomicExch (n_next_step_1_done, 0);
-                    //printf ("Setting buff_1_status to CPU Copying\n");
-                  }
                 } else {
                   assert (storage_id == 1);
                   if (n < max_n_embeddings) {
-                    if (n > max_n_embeddings - 10 && n < max_n_embeddings) {
-                      printf ("n %d max_n_embeddings %d id %d\n", n, max_n_embeddings, id);
-                    }
                     VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_2;
                     VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
                     #ifdef ADD_TO_OUTPUT
@@ -1763,26 +1744,11 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
                       *buff_2_status = BUFFER_STATUS::CPU_COPYING;
                       atomicExch (n_next_step_2_done, 0);
                     }
-                    if (n > max_n_embeddings - 10 && n < max_n_embeddings) {
-                      printf ("n %d max_n_embeddings %d id %d\n", n, max_n_embeddings, id);
-                    }
                     break;
                   } else {
                     atomicSub (n_next_step_1, 1);
                   }
-                  if (*n_next_step_2_done >= max_n_embeddings) {
-                    *buff_2_status = BUFFER_STATUS::CPU_COPYING;
-                    atomicExch (n_next_step_2_done, 0);
-                  }
                 }
-                  //__syncwarp (active_mask);
-                // if (n >= max_n_embeddings) {
-                //   if (storage_id == 0) {
-                //     atomicSub (n_next_step_1, 1); //TODO: can remove that
-                //   } else {
-                //     atomicSub (n_next_step_2, 1); //TODO: can remove that
-                //   }
-                // }
               }
             }
             //output[o].add_last_in_sort_order ();
@@ -2008,8 +1974,8 @@ int main (int argc, char* argv[])
     old_to_new_vertex_ids.push_back (vertices[i].get_id ());
   }
 
-  //std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
-  //assert (Vertex::compare_vertex(vertices[0], vertices[vertices.size () - 1]));
+  std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
+  assert (Vertex::compare_vertex(vertices[0], vertices[vertices.size () - 1]));
 
   for (size_t i = 0; i < vertices.size (); i++) {
     int old_id = vertices[i].get_id ();
