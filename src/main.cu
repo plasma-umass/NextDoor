@@ -18,15 +18,18 @@
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
 #define WARP_SIZE 32
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
+//#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 //#define USE_CSR_IN_SHARED
 //#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 //#define USE_EMBEDDING_IN_SHARED_MEM
-//#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
+#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
+#if defined (ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)  && !defined (EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK) 
+  #error "For ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX, EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK should be defined "
+#endif
 #define USE_EMBEDDING_IN_LOCAL_MEM
 #define PROCESS_EMBEDDINGS_PER_VERTEX
-//#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
 #define GPU_QUERY_WAIT_TIME 1000UL
 
 //#define ADD_TO_OUTPUT
@@ -45,19 +48,21 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 1024*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
+#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
+//#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -1267,7 +1272,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
 #endif
 
   int thread_block_start_idx = blockIdx.x*blockDim.x * embedding_size;
-  const bool enable_edge_pulling = false;
+  const bool enable_edge_pulling = true;
   for (int load = 0; load < embedding_size; load++) {
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
@@ -1317,7 +1322,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
 #else
 #  if defined (ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)
       int emb_idx = embeddings_per_partitions[load_ids[i]].emb_idx;
-      VectorVertexEmbedding<embedding_size> const * embedding = &((VectorVertexEmbedding<embedding_size>*)&shared_buff[0])[emb_idx%256];
+      VectorVertexEmbedding<embedding_size> const * embedding = &((VectorVertexEmbedding<embedding_size>*)&shared_buff[0])[emb_idx%THREAD_BLOCK_SIZE];
       //embedding->clear ();
       //vector_embedding_from_one_less_size (embeddings[emb_idx], *embedding);
 #  else
@@ -1383,7 +1388,6 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
             //extension.add_last_in_sort_order ();
             //int o = atomicAdd(n_output,1);
             //int n = atomicAdd(n_next_step_1,1);
-            int active_mask = __activemask();
             if (false && only_copy_change) {
               int o = atomicAdd(n_output, 1);
               int n = atomicAdd(n_next_step_1, 1);
@@ -1395,7 +1399,19 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
               output[2*o] = id;
               output[2*o+1] = v;
             }
-            else {
+
+            else if (!ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING) {
+              int n = atomicAdd(n_next_step_1, 1);
+              VectorVertexEmbedding<embedding_size+1>* new_embeddings = (VectorVertexEmbedding<embedding_size+1>*)next_step_1;
+              VectorVertexEmbedding<embedding_size+1>* output = (VectorVertexEmbedding<embedding_size+1>*)output_ptr;
+              #ifdef ADD_TO_OUTPUT
+              int o = atomicAdd(n_output, 1);
+              memcpy (&output[o], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              #endif
+              //memcpy (&new_embeddings[n], extension, sizeof (VectorVertexEmbedding<embedding_size+1>));
+              vector_embedding_from_one_less_size (*extension, new_embeddings[n]);
+              new_embeddings[n].add_unsorted (v);
+            } else {
               int storage_id = -1;
 
               while (true) {
@@ -1804,7 +1820,7 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  for (iter; iter < 8 && new_embeddings_size > 0; iter++) {
+  for (iter; iter < 5 && new_embeddings_size > 0; iter++) {
     std::cout << "iter " << iter << " embeddings " << new_embeddings_size << std::endl;
     
     size_t remaining_embeddings = new_embeddings_size;
@@ -1924,7 +1940,7 @@ int main (int argc, char* argv[])
     void* orig_new_embeddings_ptr = ((char*)global_mem_ptr) + (global_mem_iter)*(new_embedding_size); //Size of next embedding will be one more
     //size_t max_embeddings = 40000000; //There is something with this value which makes it perform better, may be alignment?
     size_t max_embeddings = NEW_EMBEDDING_BUFFER_SIZE/(new_embedding_size);
-    printf ("new_embedding_size %ld\n", new_embedding_size);
+    printf ("new_embedding_size %ld number of vertices are %d\n", new_embedding_size, iter + 1);
     void* orig_output_ptr = (char*)orig_new_embeddings_ptr + (max_embeddings)*(new_embedding_size);
     size_t orig_outputs_size = max_embeddings*(new_embedding_size);
     cudaError_t error;
