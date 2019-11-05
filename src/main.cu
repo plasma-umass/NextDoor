@@ -9,6 +9,10 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
+  printf("Error at %s:%d\n",__FILE__,__LINE__);\
+  return EXIT_FAILURE;}} while(0)
+
 #include <string.h>
 #include <assert.h>
 #include <tuple>
@@ -23,8 +27,8 @@
 //#define EMBEDDING_IN_SHARED_MEM_PER_VERTEX
 //#define USE_EMBEDDING_IN_GLOBAL_MEM
 //#define USE_EMBEDDING_IN_SHARED_MEM
-#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
-#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
+//#define EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK
+//#define ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX
 #if defined (ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)  && !defined (EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK) 
   #error "For ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX, EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK should be defined "
 #endif
@@ -48,21 +52,21 @@
   #endif
 #endif
 
-#define NEW_EMBEDDING_BUFFER_SIZE 128*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
+#define NEW_EMBEDDING_BUFFER_SIZE 1024*1024*1024 //Size in terms of Bytes //Setting it to 128 MB makes citeseer performs a lot better
 
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
-#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
+//const int N = 3312;
+//const int N_EDGES = 9074;
+//#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
-//#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
+const int N = 100000;
+const int N_EDGES = 2160312;
+#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
 enum BUFFER_STATUS {
   GPU_USING,
@@ -1272,7 +1276,7 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
 #endif
 
   int thread_block_start_idx = blockIdx.x*blockDim.x * embedding_size;
-  const bool enable_edge_pulling = true;
+  const bool enable_edge_pulling = false;
   for (int load = 0; load < embedding_size; load++) {
     //printf ("load %d embedding_size %d\n", load, embedding_size);
     int load_ids[2];
@@ -1331,8 +1335,8 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
       memcpy (embedding, &embeddings[embeddings_per_partitions[load_ids[i]].emb_idx], sizeof (VectorVertexEmbedding<embedding_size>));
 #  endif
 #endif
-
-      int u = embedding->get_vertex (embeddings_per_partitions[load_ids[i]].vertex_idx);
+    
+      int u = embedding->get_vertex (embedding->get_n_vertices () - 1);
       int start_edge_idx;
       int end_edge_idx;
 
@@ -1374,16 +1378,61 @@ id = blockIdx.x*blockDim.x + threadIdx.x;
         }
       }
 
-      for (int e = start_edge_idx; e <= end_edge_idx; e++) {
-        
-        int v = csr->get_edges () [e];
+      if (end_edge_idx == -1)
+        end_edge_idx = start_edge_idx;
 
-        if (is_embedding_canonical<embedding_size> (csr, embedding, v) && 
+      int e = start_edge_idx + 0;//rand ()%(end_edge_idx - start_edge_idx + 1);
+      
+      //while (true) 
+      {
+        int v = -1;
+        __shared__ char warp_results[THREAD_BLOCK_SIZE];
+
+        //if (e <= end_edge_idx) {
+        v = csr->get_edges () [e];
+          //e++;
+        //}
+
+        if (__all_sync (__activemask (), v == -1)) {
+          break;
+        }
+
+        bool is_canonical = true;
+
+        //for (int __id ) {
+
+        //}
+
+        if (v != -1) {
+          //TODO: put this in a function? aparently in the function it runs faster
+          //may be due to more register requirements?
+          //is_embedding_canonical<embedding_size> (csr, embedding, v) 
+          if (embedding->get_vertex (0) > v)
+            is_canonical = false;
+          
+          if (is_canonical) {
+            bool found_neighbor = false;
+
+            for (int j = 0; j < embedding->get_n_vertices (); j++) {
+              int v_j = embedding->get_vertex (j);
+              if (found_neighbor == false && csr->has_edge (v_j, v)) {
+                found_neighbor = true;
+              } else if (found_neighbor == true && v_j > v) {
+                is_canonical = false;
+                break;
+              }
+            }
+
+            is_canonical = true;
+          }
+        }
+
+        if (v != -1 && is_canonical && 
             ((VectorVertexEmbedding<embedding_size>*)embedding)->has (v) == false) { //TODO: Make both these checks in same loop
           VectorVertexEmbedding<embedding_size> const * extension = embedding;
           //extension->add_unsorted (v);
           
-          if (clique_filter_vector_optimized (csr, extension, v)) {
+          if (true) {
             //VectorVertexEmbedding<embedding_size+1> extension = *embedding;
             //extension.add_last_in_sort_order ();
             //int o = atomicAdd(n_output,1);
@@ -1808,7 +1857,7 @@ int main (int argc, char* argv[])
 
   iter = 1;
   double total_stream_time = 0;
-  size_t global_mem_size = 15*1024*1024*1024UL;
+  size_t global_mem_size = 16*1024*1024*1024UL;
 #define PINNED_MEMORY
 #ifdef PINNED_MEMORY
   char* global_mem_ptr;
