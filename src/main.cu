@@ -346,6 +346,18 @@ public:
     array = (VertexID*)((char*) GlobalMemAllocator::get_global_mem_ptr () + array_start_idx);
   }
 
+  __host__ 
+  std::vector<VertexID> to_vector ()
+  {
+    std::vector<VertexID> v;
+
+    for (int i = 0; i < get_n_vertices (); i++) {
+      v.push_back (get_vertex (i));
+    }
+
+    return v;
+  }
+
   __host__
   void* get_array () {return array;}
   __device__ __host__
@@ -484,6 +496,15 @@ public:
   {
     //delete[] array;
   }
+
+  void print () 
+  {
+    std::cout << "[";
+    for (int i = 0; i < filled_size; i++) {
+      std::cout << get_vertex (i) << ", ";
+    }
+    std::cout << "]";
+  }
 };
 
 std::vector<VectorVertexEmbedding> get_initial_embedding_vector (CSR* csr)
@@ -618,7 +639,8 @@ __global__ void get_max_lengths_for_embeddings_single_step (void* void_csr, void
                                                             int global_mem_start_idx,  
                                                             unsigned long long int* void_embeddings_additions_iter,
                                                             void* void_map_orig_embedding_to_additions_prev_iter,
-                                                            void* void_map_orig_embedding_to_additions_next_iter)
+                                                            void* void_map_orig_embedding_to_additions_next_iter,
+                                                            void* void_map_orig_embedding_to_additions_first_iter)
 {
   CSR* csr = (CSR*)void_csr;
   int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -632,7 +654,8 @@ __global__ void get_max_lengths_for_embeddings_single_step (void* void_csr, void
   unsigned long long int* embeddings_additions_iter = void_embeddings_additions_iter;
   int* map_orig_embedding_to_additions_next_iter = (int*)void_map_orig_embedding_to_additions_next_iter;
   int* map_orig_embedding_to_additions_prev_iter = (int*)void_map_orig_embedding_to_additions_prev_iter;
-  unsigned long long int new_edges = 0;
+  int* map_orig_embedding_to_additions_first_iter = (int*) void_map_orig_embedding_to_additions_first_iter;
+  unsigned long long int new_edges = map_orig_embedding_to_additions_first_iter[2*thread_idx + 1];
   // printf ("thread idx %d array_start_idx %ld\n", thread_idx, input_embedding->get_array_start_idx ());
   /*Perform a single hop for all vertices in the input embedding*/
   for (int vertex_idx = 0; vertex_idx < input_embedding->get_n_vertices (); vertex_idx++) {
@@ -660,10 +683,9 @@ __global__ void get_max_lengths_for_embeddings_single_step (void* void_csr, void
 __global__ void run_single_step_embedding (int N_HOPS, void* void_csr, void* input, size_t n_embeddings, void* void_embedding_storage, uint64_t global_mem_start_idx,
                                            void* void_embeddings_additions, 
                                            size_t embeddings_additions_size,
-                                           unsigned long long int* embeddings_additions_iter, 
-                                           int* curr_embedding_additions,
                                            void* void_map_orig_embedding_to_additions, 
-                                           size_t map_orig_embedding_to_additions_size)
+                                           size_t map_orig_embedding_to_additions_size,
+                                           int* additions_sizes)
 {
   CSR* csr = (CSR*)void_csr;
   int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -680,41 +702,105 @@ __global__ void run_single_step_embedding (int N_HOPS, void* void_csr, void* inp
   unsigned long long int new_edges = 0;
   // printf ("thread idx %d array_start_idx %ld\n", thread_idx, input_embedding->get_array_start_idx ());
   /*Perform a single hop for all vertices in the input embedding*/
-  int additions_filled = map_orig_embedding_to_additions[thread_idx];
+  int additions_filled = map_orig_embedding_to_additions[2*thread_idx];
+  int start = map_orig_embedding_to_additions[2*thread_idx];
+  int size = map_orig_embedding_to_additions[2*thread_idx+1];
 
   for (int vertex_idx = 0; vertex_idx < input_embedding->get_n_vertices (); vertex_idx++) {
     VertexID vertex = input_embedding->get_vertex (vertex_idx, void_embedding_storage, global_mem_start_idx);
     int start_edge_idx = csr->get_start_edge_idx (vertex);
     const int end_edge_idx = csr->get_end_edge_idx (vertex);
-    while (start_edge_idx <= end_edge_idx) {
-      VertexID edge = csr->get_edges ()[start_edge_idx];
-      embeddings_additions[additions_filled++] = edge;
-      start_edge_idx++;
-    }
-  }
-
-  int additions_end_idx = additions_filled;
-  int additions_start_idx = 0;
-  int additions_end_iter;
-  int hop = 0;
-
-  while (hop < N_HOPS) {
-    additions_start_idx = additions_end_idx;
-    additions_end_iter = additions_filled;
-    
-    for (int vertex_idx = additions_start_idx; vertex_idx < additions_end_iter; vertex_idx++) {
-      int vertex = map_orig_embedding_to_additions [vertex_idx];
-      int start_edge_idx = csr->get_start_edge_idx (vertex);
-      const int end_edge_idx = csr->get_end_edge_idx (vertex);
+    if (start_edge_idx != -1) {
       while (start_edge_idx <= end_edge_idx) {
         VertexID edge = csr->get_edges ()[start_edge_idx];
         embeddings_additions[additions_filled++] = edge;
         start_edge_idx++;
       }
     }
+  }
+
+  int additions_end_idx = additions_filled;
+  int additions_start_idx = start;
+  int hop = 1;
+
+  while (hop < N_HOPS) {    
+    for (int vertex_idx = additions_start_idx; vertex_idx < additions_end_idx; vertex_idx++) {
+      int vertex = embeddings_additions [vertex_idx];
+      int start_edge_idx = csr->get_start_edge_idx (vertex);
+      const int end_edge_idx = csr->get_end_edge_idx (vertex);
+      if (start_edge_idx != -1) {
+        while (start_edge_idx <= end_edge_idx) {
+          VertexID edge = csr->get_edges ()[start_edge_idx];
+          bool present = false;
+          for (int i = start; i < additions_filled; i++) {
+            if (embeddings_additions[i] == edge) {
+              present = true;
+              break;
+            }
+          }
+          if (present == false)
+            embeddings_additions[additions_filled++] = edge;
+          start_edge_idx++;
+        }
+      }
+    }
+
+    additions_start_idx = additions_end_idx;
+    additions_end_idx = additions_filled;
 
     hop++;
   }
+
+  //if (thread_idx == 0) {
+    //printf ("additions_filled %d start %d\n", additions_filled, start);
+  //}
+  additions_sizes[thread_idx] = additions_filled - start;
+}
+
+std::vector <std::unordered_set <VertexID>> n_hop_cpu (CSR* csr, const int N_HOPS)
+{
+  std::vector <std::unordered_set <VertexID>> hops = std::vector<std::unordered_set<VertexID>> (csr->get_n_vertices ());
+
+  int hop = 0;
+
+  for (int vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
+    int start_edge_idx = csr->get_start_edge_idx (vertex);
+    int end_edge_idx = csr->get_end_edge_idx (vertex);
+    if (start_edge_idx != -1) {
+      for (int edge = start_edge_idx; edge <= end_edge_idx; edge++) {
+        hops[vertex].insert (csr->get_edges()[edge]);
+      }
+    }
+  }
+
+  for (int vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
+    int hop = 1;
+    std::unordered_set <VertexID> vertex_hops[N_HOPS + 1];
+    vertex_hops[0].insert (hops[vertex].begin (), hops[vertex].end ());
+    while (hop < N_HOPS) {
+      for (int hop_vertex : vertex_hops[hop - 1]) {
+        int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
+        int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
+        
+        if (start_edge_idx != -1) {
+          for (int edge = start_edge_idx; edge <= end_edge_idx; edge++) {
+            int v = csr->get_edges()[edge];
+            if (hops[vertex].count (v) == 0)
+              vertex_hops[hop].insert (v);
+          }
+        }
+      }
+
+      hops[vertex].insert (vertex_hops[hop].begin (), vertex_hops[hop].end ());
+      hop++;
+    }
+
+    // for (int __hop = 1; __hop < N_HOPS + 1; __hop++) {
+      
+    // }
+  }
+
+  return hops;
 }
 
 int main (int argc, char* argv[])
@@ -811,7 +897,7 @@ int main (int argc, char* argv[])
     input_embeddings = iter_1_embeddings;
   }
 
-  iter = 1;
+  iter = 0;
   double total_stream_time = 0;
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
@@ -821,40 +907,43 @@ int main (int argc, char* argv[])
   void* device_map_orig_embedding_to_additions_prev = nullptr; //Previous iterations map
   int* final_map_orig_embedding_to_additions;
 
+  /*Code for preparing additions kernels*/
+  uint64_t vertices_in_embedding = input_embeddings[0].get_n_vertices ();
+  uint64_t global_mem_start_idx = input_embeddings[0].get_array_start_idx ();
+  uint64_t global_mem_end_idx = input_embeddings[input_embeddings.size () - 1].get_array_start_idx () + input_embeddings[input_embeddings.size () - 1].get_n_vertices ()*sizeof (VertexID);
+
+  const int N_HOPS = 2;
+  // std::cout << "-2   " << input_embeddings[input_embeddings.size () - 2].get_array_start_idx () + input_embeddings[input_embeddings.size () - 2].get_n_vertices ()*sizeof (VertexID) << std::endl;
+  std::cout << "Number of input embeddings " << input_embeddings.size() << std::endl;
+  std::cout << "global_mem_start_idx " << global_mem_start_idx << " global_mem_end_idx " << global_mem_end_idx << " allocated " << GlobalMemAllocator::allocated () << std::endl;
+  std::cout << "vertices_in_embedding " << vertices_in_embedding << std::endl;
+  assert (global_mem_end_idx == GlobalMemAllocator::allocated ());
+  void* device_csr; //Graph on GPU
+  void* device_map_orig_embedding_to_additions; //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
+  void* device_map_orig_embedding_to_additions_first;
+  void* device_input_embeddings_storage; //Input embeddings copied to GPU from CPU
+  void* device_input_embeddings;
+  unsigned long long* device_embeddings_addition_iter;
+  size_t map_orig_embedding_to_additions_size = input_embeddings.size () * sizeof (VertexID) * 2;
+
+  // std::cout << "Preparing iteration " << iter << std::endl;
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_csr, sizeof(CSR)));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_csr, csr, sizeof(CSR), cudaMemcpyHostToDevice));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_input_embeddings_storage, global_mem_end_idx - global_mem_start_idx));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_input_embeddings_storage, (char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_start_idx, 
+                                  global_mem_end_idx - global_mem_start_idx, cudaMemcpyHostToDevice));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_input_embeddings,input_embeddings.size()*sizeof(VectorVertexEmbedding)));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_input_embeddings ,&input_embeddings[0], input_embeddings.size()*sizeof(VectorVertexEmbedding), cudaMemcpyHostToDevice));
+  unsigned long long embeddings_addition_iter = 0;
+
+  double gpu_time = 0;
+
   for (iter; iter < N_HOPS; iter++) {
-    uint64_t vertices_in_embedding = input_embeddings[0].get_n_vertices ();
-    uint64_t global_mem_start_idx = input_embeddings[0].get_array_start_idx ();
-    uint64_t global_mem_end_idx = input_embeddings[input_embeddings.size () - 1].get_array_start_idx () + input_embeddings[input_embeddings.size () - 1].get_n_vertices ()*sizeof (VertexID);
-
-    // std::cout << "-2   " << input_embeddings[input_embeddings.size () - 2].get_array_start_idx () + input_embeddings[input_embeddings.size () - 2].get_n_vertices ()*sizeof (VertexID) << std::endl;
-    std::cout << "Number of input embeddings " << input_embeddings.size() << std::endl;
-    std::cout << "global_mem_start_idx " << global_mem_start_idx << " global_mem_end_idx " << global_mem_end_idx << " allocated " << GlobalMemAllocator::allocated () << std::endl;
-    std::cout << "vertices_in_embedding " << vertices_in_embedding << std::endl;
-    assert (global_mem_end_idx == GlobalMemAllocator::allocated ());
-    unsigned long long embeddings_addition_iter = 0;
-    void* device_csr; //Graph on GPU
-    //void* device_embeddings_additions; //Storage to store inputs added to each embedding
-    void* device_map_orig_embedding_to_additions; //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
-    void* device_input_embeddings_storage; //Input embeddings copied to GPU from CPU
-    void* device_input_embeddings;
-    unsigned long long* device_embeddings_addition_iter;
-
-    size_t embedding_additions_size = sizeof(VertexID);
-    size_t map_orig_embedding_to_additions_size = input_embeddings.size () * sizeof (VertexID) * 2;
-
-    std::cout << "Preparing iteration " << iter << std::endl;
-    EXECUTE_CUDA_FUNC (cudaMalloc (&device_csr, sizeof(CSR)));
-    EXECUTE_CUDA_FUNC (cudaMemcpy (device_csr, csr, sizeof(CSR), cudaMemcpyHostToDevice));
-    //EXECUTE_CUDA_FUNC (cudaMalloc (&device_embeddings_additions, embedding_additions_size));
-    EXECUTE_CUDA_FUNC (cudaMalloc (&device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size));
-    EXECUTE_CUDA_FUNC (cudaMalloc (&device_input_embeddings_storage, global_mem_end_idx - global_mem_start_idx));
-    EXECUTE_CUDA_FUNC (cudaMemcpy (device_input_embeddings_storage, (char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_start_idx, 
-                                   global_mem_end_idx - global_mem_start_idx, cudaMemcpyHostToDevice));
-    EXECUTE_CUDA_FUNC (cudaMalloc (&device_input_embeddings,input_embeddings.size()*sizeof(VectorVertexEmbedding)));
-    EXECUTE_CUDA_FUNC (cudaMemcpy (device_input_embeddings ,&input_embeddings[0], input_embeddings.size()*sizeof(VectorVertexEmbedding), cudaMemcpyHostToDevice));
+    embeddings_addition_iter = 0;
     EXECUTE_CUDA_FUNC (cudaMalloc (&device_embeddings_addition_iter, sizeof(unsigned long long)));
-    EXECUTE_CUDA_FUNC (cudaMemcpy (device_embeddings_addition_iter, &embeddings_addition_iter, sizeof (unsigned long long), cudaMemcpyHostToDevice));
+    EXECUTE_CUDA_FUNC (cudaMemcpy (device_embeddings_addition_iter, &embeddings_addition_iter,  sizeof (unsigned long long), cudaMemcpyHostToDevice));
 
+    EXECUTE_CUDA_FUNC (cudaMalloc (&device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size));
     if (false) {
       VectorVertexEmbedding* __m = (VectorVertexEmbedding*)malloc (input_embeddings.size()*sizeof(VectorVertexEmbedding));
       cudaMemcpy (__m, device_input_embeddings, input_embeddings.size()*sizeof(VectorVertexEmbedding), cudaMemcpyDeviceToHost);
@@ -871,12 +960,13 @@ int main (int argc, char* argv[])
       break;
     }
 
-    std::cout << "Calling cuda kernel" << std::endl;
+    std::cout << "Calling cuda kernel for iteration " << iter << std::endl;
 
     int N_THREADS = 128;
     int N_BLOCKS = (input_embeddings.size()%128 == 0) ? input_embeddings.size()/128 : input_embeddings.size()/128 + 1;
     
-    if (iter == 1) {
+    double t1 = convertTimeValToDouble(getTimeOfDay ());
+    if (iter == 0) {
       get_max_lengths_for_embeddings_first_iter <<<N_BLOCKS, N_THREADS>>> (device_csr,
                                                     device_input_embeddings, input_embeddings.size(), device_input_embeddings_storage,
                                                     global_mem_start_idx,
@@ -890,35 +980,37 @@ int main (int argc, char* argv[])
                                                   global_mem_start_idx,
                                                   device_embeddings_addition_iter,
                                                   device_map_orig_embedding_to_additions_prev,
-                                                  device_map_orig_embedding_to_additions);
+                                                  device_map_orig_embedding_to_additions,
+                                                  device_map_orig_embedding_to_additions_first);
     }
 
+    double t2 = convertTimeValToDouble(getTimeOfDay ());
+
+    gpu_time += t2 - t1;
     if (device_map_orig_embedding_to_additions_prev != nullptr) {
-      //cudaFree (device_map_orig_embedding_to_additions_prev);
+      cudaFree (device_map_orig_embedding_to_additions_prev);
     }
 
-    // run_single_step_embedding <<<N_BLOCKS, N_THREADS>>> (device_csr, 
-    //                                       device_input_embeddings, input_embeddings.size(), device_input_embeddings_storage,
-    //                                       global_mem_start_idx, 
-    //                                       device_embeddings_additions, embedding_additions_size, 
-    //                                       device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size,
-    //                                       device_embeddings_addition_iter);
     EXECUTE_CUDA_FUNC (cudaDeviceSynchronize ());
     std::cout << "Cuda Kernel Done " << std::endl;
     is_cuda_error (cudaGetLastError ());    
     EXECUTE_CUDA_FUNC (cudaMemcpy (&embeddings_addition_iter, device_embeddings_addition_iter, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
     std::cout << "Embedding Additions " << embeddings_addition_iter << std::endl;
-    // EXECUTE_CUDA_FUNC (cudaMemcpy (embedding_additions, device_embeddings_additions, embedding_additions_size, cudaMemcpyDeviceToHost));
 
     if (iter == N_HOPS - 1) {
       //In Last iteration perform some cleanup and record the map_orig_embedding_to_additions_size
       final_map_orig_embedding_to_additions = (int*)new char[map_orig_embedding_to_additions_size];
-      EXECUTE_CUDA_FUNC (cudaMemcpy (map_orig_embedding_to_additions, device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size, cudaMemcpyDeviceToHost));
-      cudaFree (device_map_orig_embedding_to_additions);
+      EXECUTE_CUDA_FUNC (cudaMemcpy (final_map_orig_embedding_to_additions, device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size, cudaMemcpyDeviceToHost));
+      //cudaFree (device_map_orig_embedding_to_additions);
       device_map_orig_embedding_to_additions_prev = nullptr;
     } else {
       device_map_orig_embedding_to_additions_prev = device_map_orig_embedding_to_additions;
     }
+    if (iter == 0) {
+      device_map_orig_embedding_to_additions_first = device_map_orig_embedding_to_additions;
+    }
+
+    cudaFree (device_embeddings_addition_iter);
 
     //Create new embeddings from the received additions
     // for (int input_embedding_idx = 0; input_embedding_idx < input_embeddings.size (); input_embedding_idx++) {
@@ -938,16 +1030,82 @@ int main (int argc, char* argv[])
     // }
 
     //input_embeddings = produced_embeddings;
-
-    cudaFree (device_csr);
-    // cudaFree (device_embeddings_additions);
-    //cudaFree (device_map_orig_embedding_to_additions);
-    cudaFree (device_input_embeddings_storage); 
-    cudaFree (device_input_embeddings);
-    cudaFree (device_embeddings_addition_iter);
   }
   
-  //Now generate all a
+  std::cout << "Generating additions" << std::endl;
+  int* device_additions_sizes;
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_additions_sizes, sizeof(VertexID)*input_embeddings.size ()));
+  void* device_embeddings_additions; //Storage to store inputs added to each embedding
+  size_t embeddings_additions_size = (embeddings_addition_iter+1)*sizeof(VertexID);
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_embeddings_additions, embeddings_additions_size));
+  int N_THREADS = 128;
+  int N_BLOCKS = (input_embeddings.size()%128 == 0) ? input_embeddings.size()/128 : input_embeddings.size()/128 + 1;
+  //Now generate all the next hop neighbours
+  double t1 = convertTimeValToDouble(getTimeOfDay ());
+  run_single_step_embedding<<<N_BLOCKS, N_THREADS>>> (N_HOPS, device_csr, device_input_embeddings, input_embeddings.size (), device_input_embeddings_storage, global_mem_start_idx,
+  device_embeddings_additions, 
+    embeddings_additions_size, 
+    device_map_orig_embedding_to_additions, 
+    map_orig_embedding_to_additions_size,
+    device_additions_sizes);
+  double t2 = convertTimeValToDouble(getTimeOfDay ());
+  gpu_time += t2 - t1;
+
+  VertexID* embedding_additions = new VertexID[embeddings_additions_size];
+  EXECUTE_CUDA_FUNC (cudaMemcpy (embedding_additions, device_embeddings_additions, embeddings_additions_size, cudaMemcpyDeviceToHost));
+  int* additions_sizes = new int[input_embeddings.size ()];
+  EXECUTE_CUDA_FUNC (cudaMemcpy (additions_sizes, device_additions_sizes, input_embeddings.size ()*sizeof(int), cudaMemcpyDeviceToHost));
+  for (int input_embedding_idx = 0; input_embedding_idx < input_embeddings.size (); input_embedding_idx++) {
+      VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
+      int n_additions = additions_sizes[input_embedding_idx];
+      int start_idx = final_map_orig_embedding_to_additions[2*input_embedding_idx];
+      size_t produced_embedding_size = n_additions;
+      if (input_embedding_idx == 0) {
+        std::cout << "n_additions " << n_additions << std::endl;
+      }
+      size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
+      //std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
+      VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
+      ((VertexID*)ptr)[0] = ((VertexID*)input_embedding.get_array ())[0];
+      // memcpy (ptr, input_embedding.get_array (), sizeof(VertexID)*input_embedding.get_n_vertices ());
+      memcpy (ptr, &embedding_additions[start_idx], sizeof(VertexID)*n_additions);
+      
+      VectorVertexEmbedding embedding = VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true);
+      produced_embeddings.push_back (embedding);
+      // embedding.print ();
+  }
+
+  cudaFree (device_csr);
+  cudaFree (device_input_embeddings_storage); 
+  cudaFree (device_input_embeddings);
+  cudaFree (device_embeddings_additions);
+
+  double cpu_t1 = convertTimeValToDouble (getTimeOfDay ());
+  std::vector<std::unordered_set<VertexID>> hops = n_hop_cpu (csr, N_HOPS);
+  double cpu_t2 = convertTimeValToDouble (getTimeOfDay ());
+
+  std::cout << "CPU Time: " << (cpu_t2 - cpu_t1) << " secs" << std::endl;
+  std::cout << "GPU Time: " << gpu_time << " secs" << std::endl;
+  assert (produced_embeddings.size () == hops.size ());
+  for (int idx = 0; idx < produced_embeddings.size (); idx++) {
+    std::vector<VertexID> vector_hops;
+    vector_hops.insert (vector_hops.begin (), hops[idx].begin (), hops[idx].end ());
+    std::sort (vector_hops.begin (), vector_hops.end ());
+    std::vector<VertexID> gpu_vector = produced_embeddings [idx].to_vector ();
+    std::unordered_set<VertexID> gpu_vector_set = std::unordered_set<VertexID> (gpu_vector.begin (), gpu_vector.end ());
+    gpu_vector = std::vector<VertexID> (gpu_vector_set.begin (), gpu_vector_set.end ());
+    std::sort (gpu_vector.begin (), gpu_vector.end ());
+
+    if (vector_hops != gpu_vector) {
+      std::cout << "checking for vertex " << idx << std::endl;
+      std::cout << "size " << vector_hops.size () << " " << gpu_vector.size () << std::endl;
+      for (int i = 0; i < vector_hops.size (); i++) {
+        std::cout << vector_hops[i] << "  " << gpu_vector[i] << std::endl;
+      }
+    }
+    assert (vector_hops == gpu_vector);
+  }
+
 #if 0
   //Code for single kernel
   for (iter; iter < 5; iter++) {
@@ -1031,7 +1189,9 @@ int main (int argc, char* argv[])
       int n_additions = map_orig_embedding_to_additions[2*input_embedding_idx+1];
       int start_idx = map_orig_embedding_to_additions[2*input_embedding_idx];
       size_t produced_embedding_size = input_embedding.get_n_vertices () + n_additions;
-      
+      if (input_embedding_idx == 48) {
+        std::cout << "n_additions " << n_additions << std::endl;
+      }
       size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
       // std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
       VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
