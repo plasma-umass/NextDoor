@@ -915,6 +915,91 @@ std::vector <std::unordered_set <VertexID>> n_hop_cpu (CSR* csr, const int N_HOP
   return hops;
 }
 
+__global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, void* void_csr,
+  void* void_embeddings_additions, 
+  size_t embeddings_additions_size,
+  int* map_orig_embedding_to_additions,
+  int* previous_stage_filled_range,
+  int* global_index)
+{
+  CSR* csr = (CSR*)void_csr;
+  __shared__ int vertex[1];
+  __shared__ int previous_step_end[1];
+
+  if (threadIdx.x == 0) {
+    vertex[0] = blockIdx.x;//atomicAdd (global_index, 1);
+  }
+
+  __syncthreads ();
+  assert (vertex[0] < 3312);
+  VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
+
+  if (hop != 0) {
+    int start = map_orig_embedding_to_additions[2*vertex[0]];
+    if (threadIdx.x == 0) {
+      previous_step_end[0] = previous_stage_filled_range[2*vertex[0]+1];
+    }
+
+    __syncthreads ();
+    int previous_step_start = previous_stage_filled_range[2*vertex[0]];
+    int hops_so_far = previous_step_end [0] - previous_step_start;
+
+    int* end = &previous_stage_filled_range[2*vertex[0] + 1];
+  
+    for (int i = 0; i < hops_so_far/blockDim.x + 1; i++) {
+      int hop_idx = i*blockDim.x + threadIdx.x;
+      //printf ("Vertex[0] %d hops_so_far %d threadIdx.x %d hop_idx %d\n", vertex[0], hops_so_far, threadIdx.x, hop_idx);
+
+      if (hop_idx >= hops_so_far) {
+        return;
+      }
+
+      int hop_vertex = embeddings_additions[start + previous_step_start + hop_idx];
+      if(vertex[0] == 128)
+         printf ("959: hop_vertex %d\n", hop_vertex);
+      int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
+      const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
+
+      if (end_edge_idx != -1) {
+        while (start_edge_idx <= end_edge_idx) {
+          VertexID edge = csr->get_edges ()[start_edge_idx];
+          int e = atomicAdd (end, 1);
+          embeddings_additions[start + e] = edge;
+          start_edge_idx++;
+        }
+      }
+    }
+    
+    if(threadIdx.x == 0) {
+      previous_stage_filled_range[2*vertex[0]] = previous_step_end[0];
+    }
+  } else {
+    int source_vertex = vertex[0];
+
+    int start = map_orig_embedding_to_additions[2*source_vertex];
+    int start_edge_idx = csr->get_start_edge_idx (source_vertex);
+    const int end_edge_idx = csr->get_end_edge_idx (source_vertex);
+    const int n_edges = end_edge_idx - start_edge_idx + 1;
+
+    if (end_edge_idx == -1) {
+      return;
+    }
+
+    int* end = &previous_stage_filled_range[2*source_vertex + 1];
+
+    for (int i = 0; i < n_edges/blockDim.x + 1; i++) {
+      int edge_idx = i*blockDim.x + threadIdx.x;
+      if (edge_idx >= n_edges) 
+        return;
+      VertexID edge = csr->get_edges ()[start_edge_idx + edge_idx];
+      int e = atomicAdd (end, 1);
+      embeddings_additions[start + e] = edge;    
+    }
+
+    previous_stage_filled_range[2*source_vertex] = 0;
+  }
+}
+
 __global__ void run_think_like_an_edge_single_step_embedding (int N_HOPS, int hop, void* void_csr,
   void* void_embeddings_additions, 
   size_t embeddings_additions_size,
@@ -1368,8 +1453,8 @@ int main (int argc, char* argv[])
   
   std::cout << "Generating additions" << std::endl;
   int* device_additions_sizes;
-  EXECUTE_CUDA_FUNC (cudaMalloc (&device_additions_sizes, sizeof(VertexID)*input_embeddings.size ()));
-  EXECUTE_CUDA_FUNC (cudaMemset (device_additions_sizes, 0, sizeof(VertexID)*input_embeddings.size ()));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_additions_sizes, sizeof(VertexID)*input_embeddings.size ()*2));
+  EXECUTE_CUDA_FUNC (cudaMemset (device_additions_sizes, 0, sizeof(VertexID)*input_embeddings.size ()*2));
   void* device_embeddings_additions; //Storage to store inputs added to each embedding
   size_t embeddings_additions_size = (embeddings_addition_iter+1)*sizeof(VertexID);
   EXECUTE_CUDA_FUNC (cudaMalloc (&device_embeddings_additions, embeddings_additions_size));
@@ -1389,22 +1474,23 @@ int main (int argc, char* argv[])
   for (int hop = 0; hop < N_HOPS; hop++) {
     int* device_thread_idx_to_edge_in_additions;
     int* device_thread_idx_to_edge_in_additions_size;
+    int* global_index;
 
+    EXECUTE_CUDA_FUNC (cudaMalloc (&global_index, sizeof(int)));
+    EXECUTE_CUDA_FUNC (cudaMemset (global_index, 0,  sizeof (int)));
     EXECUTE_CUDA_FUNC (cudaMalloc (&device_thread_idx_to_edge_in_additions, embeddings_additions_size*2));
     EXECUTE_CUDA_FUNC (cudaMalloc (&device_thread_idx_to_edge_in_additions_size, sizeof (int)));
     EXECUTE_CUDA_FUNC (cudaMemset (device_thread_idx_to_edge_in_additions_size, 0,  sizeof (int)));
-    int N_BLOCKS = (n_edges%N_THREADS == 0) ? n_edges/N_THREADS : n_edges/N_THREADS + 1;
- 
+    EXECUTE_CUDA_FUNC (cudaMemset (global_index, 0,  sizeof (int)));
+    int N_BLOCKS = input_embeddings.size ();
+
     double t1 = convertTimeValToDouble(getTimeOfDay ());
-    run_think_like_an_edge_single_step_embedding <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
+    run_think_hybrid_single_step_embedding <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
       device_embeddings_additions,
       embeddings_additions_size,
       device_map_orig_embedding_to_additions,
       device_additions_sizes,
-      n_edges,
-      device_prev_thread_idx_to_edge_in_additions,
-      device_thread_idx_to_edge_in_additions,
-      device_thread_idx_to_edge_in_additions_size);
+      global_index);
     EXECUTE_CUDA_FUNC (cudaDeviceSynchronize ());
     double t2 = convertTimeValToDouble(getTimeOfDay ());
     gpu_time += t2 - t1;
@@ -1417,12 +1503,12 @@ int main (int argc, char* argv[])
 
   VertexID* embedding_additions = new VertexID[embeddings_additions_size];
   EXECUTE_CUDA_FUNC (cudaMemcpy (embedding_additions, device_embeddings_additions, embeddings_additions_size, cudaMemcpyDeviceToHost));
-  int* additions_sizes = new int[input_embeddings.size ()];
-  EXECUTE_CUDA_FUNC (cudaMemcpy (additions_sizes, device_additions_sizes, input_embeddings.size ()*sizeof(int), cudaMemcpyDeviceToHost));
+  int* additions_sizes = new int[input_embeddings.size ()*2];
+  EXECUTE_CUDA_FUNC (cudaMemcpy (additions_sizes, device_additions_sizes, input_embeddings.size ()*sizeof(int)*2, cudaMemcpyDeviceToHost));
   
   for (int input_embedding_idx = 0; input_embedding_idx < input_embeddings.size (); input_embedding_idx++) {
       VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
-      int n_additions = additions_sizes[input_embedding_idx];
+      int n_additions = additions_sizes[2*input_embedding_idx + 1];
       int start_idx = final_map_orig_embedding_to_additions[2*input_embedding_idx];
       size_t produced_embedding_size = n_additions;
       if (input_embedding_idx == 48) {
