@@ -62,6 +62,8 @@ const int N_EDGES = 9074;
 //const int N_EDGES = 2160312;
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
+const int N_THREADS = 512;
+
 double_t convertTimeValToDouble (struct timeval _time)
 {
   return ((double_t)_time.tv_sec) + ((double_t)_time.tv_usec)/1000000.0f;
@@ -915,6 +917,7 @@ std::vector <std::unordered_set <VertexID>> n_hop_cpu (CSR* csr, const int N_HOP
   return hops;
 }
 
+#define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 10
 #if MAX_VERTICES_PER_TB < 1
   #error "MAX_VERTICES_PER_TB should be greater than or equal to 1"
@@ -931,6 +934,8 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
   __shared__ int vertices[MAX_VERTICES_PER_TB];
   __shared__ int previous_step_end[MAX_VERTICES_PER_TB];
   __shared__ int n_vertex_load;
+  __shared__ int curr_vertex_id;
+  __shared__ int thread_idx_to_load[2*MAX_LOAD_PER_TB];
 
   VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
 
@@ -939,13 +944,20 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
       return;
     }
 
+    thread_idx_to_load [2*threadIdx.x] = -1;
+    thread_idx_to_load [2*threadIdx.x + 1] = -1;
+
+    __syncthreads ();
+
     if (threadIdx.x == 0) {
+      curr_vertex_id = 0;
 #if (MAX_VERTICES_PER_TB == 1)
       n_vertex_load = 0;
       vertices[n_vertex_load++] = atomicAdd(global_index, 1);
 #else
       int load = 0;
       n_vertex_load = 0;
+      int load_assigned_index = 0;
 
       while (n_vertex_load < MAX_VERTICES_PER_TB && load < blockDim.x) {
         vertices[n_vertex_load] = atomicAdd(global_index, 1);
@@ -953,52 +965,58 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
           break;
         }
         int hops_so_far = previous_stage_filled_range[2*vertices[n_vertex_load] + 1] - previous_stage_filled_range[2*vertices[n_vertex_load]];
+        if (load + hops_so_far >= blockDim.x) {
+          break;
+        }
+
         load += hops_so_far;
+        
+        for (int hop_idx = 0; hop_idx < hops_so_far; hop_idx++) {
+          thread_idx_to_load[2*load_assigned_index] = n_vertex_load;
+          thread_idx_to_load[2*load_assigned_index+1] = hop_idx;
+          load_assigned_index++;
+        }
+
         n_vertex_load++;
       }
 #endif
     }
+
     assert (n_vertex_load <= MAX_VERTICES_PER_TB);
+    
     __syncthreads ();
 
-    for (int curr_vertex_id = 0; curr_vertex_id < n_vertex_load; curr_vertex_id++) {
-      int vertex = vertices[curr_vertex_id];
-      int start = map_orig_embedding_to_additions[2*vertex];
-      if (threadIdx.x == 0) {
-        previous_step_end[curr_vertex_id] = previous_stage_filled_range[2*vertex+1];
-      }
-
-      __syncthreads ();
-      int previous_step_start = previous_stage_filled_range[2*vertex];
-      int hops_so_far = previous_step_end [curr_vertex_id] - previous_step_start;
-      int* end = &previous_stage_filled_range[2*vertex + 1];
+    int _curr_vertex_id = thread_idx_to_load[2*threadIdx.x];
+    int hop_idx = thread_idx_to_load[2*threadIdx.x+1];
     
-      for (int i = 0; i < hops_so_far/blockDim.x + 1; i++) {
-        int hop_idx = i*blockDim.x + threadIdx.x;
-        //printf ("Vertex[0] %d hops_so_far %d threadIdx.x %d hop_idx %d\n", vertex[0], hops_so_far, threadIdx.x, hop_idx);
-
-        if (hop_idx >= hops_so_far) {
-          break;
-        }
-
-        int hop_vertex = embeddings_additions[start + previous_step_start + hop_idx];
-        int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
-        const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
-
-        if (end_edge_idx != -1) {
-          while (start_edge_idx <= end_edge_idx) {
-            VertexID edge = csr->get_edges ()[start_edge_idx];
-            int e = atomicAdd (end, 1);
-            embeddings_additions[start + e] = edge;
-            start_edge_idx++;
-          }
-        }
-      }
+    if (_curr_vertex_id == -1)
+      return;
       
-      if (threadIdx.x == 0) {
-        previous_stage_filled_range[2*vertex] = previous_step_end[curr_vertex_id];
+    int vertex = vertices[_curr_vertex_id];
+    int start = map_orig_embedding_to_additions[2*vertex];
+    previous_step_end[_curr_vertex_id] = previous_stage_filled_range[2*vertex+1];
+
+    __syncthreads ();
+
+    int previous_step_start = previous_stage_filled_range[2*vertex];
+    int hops_so_far = previous_step_end [_curr_vertex_id] - previous_step_start;
+    int* end = &previous_stage_filled_range[2*vertex + 1];
+
+    int hop_vertex = embeddings_additions[start + previous_step_start + hop_idx];
+    int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
+    const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
+
+    if (end_edge_idx != -1) {
+      while (start_edge_idx <= end_edge_idx) {
+        VertexID edge = csr->get_edges ()[start_edge_idx];
+        int e = atomicAdd (end, 1);
+        embeddings_additions[start + e] = edge;
+        start_edge_idx++;
       }
     }
+    
+    __syncthreads ();
+    previous_stage_filled_range[2*vertex] = previous_step_end[_curr_vertex_id];
   } else {
     int source_vertex = blockIdx.x;
 
@@ -1210,7 +1228,6 @@ int main (int argc, char* argv[])
   //~ csr_constant->copy_vertices (csr, 0, csr->get_n_vertices ());
   //~ csr_constant->copy_edges (csr, 0, csr->get_n_edges ());
 #endif
-  int N_THREADS = 512;
   size_t global_mem_size = 15*1024*1024*1024UL;
   #define PINNED_MEMORY
   #ifdef PINNED_MEMORY
