@@ -62,7 +62,7 @@ const int N = 100000;
 const int N_EDGES = 2160312;
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
-const int N_THREADS = 512;
+const int N_THREADS = 128;
 
 double_t convertTimeValToDouble (struct timeval _time)
 {
@@ -923,6 +923,8 @@ std::vector <std::unordered_set <VertexID>> n_hop_cpu (CSR* csr, const int N_HOP
   #error "MAX_VERTICES_PER_TB should be greater than or equal to 1"
 #endif
 
+#define WARP_HOP
+
 __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, void* void_csr,
   void* void_embeddings_additions, 
   size_t embeddings_additions_size,
@@ -939,17 +941,19 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
   __shared__ int last_vertex_id_hops_remaining;
   __shared__ int last_vertex_id_hops_done;
   __shared__ int last_vertex_previous_step_start, last_vertex_previous_step_end;
-  __shared__ int nn;
+
+  __shared__ int sh_hop_vertex [N_THREADS];
+
   VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
 
   if (hop != 0) {
     thread_idx_to_load [2*threadIdx.x] = -1;
     thread_idx_to_load [2*threadIdx.x + 1] = -1;   
+    sh_hop_vertex [threadIdx.x] = -1;
 
     __syncthreads ();
 
     if (threadIdx.x == 0) {
-      nn = 0;
       last_vertex_id = -1;
       last_vertex_id_hops_remaining = -1;
       int load = 0;
@@ -961,6 +965,7 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
         if (vertices[n_vertex_load] >= gridDim.x) {
           break;
         }
+
         int hops_so_far = previous_stage_filled_range[2*vertices[n_vertex_load] + 1] - previous_stage_filled_range[2*vertices[n_vertex_load]];
         
         int hop_idx;
@@ -979,7 +984,6 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
         }
 
         load += hops_so_far;
-
         n_vertex_load++;
       }
     }
@@ -987,26 +991,72 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
     __syncthreads ();
 
     assert (n_vertex_load <= MAX_VERTICES_PER_TB);
-
+    const uint FULL_MASK = 0xffffffff;
     int _curr_vertex_id = thread_idx_to_load[2*threadIdx.x];
     int hop_idx = thread_idx_to_load[2*threadIdx.x+1];
-    
+    uint warp_hop_mask = __ballot_sync(FULL_MASK, _curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x);
+    int participating_threads = 0;
+    int qq = 0;
+    while (qq < 32) {
+      if ((warp_hop_mask & (1U << qq)) == (1U << qq)) {
+        participating_threads++;
+      }
+      qq++;
+    }
+
     if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
       int vertex = vertices[_curr_vertex_id];
       int start = map_orig_embedding_to_additions[2*vertex];
       previous_step_end[_curr_vertex_id] = previous_stage_filled_range[2*vertex+1];
+    }
 
-      __syncthreads ();
-      if (_curr_vertex_id == last_vertex_id)
-        atomicAdd(&nn, 1);
+    __syncthreads ();
+
+    if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
+      int vertex = vertices[_curr_vertex_id];
+      int start = map_orig_embedding_to_additions[2*vertex];
       int previous_step_start = previous_stage_filled_range[2*vertex];
       int hops_so_far = previous_step_end [_curr_vertex_id] - previous_step_start;
-      int* end = &previous_stage_filled_range[2*vertex + 1];
 
       int hop_vertex = embeddings_additions[start + previous_step_start + hop_idx];
+      sh_hop_vertex[threadIdx.x] = hop_vertex;
       int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
       const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
+    }
 
+    __syncthreads ();
+    
+    if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
+#ifdef WARP_HOP
+      int laneid = threadIdx.x%warpSize;
+      int warpid = threadIdx.x/warpSize;
+
+      __syncwarp (warp_hop_mask);
+
+      for (int th = 0; th < participating_threads; th++) {
+        int target_thread_id = warpid*warpSize + th;
+        int _hop_vertex = sh_hop_vertex[target_thread_id];
+        assert (_hop_vertex != -1);
+        //__shfl_sync (warp_hop_mask, end_edge_idx, th, 32);
+        int _start_edge_idx = csr->get_start_edge_idx (_hop_vertex);
+        const int _end_edge_idx = csr->get_end_edge_idx (_hop_vertex);
+        int l = thread_idx_to_load[2*target_thread_id];
+        if (_end_edge_idx != -1 && l != -1) {
+          int _vertex = vertices[l];
+          int* end = &previous_stage_filled_range[2*_vertex + 1];
+          int _start = map_orig_embedding_to_additions[2*_vertex];
+          while (_start_edge_idx + laneid <= _end_edge_idx) {
+            VertexID edge = csr->get_edges ()[_start_edge_idx + laneid];
+            int e = atomicAdd (end, 1);
+            embeddings_additions[_start + e] = edge;
+            _start_edge_idx += participating_threads;
+          }
+        }
+
+        __syncwarp (warp_hop_mask);
+      }
+#else
+      int* end = &previous_stage_filled_range[2*vertex + 1];
       if (end_edge_idx != -1) {
         while (start_edge_idx <= end_edge_idx) {
           VertexID edge = csr->get_edges ()[start_edge_idx];
@@ -1015,6 +1065,7 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
           start_edge_idx++;
         }
       }
+#endif
     }
     
     __syncthreads ();
