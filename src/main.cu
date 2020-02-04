@@ -942,14 +942,11 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
   __shared__ int last_vertex_id_hops_done;
   __shared__ int last_vertex_previous_step_start, last_vertex_previous_step_end;
 
-  __shared__ int sh_hop_vertex [N_THREADS];
-
   VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
 
   if (hop != 0) {
     thread_idx_to_load [2*threadIdx.x] = -1;
-    thread_idx_to_load [2*threadIdx.x + 1] = -1;   
-    sh_hop_vertex [threadIdx.x] = -1;
+    thread_idx_to_load [2*threadIdx.x + 1] = -1;
 
     __syncthreads ();
 
@@ -1019,14 +1016,9 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
       int hops_so_far = previous_step_end [_curr_vertex_id] - previous_step_start;
 
       int hop_vertex = embeddings_additions[start + previous_step_start + hop_idx];
-      sh_hop_vertex[threadIdx.x] = hop_vertex;
       int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
       const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
-    }
-
-    __syncthreads ();
     
-    if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
 #ifdef WARP_HOP
       int laneid = threadIdx.x%warpSize;
       int warpid = threadIdx.x/warpSize;
@@ -1035,16 +1027,15 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
 
       for (int th = 0; th < participating_threads; th++) {
         int target_thread_id = warpid*warpSize + th;
-        int _hop_vertex = sh_hop_vertex[target_thread_id];
+        int _hop_vertex = __shfl_sync (warp_hop_mask, hop_vertex, th, warpSize);
         assert (_hop_vertex != -1);
-        //__shfl_sync (warp_hop_mask, end_edge_idx, th, 32);
-        int _start_edge_idx = csr->get_start_edge_idx (_hop_vertex);
-        const int _end_edge_idx = csr->get_end_edge_idx (_hop_vertex);
+        int _start_edge_idx = __shfl_sync (warp_hop_mask, start_edge_idx, th, warpSize);
+        const int _end_edge_idx = __shfl_sync (warp_hop_mask, end_edge_idx, th, warpSize);
         int l = thread_idx_to_load[2*target_thread_id];
         if (_end_edge_idx != -1 && l != -1) {
           int _vertex = vertices[l];
           int* end = &previous_stage_filled_range[2*_vertex + 1];
-          int _start = map_orig_embedding_to_additions[2*_vertex];
+          int _start = __shfl_sync (warp_hop_mask, start, th, warpSize);;
           while (_start_edge_idx + laneid <= _end_edge_idx) {
             VertexID edge = csr->get_edges ()[_start_edge_idx + laneid];
             int e = atomicAdd (end, 1);
