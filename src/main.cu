@@ -992,15 +992,20 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
     int _curr_vertex_id = thread_idx_to_load[2*threadIdx.x];
     int hop_idx = thread_idx_to_load[2*threadIdx.x+1];
     uint warp_hop_mask = __ballot_sync(FULL_MASK, _curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x);
+    int first_active_thread = -1;
     int participating_threads = 0;
     int qq = 0;
     while (qq < 32) {
       if ((warp_hop_mask & (1U << qq)) == (1U << qq)) {
+        if (first_active_thread == -1) {
+          first_active_thread = qq;
+        }
         participating_threads++;
       }
       qq++;
     }
 
+    assert (first_active_thread != -1 || (first_active_thread == -1 && warp_hop_mask == 0));
     if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
       int vertex = vertices[_curr_vertex_id];
       int start = map_orig_embedding_to_additions[2*vertex];
@@ -1036,11 +1041,17 @@ __global__ void run_think_hybrid_single_step_embedding (int N_HOPS, int hop, voi
           int _vertex = vertices[l];
           int* end = &previous_stage_filled_range[2*_vertex + 1];
           int _start = __shfl_sync (warp_hop_mask, start, th, warpSize);;
+          int e = -1;
+          if (laneid == first_active_thread)
+            e = atomicAdd (end, _end_edge_idx - _start_edge_idx + 1);
+          int _e = __shfl_sync (warp_hop_mask, e, first_active_thread, warpSize);
+          assert (_e != -1);
+          int iter = 0;
           while (_start_edge_idx + laneid <= _end_edge_idx) {
             VertexID edge = csr->get_edges ()[_start_edge_idx + laneid];
-            int e = atomicAdd (end, 1);
-            embeddings_additions[_start + e] = edge;
+            embeddings_additions[_start + _e + iter*participating_threads + laneid] = edge;
             _start_edge_idx += participating_threads;
+            iter++;
           }
         }
 
