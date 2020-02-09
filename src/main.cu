@@ -913,7 +913,7 @@ std::vector <std::vector <VertexID>> n_hop_cpu (CSR* csr, const int N_HOPS)
   return hops;
 }
 
-#define MAX_LOAD_PER_TB (N_THREADS)
+#define MAX_LOAD_PER_TB (N_THREADS/WARP_SIZE)
 #define MAX_VERTICES_PER_TB 10
 #if MAX_VERTICES_PER_TB < 1
   #error "MAX_VERTICES_PER_TB should be greater than or equal to 1"
@@ -1191,8 +1191,6 @@ __device__ inline int get_warp_mask_and_participating_threads (int condition, in
 //   }
 // }
 
-#undef WARP_HOP
-
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_csr,
   void* void_embeddings_additions, 
   size_t embeddings_additions_size,
@@ -1218,8 +1216,10 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
   int thread_idx = blockIdx.x*blockDim.x + threadIdx.x;
 
   if (hop != 0) {
-    thread_idx_to_load [2*threadIdx.x] = -1;
-    thread_idx_to_load [2*threadIdx.x + 1] = -1;
+    if (laneid == 0) {
+      thread_idx_to_load [2*warpid] = -1;
+      thread_idx_to_load [2*warpid + 1] = -1;
+    }
 
     __syncthreads ();
 
@@ -1259,36 +1259,44 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
     __syncthreads ();
 
     assert (n_vertex_load <= MAX_VERTICES_PER_TB);
-    int _curr_vertex_id = thread_idx_to_load[2*threadIdx.x];
-    int root_vertex_idx = thread_idx_to_load[2*threadIdx.x + 1];
-    if (_curr_vertex_id != -1 && root_vertex_idx != -1) {
-      int hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*vertices[_curr_vertex_id]];
-      int n_root_vertices = map_vertex_to_hop_vertex_data[2*vertices[_curr_vertex_id] + 1];
-      int root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx];
-      int hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx + 1];
-      int first_active_thread = -1;
-      int participating_threads = 0;
-      uint warp_hop_mask = get_warp_mask_and_participating_threads (root_vertex != -1 && root_vertex < gridDim.x, participating_threads, first_active_thread);
+    int _curr_vertex_id = thread_idx_to_load[2*warpid];
+    int root_vertex_idx = thread_idx_to_load[2*warpid + 1];
+    
+    int hop_vertex_start_idx = -1;
+    int n_root_vertices = -1;
+    int root_vertex = -1;
+    int hop_idx = -1;
+    int first_active_thread = -1;
+    int participating_threads = 0;
 
-      assert (first_active_thread != -1 || (first_active_thread == -1 && warp_hop_mask == 0));
+    if (_curr_vertex_id != -1 && root_vertex_idx != -1) {
+      hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*vertices[_curr_vertex_id]];
+      n_root_vertices = map_vertex_to_hop_vertex_data[2*vertices[_curr_vertex_id] + 1];
+      root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx];
+
+      hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx + 1];
+      
       if (root_vertex != -1 && root_vertex < gridDim.x) {
         int vertex = root_vertex;
         int start = map_orig_embedding_to_additions[2*vertex];
         //previous_step_end[_curr_vertex_id] = previous_stage_filled_range[2*vertex+1];
       }
+    }
 
+    __syncthreads ();
+
+    uint warp_hop_mask = get_warp_mask_and_participating_threads (_curr_vertex_id != -1 && root_vertex_idx != -1 && root_vertex != -1 && root_vertex < gridDim.x, participating_threads, first_active_thread);
       //__syncthreads ();
-
+    if (_curr_vertex_id != -1 && root_vertex_idx != -1) {
       if (root_vertex != -1 && root_vertex < gridDim.x) {
         int vertex = root_vertex;
         int start = map_orig_embedding_to_additions[2*vertex];
-        //int previous_step_start = previous_stage_filled_range[2*vertex];
-        //int hops_so_far = previous_step_end [root_vertex] - previous_step_start;
         int hop_vertex = embeddings_additions[hop_idx];
         int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
         const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
-      
-#ifdef WARP_HOP
+        __syncwarp (warp_hop_mask);
+
+#if 0
         __syncwarp (warp_hop_mask);
 
         for (int th = 0; th < participating_threads; th++) {
@@ -1321,18 +1329,33 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
 #else
         int* end = &previous_stage_filled_range[2*vertex + 1];
         if (end_edge_idx != -1) {
-          while (start_edge_idx <= end_edge_idx) {
-            VertexID edge = csr->get_edges ()[start_edge_idx];
-            int e = atomicAdd (end, 1);
-            embeddings_additions[start + e] = edge;
-            start_edge_idx++;
+          __syncwarp (warp_hop_mask);
+          int iter = 0;
+          assert (participating_threads == 32);
+          assert (first_active_thread == 0);
+          int e = -1;
+
+          if (laneid == first_active_thread) {
+            e = atomicAdd (end, end_edge_idx - start_edge_idx + 1);
+          }
+
+          int _e = __shfl_sync (warp_hop_mask, e, first_active_thread, warpSize);
+          assert (_e != -1);
+          while (start_edge_idx + laneid <= end_edge_idx) {
+            VertexID edge = csr->get_edges ()[start_edge_idx + laneid];
+            embeddings_additions[start + _e + iter*participating_threads + laneid] = edge;
+            start_edge_idx += participating_threads;
+            iter++;
           }
         }
+
+        __syncwarp (warp_hop_mask);
 #endif
       }
     }
 
     __syncthreads ();
+    // TODO: if working on last hop of the  vertex then set start to end
     // _curr_vertex_id = thread_idx_to_load[2*threadIdx.x];
     // if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
     //   int v = vertices[_curr_vertex_id];
@@ -1351,7 +1374,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
       
       //assert (last_vertex_id_hops_done + last_vertex_id_hops_remaining == hops_so_far);
 
-#ifdef WARP_HOP
+#if 0
       for (int i = 0; i < last_vertex_id_hops_remaining/(blockDim.x/warpSize) + 1; i++) {
         int hop_idx = i*(blockDim.x/warpSize) + warpid;
         if (hop_idx >= last_vertex_id_hops_remaining) {
@@ -1395,6 +1418,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
         }
         
         int root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*(root_idx + last_hop_vertex_roots_done)];
+
         int hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*(root_idx + last_hop_vertex_roots_done) + 1];
         int start = map_orig_embedding_to_additions[2*root_vertex];
         int* end = &previous_stage_filled_range[2*root_vertex + 1];
