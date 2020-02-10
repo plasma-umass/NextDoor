@@ -1196,13 +1196,13 @@ __device__ int n_edges_to_warp_size (const int n_edges)
   //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
   //Best is 4.
   return 4;
-  if (n_edges <= 2) 
+  if (n_edges <= 4) 
     return 2;
-  else if (n_edges > 2 && n_edges <= 4)
-    return 4;
   else if (n_edges > 4 && n_edges <= 8)
+    return 4;
+  else if (n_edges > 8 && n_edges <= 16)
     return 8;
-  else if (n_edges > 8 && n_edges <= 16) 
+  else if (n_edges > 16 && n_edges <= 32) 
     return 16;
   else
     return 32;
@@ -1225,7 +1225,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
   __shared__ int last_hop_vertex_id;
   __shared__ int last_hop_vertex_roots_remaining;
   __shared__ int last_hop_vertex_roots_done;
-  __shared__ int first_active_threads[MAX_LOAD_PER_TB];
 
   int laneid = threadIdx.x%warpSize;
   int warpid = threadIdx.x/warpSize;
@@ -1236,7 +1235,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
   if (hop != 0) {
     thread_idx_to_load [2*threadIdx.x] = -1;
     thread_idx_to_load [2*threadIdx.x + 1] = -1;
-    first_active_threads [threadIdx.x] = -1;
 
     __syncthreads ();
 
@@ -1264,7 +1262,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
           int root_vertex_idx;
           for (root_vertex_idx = 0; root_vertex_idx < root_vertices && warp_assigned < MAX_LOAD_PER_TB; root_vertex_idx++) {
             for (int ii = warp_assigned; ii < min (warp_assigned + shfl_warp_size, MAX_LOAD_PER_TB); ii++) {
-              first_active_threads[ii] = warp_assigned;
               thread_idx_to_load[2*ii] = n_vertex_load;
               thread_idx_to_load[2*ii+1] = root_vertex_idx;
             }
