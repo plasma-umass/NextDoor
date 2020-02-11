@@ -1208,6 +1208,8 @@ __device__ int n_edges_to_warp_size (const int n_edges)
     return 32;
 }
 
+#define MAX_EDGES (N_THREADS)
+
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_csr,
   void* void_embeddings_additions, 
   size_t embeddings_additions_size,
@@ -1225,6 +1227,8 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
   __shared__ int last_hop_vertex_id;
   __shared__ int last_hop_vertex_roots_remaining;
   __shared__ int last_hop_vertex_roots_done;
+  __shared__ VertexID shmem_csr_edges[MAX_EDGES];
+  __shared__ int hop_vertex_in_shared_mem;
 
   int laneid = threadIdx.x%warpSize;
   int warpid = threadIdx.x/warpSize;
@@ -1245,6 +1249,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
       n_vertex_load = 0;
       int load_assigned_index = 0;
       int warp_assigned = 0;
+      hop_vertex_in_shared_mem = -1;
 
       while (n_vertex_load < MAX_VERTICES_PER_TB && load < MAX_LOAD_PER_TB) {
         vertices[n_vertex_load] = atomicAdd(global_index, 1);
@@ -1255,10 +1260,13 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
         int start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
         const int end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
         const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+        if (hop_vertex_in_shared_mem == -1 and n_edges != 0 and n_edges < MAX_EDGES) {
+          hop_vertex_in_shared_mem = vertices[n_vertex_load];
+        }
         int shfl_warp_size = n_edges_to_warp_size(n_edges);
         int root_vertices = map_vertex_to_hop_vertex_data[2*vertices[n_vertex_load] + 1];
 
-        if (root_vertices != 0) {
+        if (root_vertices != 0 and n_edges != 0) {
           int root_vertex_idx;
           for (root_vertex_idx = 0; root_vertex_idx < root_vertices && warp_assigned < MAX_LOAD_PER_TB; root_vertex_idx++) {
             for (int ii = warp_assigned; ii < min (warp_assigned + shfl_warp_size, MAX_LOAD_PER_TB); ii++) {
@@ -1281,6 +1289,18 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
       }
     }
     
+    __syncthreads ();
+
+    if (hop_vertex_in_shared_mem != -1) {
+      int start_edge_idx = csr->get_start_edge_idx (hop_vertex_in_shared_mem);
+      const int end_edge_idx = csr->get_end_edge_idx (hop_vertex_in_shared_mem);
+      const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+      
+      if (threadIdx.x < n_edges) {
+        shmem_csr_edges[threadIdx.x] = csr->get_edges ()[start_edge_idx + threadIdx.x];
+      }
+    }
+
     __syncthreads ();
 
     assert (n_vertex_load <= MAX_VERTICES_PER_TB);
@@ -1356,26 +1376,36 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
         int* end = &previous_stage_filled_range[2*vertex + 1];
         if (end_edge_idx != -1) {
           __syncwarp (warp_hop_mask);
-          int iter = 0;
-          //assert (participating_threads == 32);
-          //assert (first_active_thread == 0);
           int e = -1;
           // if (vertex > 3700 && vertex < 3850)
           //   printf ("vertex %d laneid %d first_active_thread %d\n", vertex, laneid, first_active_thread);
-          const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+          const int n_edges = end_edge_idx - start_edge_idx + 1;
           int shfl_warp_size = n_edges_to_warp_size(n_edges);
           if (laneid%shfl_warp_size == 0) {
             e = atomicAdd (end, n_edges);
           }
           //TODO: Add synchronization point
           //printf ("first_active_threads[threadIdx.x] %d shfl_warp_size %d\n", first_active_threads[threadIdx.x], shfl_warp_size);
-          int _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);
+          int _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);  
           assert (_e != -1);
-          while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
-            VertexID edge = csr->get_edges ()[start_edge_idx + laneid%shfl_warp_size];
-            embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
-            start_edge_idx += shfl_warp_size;
-            iter++;
+          if (hop_vertex != hop_vertex_in_shared_mem) {
+            int iter = 0;
+            while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
+              VertexID edge = csr->get_edges ()[start_edge_idx + laneid%shfl_warp_size];
+              embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
+              start_edge_idx += shfl_warp_size;
+              iter++;
+            }
+          } else {
+            int iter = 0;
+            int start_edge_idx = 0;
+            int end_edge_idx = n_edges - 1;
+            while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
+              VertexID edge = shmem_csr_edges[start_edge_idx + laneid%shfl_warp_size];
+              embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
+              start_edge_idx += shfl_warp_size;
+              iter++;
+            }
           }
         }
 
@@ -1449,13 +1479,13 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
         }
         
         int root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*(root_idx + last_hop_vertex_roots_done)];
-
         int hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*(root_idx + last_hop_vertex_roots_done) + 1];
         int start = map_orig_embedding_to_additions[2*root_vertex];
         int* end = &previous_stage_filled_range[2*root_vertex + 1];
         int hop_vertex = embeddings_additions[hop_idx];
         int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
         const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
+
         if (end_edge_idx != -1) {
           int e = atomicAdd (end, end_edge_idx - start_edge_idx + 1);
           int iter = 0;
