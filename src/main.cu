@@ -171,8 +171,11 @@ public:
     label = vertex.get_label ();
   }
 
-  void set_start_edge_id (int start) {start_edge_id = start;}
-  void set_end_edge_id (int end) {end_edge_id = end;}
+  __host__ __device__ int get_start_edge_idx () {return start_edge_id;}
+  __host__ __device__ int get_end_edge_idx () {return end_edge_id;}
+  __host__ __device__ VertexID get_id () {return id;}
+  __host__ __device__ void set_start_edge_id (int start) {start_edge_id = start;}
+  __host__ __device__ void set_end_edge_id (int end) {end_edge_id = end;}
 };
 
 typedef int Edge;
@@ -1208,7 +1211,9 @@ __device__ int n_edges_to_warp_size (const int n_edges)
     return 32;
 }
 
-#define MAX_EDGES (N_THREADS)
+#define MAX_EDGES (2*MAX_LOAD_PER_TB)
+#define USE_PARTITION_FOR_SHMEM
+#define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_csr,
   void* void_embeddings_additions, 
@@ -1217,7 +1222,8 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
   int* previous_stage_filled_range,
   int* hop_vertex_to_roots,
   int* map_vertex_to_hop_vertex_data,
-  int* global_index)
+  int* global_index,
+  unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2)
 {
   CSR* csr = (CSR*)void_csr;
   __shared__ int vertices[MAX_VERTICES_PER_TB];
@@ -1227,8 +1233,15 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
   __shared__ int last_hop_vertex_id;
   __shared__ int last_hop_vertex_roots_remaining;
   __shared__ int last_hop_vertex_roots_done;
+
+#ifdef USE_PARTITION_FOR_SHMEM
   __shared__ VertexID shmem_csr_edges[MAX_EDGES];
-  __shared__ int hop_vertex_in_shared_mem;
+  __shared__ int hop_vertex_in_shared_mem[MAX_HOP_VERTICES_IN_SH_MEM];
+  __shared__ int hop_vertices_in_shared_mem_start_edge_idx[MAX_HOP_VERTICES_IN_SH_MEM];
+  __shared__ int hop_vertices_in_shared_mem_end_edge_idx[MAX_HOP_VERTICES_IN_SH_MEM];
+  __shared__ int hop_vertices_in_shared_mem_size;
+  __shared__ int shmem_csr_edges_size;
+#endif 
 
   int laneid = threadIdx.x%warpSize;
   int warpid = threadIdx.x/warpSize;
@@ -1249,7 +1262,12 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
       n_vertex_load = 0;
       int load_assigned_index = 0;
       int warp_assigned = 0;
-      hop_vertex_in_shared_mem = -1;
+
+#ifdef USE_PARTITION_FOR_SHMEM
+      hop_vertices_in_shared_mem_size = 0;
+      int edges_in_shared_mem = 0;
+      shmem_csr_edges_size = 0;
+#endif
 
       while (n_vertex_load < MAX_VERTICES_PER_TB && load < MAX_LOAD_PER_TB) {
         vertices[n_vertex_load] = atomicAdd(global_index, 1);
@@ -1260,9 +1278,17 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
         int start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
         const int end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
         const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
-        if (hop_vertex_in_shared_mem == -1 and n_edges != 0 and n_edges < MAX_EDGES) {
-          hop_vertex_in_shared_mem = vertices[n_vertex_load];
+#ifdef USE_PARTITION_FOR_SHMEM
+        if (hop_vertices_in_shared_mem_size < MAX_HOP_VERTICES_IN_SH_MEM && n_edges != 0 && 
+            n_edges + edges_in_shared_mem < MAX_EDGES) {
+          int v = vertices[n_vertex_load];
+          hop_vertex_in_shared_mem[hop_vertices_in_shared_mem_size] = v;
+          //hop_vertices_in_shared_mem_start_edge_idx[hop_vertices_in_shared_mem_size] = csr->get_start_edge_idx (v);
+          //hop_vertices_in_shared_mem_end_edge_idx[hop_vertices_in_shared_mem_size] = csr->get_end_edge_idx (v);
+          edges_in_shared_mem += n_edges;
+          hop_vertices_in_shared_mem_size++;
         }
+#endif
         int shfl_warp_size = n_edges_to_warp_size(n_edges);
         int root_vertices = map_vertex_to_hop_vertex_data[2*vertices[n_vertex_load] + 1];
 
@@ -1291,15 +1317,38 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
     
     __syncthreads ();
 
-    if (hop_vertex_in_shared_mem != -1) {
-      int start_edge_idx = csr->get_start_edge_idx (hop_vertex_in_shared_mem);
-      const int end_edge_idx = csr->get_end_edge_idx (hop_vertex_in_shared_mem);
-      const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
-      
-      if (threadIdx.x < n_edges) {
-        shmem_csr_edges[threadIdx.x] = csr->get_edges ()[start_edge_idx + threadIdx.x];
+#ifdef USE_PARTITION_FOR_SHMEM
+    for (int i = 0; i < hop_vertices_in_shared_mem_size/(blockDim.x/warpSize) + 1; i++) {
+      int hop = i * warpSize + warpid;
+      if (hop >= hop_vertices_in_shared_mem_size) {
+        continue;
       }
+
+      int start_edge_idx = csr->get_start_edge_idx (hop_vertex_in_shared_mem[hop]);
+      const int end_edge_idx = csr->get_end_edge_idx (hop_vertex_in_shared_mem[hop]);
+      const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+      int _shmem_start = -1;
+      if (laneid == 0) {
+        _shmem_start = atomicAdd (&shmem_csr_edges_size, n_edges);
+      }
+
+      int shmem_start = __shfl_sync (FULL_MASK, _shmem_start, 0, warpSize);
+      assert (shmem_start != -1);
+      for (int e = 0; e < n_edges/warpSize + 1; e++) {
+        int edge_idx = e*warpSize + laneid;
+        if (edge_idx < n_edges) {
+          shmem_csr_edges[shmem_start + edge_idx] = csr->get_edges ()[start_edge_idx + edge_idx];
+        }
+      }
+      __syncwarp ();
+      if (laneid == 0) {
+        hop_vertices_in_shared_mem_start_edge_idx[hop] = _shmem_start;
+        hop_vertices_in_shared_mem_end_edge_idx[hop] = _shmem_start + n_edges - 1;
+      }
+
+      __syncwarp ();
     }
+#endif
 
     __syncthreads ();
 
@@ -1388,7 +1437,8 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
           //printf ("first_active_threads[threadIdx.x] %d shfl_warp_size %d\n", first_active_threads[threadIdx.x], shfl_warp_size);
           int _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);  
           assert (_e != -1);
-          if (hop_vertex != hop_vertex_in_shared_mem) {
+#ifdef USE_PARTITION_FOR_SHMEM
+          if (_curr_vertex_id >= hop_vertices_in_shared_mem_size) {
             int iter = 0;
             while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
               VertexID edge = csr->get_edges ()[start_edge_idx + laneid%shfl_warp_size];
@@ -1398,8 +1448,8 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
             }
           } else {
             int iter = 0;
-            int start_edge_idx = 0;
-            int end_edge_idx = n_edges - 1;
+            int start_edge_idx = hop_vertices_in_shared_mem_start_edge_idx[_curr_vertex_id];
+            int end_edge_idx = hop_vertices_in_shared_mem_end_edge_idx[_curr_vertex_id];
             while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
               VertexID edge = shmem_csr_edges[start_edge_idx + laneid%shfl_warp_size];
               embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
@@ -1407,7 +1457,17 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
               iter++;
             }
           }
+#else
+          int iter = 0;
+          while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
+            VertexID edge = csr->get_edges ()[start_edge_idx + laneid%shfl_warp_size];
+            embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
+            start_edge_idx += shfl_warp_size;
+            iter++;
+          }
+#endif
         }
+  
 
         __syncwarp (warp_hop_mask);
 #endif
@@ -2006,6 +2066,8 @@ int main (int argc, char* argv[])
     int* global_index;
     int* device_hop_vertex_data;
     int* device_map_vertex_to_hop_vertex_data;
+    unsigned long long int* device_profile_branch_1;
+    unsigned long long int* device_profile_branch_2;
 
     EXECUTE_CUDA_FUNC (cudaMalloc (&global_index, sizeof(int)));
     EXECUTE_CUDA_FUNC (cudaMemset (global_index, 0,  sizeof (int)));
@@ -2014,6 +2076,11 @@ int main (int argc, char* argv[])
     EXECUTE_CUDA_FUNC (cudaMemset (device_thread_idx_to_edge_in_additions_size, 0,  sizeof (int)));
     EXECUTE_CUDA_FUNC (cudaMemset (global_index, 0,  sizeof (int)));
     
+    EXECUTE_CUDA_FUNC (cudaMalloc (&device_profile_branch_1, sizeof (unsigned long)));
+    EXECUTE_CUDA_FUNC (cudaMalloc (&device_profile_branch_2, sizeof (unsigned long)));
+    EXECUTE_CUDA_FUNC (cudaMemset (device_profile_branch_1, 0, sizeof (unsigned long)));
+    EXECUTE_CUDA_FUNC (cudaMemset (device_profile_branch_2, 0, sizeof (unsigned long)));
+
     int N_BLOCKS = input_embeddings.size ();
 
     if (hop > 0) {
@@ -2073,7 +2140,9 @@ int main (int argc, char* argv[])
       device_additions_sizes,
       device_hop_vertex_data,
       device_map_vertex_to_hop_vertex_data,
-      global_index);
+      global_index,
+      device_profile_branch_1,
+      device_profile_branch_2);
     EXECUTE_CUDA_FUNC (cudaDeviceSynchronize ());
     double t2 = convertTimeValToDouble(getTimeOfDay ());
     gpu_time += t2 - t1;
@@ -2083,6 +2152,13 @@ int main (int argc, char* argv[])
     device_prev_thread_idx_to_edge_in_additions = device_thread_idx_to_edge_in_additions;
     EXECUTE_CUDA_FUNC (cudaMemcpy (embedding_additions, device_embeddings_additions, embeddings_additions_size, cudaMemcpyDeviceToHost));
     EXECUTE_CUDA_FUNC (cudaMemcpy (additions_sizes, device_additions_sizes, input_embeddings.size ()*sizeof(int)*2, cudaMemcpyDeviceToHost));
+
+    unsigned long profile_branch_1, profile_branch_2;
+    EXECUTE_CUDA_FUNC (cudaMemcpy (&profile_branch_1, device_profile_branch_1, sizeof(profile_branch_1), cudaMemcpyDeviceToHost));
+    EXECUTE_CUDA_FUNC (cudaMemcpy (&profile_branch_2, device_profile_branch_2, sizeof(profile_branch_1), cudaMemcpyDeviceToHost));
+
+    std::cout << "profile_branch_1 " << profile_branch_1 << std::endl;
+    std::cout << "profile_branch_2 " << profile_branch_2 << std::endl;
   }
   
   for (int input_embedding_idx = 0; input_embedding_idx < input_embeddings.size (); input_embedding_idx++) {

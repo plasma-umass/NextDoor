@@ -6,7 +6,7 @@ cpu:
 	g++ src/main.cpp -std=c++11 -O2 -o cpu
 
 gpuO0: src/main.cu
-	nvcc $< -std=c++11 -arch=compute_60 -O0 -g -G -o gpu
+	nvcc $< -std=c++11 -arch=compute_60 -O0 -g -G -o gpu -Xptxas -O0
 
 gpu: src/main.cu
 	nvcc $< -std=c++11 -arch=compute_61 -O3 -o gpu -Xptxas -O3,-dlcm=ca
