@@ -1806,50 +1806,77 @@ int main (int argc, char* argv[])
   void* device_map_orig_embedding_to_additions_prev = nullptr; //Previous iterations map
   int* final_map_orig_embedding_to_additions;
 
-  std::vector<std::pair<int, int>> vertex_partition_positions_vector;
+  std::vector<std::tuple<VertexID, VertexID, int, int>> vertex_partition_positions_vector;
   
-#if 0
   //Create Partitions.
   int u = 0;
+  const size_t effective_partition_size = GRAPH_PARTITION_SIZE - sizeof (CSRPartition);
+  int partition_edge_start_idx = 0;
+
   while (u < csr->get_n_vertices ()) {
     int n_edges = 0;
     int u_start = u;
+    int end_edge_idx = 0;
     int u_end = csr->get_n_vertices () - 1;
+    int edges = 0;
+    int partial_edges = 0;
     for (int v = u; v < csr->get_n_vertices (); v++) {
-      const int start = csr->get_start_edge_idx (v);
+      int start = csr->get_start_edge_idx (v);
       const int end = csr->get_end_edge_idx (v);
       if (end != -1) {
-        n_edges += end - start + 1;
-      }      
-      if (n_edges * sizeof (CSR::Edge) + (v-u_start + 1)*sizeof(CSR::Vertex) >= GRAPH_PARTITION_SIZE - sizeof (CSRPartition) and (v-u_start + 1) > N_THREADS) {
-        std::cout << " v " << v << " n_edges " << n_edges << " u " << u_start  << "  sizeof (CSR::Edge) " << sizeof (CSR::Edge) <<  " sizeof(CSR::Vertex) " << sizeof(CSR::Vertex) << std::endl;
-        u = v;
-        u_end = v;
-        int n_edges_prev = n_edges;
-        while (!((u_end - u_start + 1)%N_THREADS == 0 && (n_edges * sizeof (CSR::Edge) + (u_end-u_start + 1)*sizeof(CSR::Vertex) <= GRAPH_PARTITION_SIZE - sizeof (CSRPartition)))) {
-          const int start = csr->get_start_edge_idx (u_end);
-          const int end = csr->get_end_edge_idx (u_end);
-          if (end != -1) {
-            int q = (end - start + 1);
-            //std::cout << "u_end " << u_end << " q " << q << " n-us " << u_end - u_start + 1 << " sum " << (n_edges * sizeof (CSR::Edge) + (u_end-u_start + 1)*sizeof(CSR::Vertex)) << " " << GRAPH_PARTITION_SIZE - sizeof (CSRPartition) << std::endl;
-            n_edges -= q;
-          }
-          u_end--;
+        if (v == u) {
+          std::cout << "1829: " << " partition_edge_start_idx " << partition_edge_start_idx << " u " << u << " start " << start << " end " << end << std::endl;
+        }
+        if (v == u && partition_edge_start_idx >= start) {
+          start = partition_edge_start_idx;
+        }
+        edges = end - start + 1;
+        assert (edges >= 0);
+      } else {
+        edges = 0;
+      }
+      if ((n_edges + edges) * sizeof (CSR::Edge) + (v-u_start + 1)*sizeof(CSR::Vertex) >= effective_partition_size) {
+        end_edge_idx = (effective_partition_size - (v-u_start + 1)*sizeof(CSR::Vertex))/sizeof (CSR::Edge) - n_edges;
+        std::cout << " v " << v << " n_edges " << n_edges << " u " << u_start  << "  sizeof (CSR::Edge) " << sizeof (CSR::Edge) <<  " sizeof(CSR::Vertex) " << sizeof(CSR::Vertex) << " end_edge_idx " << end_edge_idx << " effective_partition_size " << effective_partition_size << " start " << start << " end " << end << std::endl;
+        if (end_edge_idx <= 0) {
+          u = v;
+          u_end = v - 1;
+          partial_edges = 0;
+          end_edge_idx = start - 1;
+        } else if (end_edge_idx < edges) {
+          u = v;
+          u_end = v;
+          partial_edges = end_edge_idx;
+          end_edge_idx += start - 1; //Including last edge
+        } else {
+          u_end = v;
+          u = v + 1;
+          partial_edges = 0;
+          end_edge_idx += start - 1; //Including last edge
         }
 
-        if (u_end < u_start) {
-          std::cout << "u_end : " << u_end << " u_start: "  << u_start  << " n_edges " << n_edges_prev << std::endl;
+        if (u_end < u_start) 
+        {
+          std::cout << "u_end : " << u_end << " u_start: "  << u_start  << std::endl;
           std::cout << "ERROR: Cannot create partition " << std::endl;
           assert (false);
         }
 
-        u = u_end + 1;
         break;
       }
+
+      n_edges += edges;
     }
 
-    std::cout << "Creating partition start: " << u_start << " end: " << u_end << " n_edges " << n_edges << std::endl; 
-    vertex_partition_positions_vector.push_back (std::make_pair (u_start, u_end));
+    std::cout << "Creating partition start: " << u_start << " end: " << u_end << " partition_edge_start_idx " << partition_edge_start_idx << " end_edge_idx " << end_edge_idx << " n_edges " << n_edges << " partial_edges " << partial_edges << std::endl;
+
+
+    //assert (end_edge_idx == 0 || (end_edge_idx != 0 && end_edge_idx - partition_edge_start_idx + 1 == n_edges + partial_edges));
+
+    vertex_partition_positions_vector.push_back (std::make_tuple (u_start, u_end, partition_edge_start_idx, (end_edge_idx == 0) ? csr->get_end_edge_idx (u_end) : end_edge_idx));
+    //Vertex partition: [u_start, u_end]. Edge partition is all edges from u_start to u_end if end_edge_idx = 0. otherwise all edges of vertices from u_start to u_end - 1 and edges of u_end u_end.start_edge_idx to end_edge_idx.
+    
+    partition_edge_start_idx = end_edge_idx + 1;
 
     if (u_end == csr->get_n_vertices () - 1) {
       break;
@@ -1857,47 +1884,85 @@ int main (int argc, char* argv[])
     //std::cout << "u " << u <<  std::endl;
   }
 
-  int* vertex_partition_positions = new int[vertex_partition_positions_vector.size () * sizeof (int) * 2];
-  int n_partitions = vertex_partition_positions_vector.size ();
+  std::vector<CSRPartition> csr_partitions;
+  /** Check if partitions created are correct**/
+  for (auto p : vertex_partition_positions_vector) {
+    int u = std::get<0> (p);
+    int v = std::get<1> (p);
+    int start = std::get<2> (p);
+    int end = std::get<3> (p);
 
-  for (int i = 0; i < vertex_partition_positions_vector.size (); i++) {
-    std::pair <int, int> p = vertex_partition_positions_vector[i];
-    vertex_partition_positions[2*i] = p.first;
-    vertex_partition_positions[2*i+1] = p.second;
+    CSR::Vertex* vertex_array = new CSR::Vertex[v - u + 1];
+    memcpy (vertex_array, &csr->get_vertices ()[u], (v-u + 1)*sizeof(CSR::Vertex));
+    vertex_array[0].set_start_edge_id (start);
+    vertex_array[v-u].set_end_edge_id (end);
+
+    std::cout << "P " << "u " << u << " v " << v << "[" << start << ", " << end << "]" << std::endl;
+    CSR::Edge* edge_array = new CSR::Edge[end - start + 1];
+    memcpy (edge_array, &csr->get_edges ()[start], (end - start + 1)*sizeof (CSR::Edge));
+    // std::cout << "E " << sizeof (int)*(end_edge - start_edge + 1) << " V " << (p.second - p.first + 1)*sizeof (CSR::Vertex) << std::endl;
+    CSRPartition part = CSRPartition (u, v, start, end, vertex_array, edge_array);
+    csr_partitions.push_back (part);
   }
 
-  std::cout << "Partitions: " << std::endl;
-  for (auto p : vertex_partition_positions_vector) {
-    std::cout << p.first << " " << p.second << std::endl;
+  //Sum of edges of all partitions is equal to N_EDGES
+  int sum_partition_edges = 0;
+
+  for (auto part : csr_partitions) {
+    if (part.edge_end_idx != -1) {
+      sum_partition_edges += part.edge_end_idx - part.edge_start_idx + 1;
+    }
   }
 
-  //Check if CSRPartition is correct
-  for (auto p : vertex_partition_positions_vector) {
-    CSR::Vertex* vertex_array = new CSR::Vertex[p.second - p.first + 1];
-    memcpy (vertex_array, &csr->get_vertices ()[p.first], (p.second-p.first + 1)*sizeof(CSR::Vertex));
-    int end_edge = csr->get_end_edge_idx (p.second);
-    if (end_edge == -1)
-      end_edge = csr->get_start_edge_idx (p.second);
-    int start_edge = csr->get_start_edge_idx (p.first);
-    std::cout << "P " << end_edge << "  " << start_edge << std::endl;
-    CSR::Edge* edge_array = new CSR::Edge[end_edge - start_edge + 1];
-    memcpy (edge_array, &csr->get_edges ()[start_edge], (end_edge - start_edge + 1)*sizeof (CSR::Edge));
-    std::cout << "E " << sizeof (int)*(end_edge - start_edge + 1) << " V " << (p.second - p.first + 1)*sizeof (CSR::Vertex) << std::endl;
-    CSRPartition part = CSRPartition (p.first, p.second, start_edge, end_edge, vertex_array, edge_array);
-    for (int v = p.first; v <= p.second; v++) {
-      assert (part.get_start_edge_idx (v) == csr->get_start_edge_idx (v));
-      assert (part.get_end_edge_idx (v) == csr->get_end_edge_idx (v));
-      int start = part.get_start_edge_idx (v);
-      int end = part.get_end_edge_idx (v);
-      if (start != -1 && end != 1) {
-        while (start <= end) {
-          assert (part.get_edge (start) == csr->get_edges()[start]);
-          start++;
+  assert (sum_partition_edges == N_EDGES);
+
+  int sum_vertices = 0;
+  for (int p = 0; p < csr_partitions.size (); p++) {
+    if (p > 0 && csr_partitions[p].start_vertex_id == csr_partitions[p-1].end_vertex_id) {
+      sum_vertices += csr_partitions[p].end_vertex_id - (csr_partitions[p].start_vertex_id);
+    } else {
+      sum_vertices += csr_partitions[p].end_vertex_id - csr_partitions[p].start_vertex_id + 1;
+    }
+  }
+
+  assert (sum_vertices == N);
+
+  int equal_edges = 0;
+
+  /*Check if union of all partitions is equal to the graph*/
+  for (int p = 0; p < csr_partitions.size (); p++) {
+    int u = csr_partitions[p].start_vertex_id;
+    int v = csr_partitions[p].end_vertex_id;
+    int end = csr_partitions[p].edge_end_idx;
+    int start = csr_partitions[p].edge_start_idx;
+    for (int vertex = u; vertex <= v; vertex++) {
+      int _start = csr->get_start_edge_idx (vertex);
+      if (p > 0 && vertex == csr_partitions[p-1].end_vertex_id) {
+        _start = start;
+      }
+      int _end = csr->get_end_edge_idx (vertex);
+      int part_start = csr_partitions[p].get_start_edge_idx (vertex);
+      int part_end = csr_partitions[p].get_end_edge_idx (vertex);
+      
+      if (_end != -1 && part_end != -1) {
+        while (_start <= _end && _start <= end && part_start <= part_end) {
+          if (!(csr->get_edges ()[_start] == csr_partitions[p].get_edge (part_start))) {
+            std::cout << "part_start " << part_start << " part_end " << 
+            part_end << " _start " << _start << " _end " << _end << " vertex " 
+            << vertex << std::endl;  
+            abort ();
+          }
+          equal_edges++;
+          part_start++;
+          _start++;
         }
       }
     }
   }
-#endif 
+
+  assert (equal_edges == N_EDGES);
+
+  /********Checking DONE*******/
 
   /*Code for preparing additions kernels*/
   uint64_t vertices_in_embedding = input_embeddings[0].get_n_vertices ();
