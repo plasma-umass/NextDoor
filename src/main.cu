@@ -2045,6 +2045,7 @@ int main (int argc, char* argv[])
                                                   device_map_orig_embedding_to_additions,
                                                   device_map_orig_embedding_to_additions_first);
     }
+    
     EXECUTE_CUDA_FUNC (cudaDeviceSynchronize ());
     double t2 = convertTimeValToDouble(getTimeOfDay ());
 
@@ -2073,25 +2074,6 @@ int main (int argc, char* argv[])
     }
 
     cudaFree (device_embeddings_addition_iter);
-
-    //Create new embeddings from the received additions
-    // for (int input_embedding_idx = 0; input_embedding_idx < input_embeddings.size (); input_embedding_idx++) {
-    //   VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
-    //   int n_additions = map_orig_embedding_to_additions[2*input_embedding_idx+1];
-    //   int start_idx = map_orig_embedding_to_additions[2*input_embedding_idx];
-    //   size_t produced_embedding_size = input_embedding.get_n_vertices () + n_additions;
-      
-    //   size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
-    //   // std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
-    //   VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
-    //   ((VertexID*)ptr)[0] = ((VertexID*)input_embedding.get_array ())[0];
-    //   memcpy (ptr, input_embedding.get_array (), sizeof(VertexID)*input_embedding.get_n_vertices ());
-    //   memcpy (ptr + input_embedding.get_n_vertices (), &embedding_additions[start_idx], sizeof(VertexID)*n_additions);
-      
-    //   produced_embeddings.push_back (VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true));
-    // }
-
-    //input_embeddings = produced_embeddings;
   }
   
   std::cout << "Generating additions" << std::endl;
@@ -2218,32 +2200,34 @@ int main (int argc, char* argv[])
     EXECUTE_CUDA_FUNC (cudaMemcpy (embedding_additions, device_embeddings_additions, embeddings_additions_size, cudaMemcpyDeviceToHost));
     EXECUTE_CUDA_FUNC (cudaMemcpy (additions_sizes, device_additions_sizes, input_embeddings.size ()*sizeof(int)*2, cudaMemcpyDeviceToHost));
 
+#ifdef PROFILE
     unsigned long profile_branch_1, profile_branch_2;
     EXECUTE_CUDA_FUNC (cudaMemcpy (&profile_branch_1, device_profile_branch_1, sizeof(profile_branch_1), cudaMemcpyDeviceToHost));
     EXECUTE_CUDA_FUNC (cudaMemcpy (&profile_branch_2, device_profile_branch_2, sizeof(profile_branch_1), cudaMemcpyDeviceToHost));
 
     std::cout << "profile_branch_1 " << profile_branch_1 << std::endl;
     std::cout << "profile_branch_2 " << profile_branch_2 << std::endl;
+#endif
   }
   
   for (int input_embedding_idx = 0; input_embedding_idx < input_embeddings.size (); input_embedding_idx++) {
-      VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
-      int n_additions = additions_sizes[2*input_embedding_idx + 1];
-      int start_idx = final_map_orig_embedding_to_additions[2*input_embedding_idx];
-      size_t produced_embedding_size = n_additions;
-      if (input_embedding_idx == 48) {
-        std::cout << "n_additions " << n_additions << std::endl;
-      }
-      size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
-      //std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
-      VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
-      ((VertexID*)ptr)[0] = ((VertexID*)input_embedding.get_array ())[0];
-      // memcpy (ptr, input_embedding.get_array (), sizeof(VertexID)*input_embedding.get_n_vertices ());
-      memcpy (ptr, &embedding_additions[start_idx], sizeof(VertexID)*n_additions);
-      
-      VectorVertexEmbedding embedding = VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true);
-      produced_embeddings.push_back (embedding);
-      // embedding.print ();
+    VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
+    int n_additions = additions_sizes[2*input_embedding_idx + 1];
+    int start_idx = final_map_orig_embedding_to_additions[2*input_embedding_idx];
+    size_t produced_embedding_size = n_additions;
+    if (input_embedding_idx == 48) {
+      std::cout << "n_additions " << n_additions << std::endl;
+    }
+    size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
+    //std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
+    VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
+    ((VertexID*)ptr)[0] = ((VertexID*)input_embedding.get_array ())[0];
+    // memcpy (ptr, input_embedding.get_array (), sizeof(VertexID)*input_embedding.get_n_vertices ());
+    memcpy (ptr, &embedding_additions[start_idx], sizeof(VertexID)*n_additions);
+    
+    VectorVertexEmbedding embedding = VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true);
+    produced_embeddings.push_back (embedding);
+    // embedding.print ();
   }
 
   cudaFree (device_csr);
