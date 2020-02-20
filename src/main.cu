@@ -53,13 +53,13 @@
 typedef uint8_t SharedMemElem;
 typedef uint32_t VertexID;
 //citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 #define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
 const int N_THREADS = 256;
@@ -1212,7 +1212,7 @@ __device__ int n_edges_to_warp_size (const int n_edges)
 }
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
-#define USE_PARTITION_FOR_SHMEM
+#undef USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_csr,
@@ -1372,7 +1372,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
       root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx];
 
       hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx + 1];
-      
+
       if (root_vertex != -1 && root_vertex < gridDim.x) {
         int vertex = root_vertex;
         int start = map_orig_embedding_to_additions[2*vertex];
@@ -1390,6 +1390,9 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
         int vertex = root_vertex;
         int start = map_orig_embedding_to_additions[2*vertex];
         int hop_vertex = embeddings_additions_prev_hop[hop_idx];
+        if (!(hop_vertex == vertices[_curr_vertex_id])) {
+         // printf ("hop_vertex %d vertices[_curr_vertex_id] %d\n", hop_vertex, vertices[_curr_vertex_id]);
+        }
         assert (hop_vertex == vertices[_curr_vertex_id]);
         int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
         const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
@@ -1591,6 +1594,16 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, void* void_cs
     __syncthreads ();
     previous_stage_filled_range[2*source_vertex] = start;
   }
+}
+
+__global__ void update_filled_ranges (int n_vertices, int* previous_stage_filled_range)
+{
+  int thread_idx = threadIdx.x + blockDim.x*blockIdx.x;
+
+  if (thread_idx >= n_vertices) 
+    return;
+  
+  previous_stage_filled_range[2*thread_idx] = previous_stage_filled_range[2*thread_idx] + previous_stage_filled_range[2*thread_idx+1];
 }
 
 __global__ void run_think_like_an_edge_single_step_embedding (int N_HOPS, int hop, void* void_csr,
@@ -1970,7 +1983,7 @@ int main (int argc, char* argv[])
   uint64_t global_mem_start_idx = input_embeddings[0].get_array_start_idx ();
   uint64_t global_mem_end_idx = input_embeddings[input_embeddings.size () - 1].get_array_start_idx () + input_embeddings[input_embeddings.size () - 1].get_n_vertices ()*sizeof (VertexID);
 
-  const int N_HOPS = 2;
+  const int N_HOPS = 3;
   // std::cout << "-2   " << input_embeddings[input_embeddings.size () - 2].get_array_start_idx () + input_embeddings[input_embeddings.size () - 2].get_n_vertices ()*sizeof (VertexID) << std::endl;
   std::cout << "Number of input embeddings " << input_embeddings.size() << std::endl;
   std::cout << "global_mem_start_idx " << global_mem_start_idx << " global_mem_end_idx " << global_mem_end_idx << " allocated " << GlobalMemAllocator::allocated () << std::endl;
@@ -2162,15 +2175,17 @@ int main (int argc, char* argv[])
     if (hop > 0) {
       int* host_map_vertex_to_hop_vertex_data = nullptr;
       double t1 = convertTimeValToDouble(getTimeOfDay ());
+      hop_vertex_data.clear ();
       //Create per hop vertex data
       for (int v = 0; v < csr->get_n_vertices (); v++) {
         hop_vertex_data.push_back (std::vector<std::pair <VertexID, int> > ());
       }
       for (int v = 0; v < csr->get_n_vertices (); v++) {
-        int start = additions_sizes[hop-1][2*v];
+        int start = final_map_orig_embedding_to_additions[hop-1][2*v];
         int end   = additions_sizes[hop-1][2*v + 1];
         for (int i = 0; i < end; i++) {
           int src = embedding_additions[hop-1][start + i];
+          assert (start + i < embeddings_additions_sizes[hop-1]/sizeof(VertexID));
           assert (src >= 0 && src < N);
           hop_vertex_data[src].push_back (std::make_pair (v, start + i));
         }
