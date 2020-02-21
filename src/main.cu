@@ -53,13 +53,13 @@
 typedef uint8_t SharedMemElem;
 typedef uint32_t VertexID;
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 #define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
 const int N_THREADS = 256;
@@ -341,6 +341,18 @@ public:
   const CSR::Vertex* get_vertices () 
   {
     return vertices;
+  }
+
+  __host__ __device__
+  size_t get_n_vertices ()
+  {
+    return end_vertex_id - start_vertex_id + 1;
+  }
+
+  __host__ __device__
+  size_t get_n_edges ()
+  {
+    return edge_end_idx - edge_start_idx + 1;
   }
 };
 
@@ -1147,7 +1159,7 @@ __device__ int n_edges_to_warp_size (const int n_edges)
 #undef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
 __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
-                                                          size_t n_vertices,
+                                                          int start_vertex, int end_vertex,
                                                           unsigned long long int* embeddings_additions_iter,
                                                           void* void_map_orig_embedding_to_additions)
 {
@@ -1156,8 +1168,8 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
 #else
   CSRPartition* csr = (CSRPartition*)void_csr;
 #endif
-  int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (thread_idx >= n_vertices) {
+  int thread_idx = blockIdx.x * blockDim.x + threadIdx.x + start_vertex;
+  if (thread_idx > end_vertex) {
     return;
   }
 
@@ -1185,19 +1197,19 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
 }
 
 __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* void_csr,
-                                                            size_t n_vertices,
-                                                            unsigned long long int* void_embeddings_additions_iter,
-                                                            void* void_map_orig_embedding_to_additions_prev_iter,
-                                                            void* void_map_orig_embedding_to_additions_next_iter,
-                                                            void* void_map_orig_embedding_to_additions_first_iter)
+                                                          int start_vertex, int end_vertex,
+                                                          unsigned long long int* void_embeddings_additions_iter,
+                                                          void* void_map_orig_embedding_to_additions_prev_iter,
+                                                          void* void_map_orig_embedding_to_additions_next_iter,
+                                                          void* void_map_orig_embedding_to_additions_first_iter)
 {
 #ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
   CSRPartition* csr = (CSRPartition*) void_csr;
 #else
   CSRPartition* csr = (CSRPartition*)void_csr;
 #endif
-  int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (thread_idx >= n_vertices) {
+  int thread_idx = blockIdx.x * blockDim.x + threadIdx.x  + start_vertex;
+  if (thread_idx > end_vertex) {
     return;
   }
 
@@ -1585,7 +1597,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSRPartition*
     }
   } else {
     int source_vertex = blockIdx.x;
-
+    assert (source_vertex < csr->get_n_vertices ());
     int start = map_orig_embedding_to_additions[2*source_vertex];
     int start_edge_idx = csr->get_start_edge_idx (source_vertex);
     const int end_edge_idx = csr->get_end_edge_idx (source_vertex);
@@ -1599,6 +1611,10 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSRPartition*
         if (edge_idx < n_edges) {
           VertexID edge = csr->get_edges ()[start_edge_idx + edge_idx];
           int e = atomicAdd (end, 1);
+          if (!(start + e < embeddings_additions_size)) {
+            printf ("start %d e %d\n",  start, e);
+          }
+          assert (start + e < embeddings_additions_size);
           embeddings_additions[start + e] = edge;    
         }
       }
@@ -1734,6 +1750,20 @@ std::vector <std::unordered_set <VertexID>> n_hop_cpu_distinct (CSR* csr, const 
   return hops;
 }
 
+void copy_partition_to_gpu (CSRPartition& partition, CSRPartition*& device_csr, CSR::Vertex*& device_vertex_array, CSR::Edge*& device_edge_array)
+{
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_csr, sizeof(CSRPartition)));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_vertex_array, sizeof(CSR::Vertex)*partition.get_n_vertices ()));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_edge_array, sizeof(CSR::Edge)*partition.get_n_edges ()));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_vertex_array, partition.vertices, sizeof (CSR::Vertex)*partition.get_n_vertices (), cudaMemcpyHostToDevice));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_edge_array, partition.edges, sizeof (CSR::Edge)*partition.get_n_edges (), cudaMemcpyHostToDevice));
+
+  CSRPartition device_csr_partition_value = CSRPartition (partition.start_vertex_id, partition.end_vertex_id, 
+                                                          partition.edge_start_idx, partition.edge_end_idx, 
+                                                          device_vertex_array, device_edge_array);
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
+}
+
 int main (int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
@@ -1832,7 +1862,6 @@ int main (int argc, char* argv[])
 
   const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
   double_t kernelTotalTime = 0.0;
-  void* device_map_orig_embedding_to_additions_prev = nullptr; //Previous iterations map
   std::vector<CSRPartition> csr_partitions;
 
 #ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM 
@@ -1994,7 +2023,7 @@ int main (int argc, char* argv[])
   uint64_t global_mem_start_idx = input_embeddings[0].get_array_start_idx ();
   uint64_t global_mem_end_idx = input_embeddings[input_embeddings.size () - 1].get_array_start_idx () + input_embeddings[input_embeddings.size () - 1].get_n_vertices ()*sizeof (VertexID);
 
-  const int N_HOPS = 3;
+  const int N_HOPS = 2;
   // std::cout << "-2   " << input_embeddings[input_embeddings.size () - 2].get_array_start_idx () + input_embeddings[input_embeddings.size () - 2].get_n_vertices ()*sizeof (VertexID) << std::endl;
   std::cout << "Number of input embeddings " << input_embeddings.size() << std::endl;
   std::cout << "global_mem_start_idx " << global_mem_start_idx << " global_mem_end_idx " << global_mem_end_idx << " allocated " << GlobalMemAllocator::allocated () << std::endl;
@@ -2003,8 +2032,6 @@ int main (int argc, char* argv[])
   CSRPartition* device_csr; //Graph on GPU
   CSR::Vertex* device_vertex_array;
   CSR::Edge* device_edge_array;
-  int* device_map_orig_embedding_to_additions; //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
-  void* device_map_orig_embedding_to_additions_first;
   int* device_vertex_partition_positions;
   unsigned long long* device_embeddings_addition_iter;
   size_t map_orig_embedding_to_additions_size;
@@ -2018,7 +2045,6 @@ int main (int argc, char* argv[])
 
   CSRPartition device_csr_partition_value = CSRPartition (0, csr->get_n_vertices () - 1, 0, csr->get_n_edges () - 1, device_vertex_array, device_edge_array);
   EXECUTE_CUDA_FUNC (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
-
 
 #if 0
   EXECUTE_CUDA_FUNC (cudaMalloc (&device_vertex_partition_positions, n_partitions*sizeof(int)*2));
@@ -2080,7 +2106,12 @@ int main (int argc, char* argv[])
   VertexID** embedding_additions = new VertexID* [N_HOPS];
   int* embeddings_additions_sizes = new int [N_HOPS];
   int** additions_sizes = new int* [N_HOPS];
-  int** final_map_orig_embedding_to_additions = new int*[N_HOPS];
+  int*** final_map_orig_embedding_to_additions = new int**[N_HOPS];
+  //Previous iterations map for each partition
+  int*** device_map_orig_embedding_to_additions_prev = new int**[N_HOPS]; 
+  //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
+  int*** device_map_orig_embedding_to_additions = new int**[N_HOPS]; new int*[csr_partitions.size ()]; 
+  int*** device_map_orig_embedding_to_additions_first = new int**[N_HOPS]; new int*[csr_partitions.size ()];
 
   for (int hop = 0; hop < N_HOPS; hop++) {
     int* device_thread_idx_to_edge_in_additions;
@@ -2091,63 +2122,82 @@ int main (int argc, char* argv[])
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
     size_t embeddings_additions_size;
+    final_map_orig_embedding_to_additions[hop] = new int*[csr_partitions.size ()];
+    map_orig_embedding_to_additions_size = csr->get_n_vertices () * sizeof (VertexID) * 2;
+    final_map_orig_embedding_to_additions[hop][0] = (int*)new char[map_orig_embedding_to_additions_size];
+    size_t final_map_orig_embedding_to_additions_iter = 0;
+    device_map_orig_embedding_to_additions_prev[hop] = new int*[csr_partitions.size ()];
+    device_map_orig_embedding_to_additions[hop] = new int*[csr_partitions.size ()];
+    device_map_orig_embedding_to_additions_first[hop] = new int*[csr_partitions.size ()];
     
+    for (int p = 0; p < csr_partitions.size (); p++) {
+      device_map_orig_embedding_to_additions_first[hop][p] = nullptr;
+      device_map_orig_embedding_to_additions[hop][p] = nullptr;
+      device_map_orig_embedding_to_additions_prev[hop][p] = nullptr;
+    }
     /********************Get the output additions lengths*******************/
-    //for (int partition_idx = 0; partition_idx < csr_partitions.size (); partition_idx++) 
-    {
-      //CSRPartition& partition = csr_partition[partition_idx];
+    for (int partition_idx = 0; partition_idx < csr_partitions.size (); partition_idx++) {
+      CSRPartition& partition = csr_partitions[partition_idx];
+
+      copy_partition_to_gpu (partition, device_csr, device_vertex_array, device_edge_array);
 
       embeddings_addition_iter = 0;
-      map_orig_embedding_to_additions_size = csr->get_n_vertices () * sizeof (VertexID) * 2;
+      int partition_map_embedding_to_additions_size = partition.get_n_vertices ()* 2;
       EXECUTE_CUDA_FUNC (cudaMalloc (&device_embeddings_addition_iter, sizeof(unsigned long long)));
       EXECUTE_CUDA_FUNC (cudaMemset (device_embeddings_addition_iter, 0,  sizeof (unsigned long long)));
-      EXECUTE_CUDA_FUNC (cudaMalloc (&device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size));
+      EXECUTE_CUDA_FUNC (cudaMalloc (&device_map_orig_embedding_to_additions[hop][partition_idx], partition_map_embedding_to_additions_size*sizeof (VertexID)));
 
       std::cout << "Calling cuda kernel for hop: " << hop << std::endl;
 
       int N_THREADS = 128;
-      int N_BLOCKS = (csr->get_n_vertices ()%128 == 0) ? csr->get_n_vertices ()/128 : csr->get_n_vertices ()/128 + 1;
+      int N_BLOCKS = (partition.get_n_vertices ()%128 == 0) ? partition.get_n_vertices ()/128 : partition.get_n_vertices ()/128 + 1;
       double t1 = convertTimeValToDouble(getTimeOfDay ());
 
       if (hop == 0) {
-        get_max_lengths_for_vertices_first_iter <<<N_BLOCKS, N_THREADS>>> (device_csr,
-                                                                           csr->get_n_vertices (),
+        get_max_lengths_for_vertices_first_iter <<<N_BLOCKS, N_THREADS>>> (device_csr, partition.start_vertex_id, 
+                                                                           partition.end_vertex_id,
                                                                            device_embeddings_addition_iter,
-                                                                           device_map_orig_embedding_to_additions);
+                                                                           device_map_orig_embedding_to_additions[hop][partition_idx]);
       } else {
-        get_max_lengths_for_vertices_single_step <<<N_BLOCKS, N_THREADS>>> (device_csr,
-                                                                            csr->get_n_vertices (),
+        get_max_lengths_for_vertices_single_step <<<N_BLOCKS, N_THREADS>>> (device_csr, partition.start_vertex_id, 
+                                                                            partition.end_vertex_id,
                                                                             device_embeddings_addition_iter,
-                                                                            device_map_orig_embedding_to_additions_prev,
-                                                                            device_map_orig_embedding_to_additions,
-                                                                            device_map_orig_embedding_to_additions_first);
+                                                                            device_map_orig_embedding_to_additions[hop-1][partition_idx],
+                                                                            device_map_orig_embedding_to_additions[hop][partition_idx],
+                                                                            device_map_orig_embedding_to_additions_first[0][partition_idx]);
       }
   
       EXECUTE_CUDA_FUNC (cudaDeviceSynchronize ());
       double t2 = convertTimeValToDouble(getTimeOfDay ());
   
       gpu_time += t2 - t1;
-      if (device_map_orig_embedding_to_additions_prev != nullptr) {
-        cudaFree (device_map_orig_embedding_to_additions_prev);
+      if (device_map_orig_embedding_to_additions_prev[hop][partition_idx] != nullptr) {
+        //cudaFree (device_map_orig_embedding_to_additions_prev[partition_idx]);
       }
   
       std::cout << "Cuda Kernel Done " << std::endl;
       is_cuda_error (cudaGetLastError ());    
       EXECUTE_CUDA_FUNC (cudaMemcpy (&embeddings_addition_iter, device_embeddings_addition_iter, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
       std::cout << "Embedding Additions " << embeddings_addition_iter << std::endl;
-  
-      final_map_orig_embedding_to_additions[hop] = (int*)new char[map_orig_embedding_to_additions_size];
-      EXECUTE_CUDA_FUNC (cudaMemcpy (final_map_orig_embedding_to_additions[hop], device_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size, cudaMemcpyDeviceToHost));
-      device_map_orig_embedding_to_additions_prev = device_map_orig_embedding_to_additions;
+      
+      int *partition_map_embeddings_to_additions = new int[partition_map_embedding_to_additions_size];
+      EXECUTE_CUDA_FUNC (cudaMemcpy (partition_map_embeddings_to_additions, device_map_orig_embedding_to_additions[hop][partition_idx], partition_map_embedding_to_additions_size*sizeof (int), cudaMemcpyDeviceToHost));
+      device_map_orig_embedding_to_additions_prev[hop][partition_idx] = device_map_orig_embedding_to_additions[hop][partition_idx];
       
       if (hop == 0) {
-        device_map_orig_embedding_to_additions_first = device_map_orig_embedding_to_additions;
+        device_map_orig_embedding_to_additions_first[hop][partition_idx] = device_map_orig_embedding_to_additions[hop][partition_idx];
       }
   
-      cudaFree (device_embeddings_addition_iter);
+      EXECUTE_CUDA_FUNC (cudaFree (device_embeddings_addition_iter));
+      memcpy (&final_map_orig_embedding_to_additions[hop][0][final_map_orig_embedding_to_additions_iter],
+              partition_map_embeddings_to_additions, 
+              partition_map_embedding_to_additions_size*sizeof (int));
+
+      final_map_orig_embedding_to_additions_iter += partition_map_embedding_to_additions_size;
+      //delete partition_map_embeddings_to_additions;
+      embeddings_additions_size += (embeddings_addition_iter+1)*sizeof(VertexID);
     }
     
-    embeddings_additions_size = (embeddings_addition_iter+1)*sizeof(VertexID);
     EXECUTE_CUDA_FUNC (cudaMalloc (&device_embeddings_additions, embeddings_additions_size));
     EXECUTE_CUDA_FUNC (cudaMemset (device_embeddings_additions, -1, embeddings_additions_size));
     /**************************DONE**********************/
@@ -2178,7 +2228,7 @@ int main (int argc, char* argv[])
         hop_vertex_data.push_back (std::vector<std::pair <VertexID, int> > ());
       }
       for (int v = 0; v < csr->get_n_vertices (); v++) {
-        int start = final_map_orig_embedding_to_additions[hop-1][2*v];
+        int start = final_map_orig_embedding_to_additions[hop-1][0][2*v];
         int end   = additions_sizes[hop-1][2*v + 1];
         for (int i = 0; i < end; i++) {
           int src = embedding_additions[hop-1][start + i];
@@ -2221,14 +2271,18 @@ int main (int argc, char* argv[])
       EXECUTE_CUDA_FUNC (cudaMemcpy (device_map_vertex_to_hop_vertex_data, host_map_vertex_to_hop_vertex_data, 2*csr->get_n_vertices()*sizeof (int), cudaMemcpyHostToDevice));
     }
 
+    int* device_final_map_orig_embedding_to_additions;
     EXECUTE_CUDA_FUNC (cudaMemset (device_additions_sizes, 0, sizeof(VertexID)*csr->get_n_vertices ()*2));
+    EXECUTE_CUDA_FUNC (cudaMalloc (&device_final_map_orig_embedding_to_additions, map_orig_embedding_to_additions_size));
+    std::cout << "map_orig_embedding_to_additions_size " << map_orig_embedding_to_additions_size << std::endl;
+    EXECUTE_CUDA_FUNC (cudaMemcpy (device_final_map_orig_embedding_to_additions, final_map_orig_embedding_to_additions[hop][0], map_orig_embedding_to_additions_size, cudaMemcpyHostToDevice));
 
     double t1 = convertTimeValToDouble(getTimeOfDay ());
     run_hop_parallel_single_step <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
       device_embeddings_additions,
       embeddings_additions_size,
       device_embeddings_additions_prev_hop,
-      device_map_orig_embedding_to_additions,
+      device_final_map_orig_embedding_to_additions,
       device_additions_sizes,
       device_hop_vertex_data,
       device_map_vertex_to_hop_vertex_data,
@@ -2269,7 +2323,7 @@ int main (int argc, char* argv[])
     size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
     for (int hop = 0; hop < N_HOPS; hop++) {
       VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
-      int start_idx = final_map_orig_embedding_to_additions[hop][2*input_embedding_idx];
+      int start_idx = final_map_orig_embedding_to_additions[hop][0][2*input_embedding_idx];
       int n_additions = additions_sizes[hop][2*input_embedding_idx + 1];
       //std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
       VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
