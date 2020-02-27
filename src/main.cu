@@ -1822,6 +1822,77 @@ int get_common_vertex_with_next_partition (std::vector<CSRPartition> csr_partiti
   return -1;
 }
 
+size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
+                                    CSR* csr, int hop, int*** final_map_vertex_to_additions, int** additions_sizes, 
+                                    VertexID** neighbors, int* neighbors_sizes,
+                                    int*& device_src_to_roots, int*& device_src_to_root_positions)
+{
+  //TODO: turn this into a function that sets the device pointer, returns the size, and frees the allocated arrays
+  int* host_src_to_roots_positions = nullptr;
+  int *host_src_to_roots_linear = nullptr;
+
+  double t1 = convertTimeValToDouble(getTimeOfDay ());
+  host_src_to_roots.clear ();
+  //Create per hop vertex data
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
+  }
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    int start = final_map_vertex_to_additions[hop-1][0][2*v];
+    int end   = additions_sizes[hop-1][2*v + 1];
+    for (int i = 0; i < end; i++) {
+      int src = neighbors[hop-1][start + i];
+      assert (start + i < neighbors_sizes[hop-1]/sizeof(VertexID));
+      assert (src >= 0 && src < N);
+      host_src_to_roots[src].push_back (std::make_pair (v, start + i));
+    }
+  }
+
+  int host_hop_vertex_data_size = 0;
+
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    host_hop_vertex_data_size += host_src_to_roots[v].size ();
+  }
+
+  host_src_to_roots_linear = new int [2*host_hop_vertex_data_size];
+  host_src_to_roots_positions = new int[2*csr->get_n_vertices ()];
+  int iter = 0;
+
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    for (int i = 0; i < host_src_to_roots[v].size (); i++) {
+      host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
+      host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
+      if (v == 0) {
+        printf ("v %d i %d s %d\n", v, std::get<1> (host_src_to_roots[v][i]), host_src_to_roots[v].size ());
+      }
+    }
+
+    host_src_to_roots_positions [2*v] = iter;
+    host_src_to_roots_positions [2*v + 1] = host_src_to_roots[v].size ();
+    iter += 2*host_src_to_roots[v].size ();
+  }
+
+  double t2 = convertTimeValToDouble(getTimeOfDay ());
+        
+  std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_roots, 
+                                  2*host_hop_vertex_data_size*sizeof (int)));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_roots, 
+                                  host_src_to_roots_linear, 
+                                  2*host_hop_vertex_data_size*sizeof (int), 
+                                  cudaMemcpyHostToDevice));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_root_positions, 
+                                  2*csr->get_n_vertices()*sizeof (int)));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_root_positions,  
+                                  host_src_to_roots_positions, 
+                                  2*csr->get_n_vertices()*sizeof (int), 
+                                  cudaMemcpyHostToDevice));
+  delete host_src_to_roots_linear;
+  delete host_src_to_roots_positions;
+
+  return host_hop_vertex_data_size;
+}
+
 int main (int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
@@ -2142,14 +2213,8 @@ int main (int argc, char* argv[])
 
   std::vector<std::vector <std::pair <VertexID, int>>> host_src_to_roots;
 
-  int *host_src_to_roots_linear = nullptr;
-
-  for (auto v : host_src_to_roots) {
-    v.clear ();
-  }
-
   VertexID** neighbors = new VertexID* [N_HOPS];
-  int* neigbors_sizes = new int [N_HOPS];
+  int* neighbors_sizes = new int [N_HOPS];
   int** additions_sizes = new int* [N_HOPS];
   int*** final_map_vertex_to_additions = new int**[N_HOPS];
   //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
@@ -2332,67 +2397,14 @@ int main (int argc, char* argv[])
     int N_BLOCKS = csr->get_n_vertices ();
     
     neighbors[hop] = (VertexID*) new char[num_neighbors];
-    neigbors_sizes[hop] = num_neighbors;
+    neighbors_sizes[hop] = num_neighbors;
     
     if (hop > 0) {
-      //TODO: turn this into a function that sets the device pointer, returns the size, and frees the allocated arrays
-      int* host_src_to_roots_positions = nullptr;
-      double t1 = convertTimeValToDouble(getTimeOfDay ());
-      host_src_to_roots.clear ();
-      //Create per hop vertex data
-      for (int v = 0; v < csr->get_n_vertices (); v++) {
-        host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
-      }
-      for (int v = 0; v < csr->get_n_vertices (); v++) {
-        int start = final_map_vertex_to_additions[hop-1][0][2*v];
-        int end   = additions_sizes[hop-1][2*v + 1];
-        for (int i = 0; i < end; i++) {
-          int src = neighbors[hop-1][start + i];
-          assert (start + i < neigbors_sizes[hop-1]/sizeof(VertexID));
-          assert (src >= 0 && src < N);
-          host_src_to_roots[src].push_back (std::make_pair (v, start + i));
-        }
-      }
-
-      int host_hop_vertex_data_size = 0;
-
-      for (int v = 0; v < csr->get_n_vertices (); v++) {
-        host_hop_vertex_data_size += host_src_to_roots[v].size ();
-      }
-
-      host_src_to_roots_linear = new int [2*host_hop_vertex_data_size];
-      host_src_to_roots_positions = new int[2*csr->get_n_vertices ()];
-      int iter = 0;
-
-      for (int v = 0; v < csr->get_n_vertices (); v++) {
-        for (int i = 0; i < host_src_to_roots[v].size (); i++) {
-          host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
-          host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
-          if (v == 0) {
-            printf ("v %d i %d s %d\n", v, std::get<1> (host_src_to_roots[v][i]), host_src_to_roots[v].size ());
-          }
-        }
-
-        host_src_to_roots_positions [2*v] = iter;
-        host_src_to_roots_positions [2*v + 1] = host_src_to_roots[v].size ();
-        iter += 2*host_src_to_roots[v].size ();
-      }
-
-      double t2 = convertTimeValToDouble(getTimeOfDay ());
-            
-      std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
-      EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_roots, 
-                                     2*host_hop_vertex_data_size*sizeof (int)));
-      EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_roots, 
-                                     host_src_to_roots_linear, 
-                                     2*host_hop_vertex_data_size*sizeof (int), 
-                                     cudaMemcpyHostToDevice));
-      EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_root_positions, 
-                                     2*csr->get_n_vertices()*sizeof (int)));
-      EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_root_positions,  
-                                     host_src_to_roots_positions, 
-                                     2*csr->get_n_vertices()*sizeof (int), 
-                                     cudaMemcpyHostToDevice));
+      compute_source_to_root_data (host_src_to_roots, csr, hop, 
+                                   final_map_vertex_to_additions, 
+                                   additions_sizes, neighbors, 
+                                   neighbors_sizes, device_src_to_roots, 
+                                   device_src_to_root_positions);
     }
 
     CSR* device_csr1;
@@ -2422,7 +2434,7 @@ int main (int argc, char* argv[])
     double t2 = convertTimeValToDouble(getTimeOfDay ());
     gpu_time += t2 - t1;
     additions_sizes[hop] = new int[csr->get_n_vertices () * 2];
-    EXECUTE_CUDA_FUNC (cudaMemcpy (neighbors[hop], device_additions, neigbors_sizes[hop], cudaMemcpyDeviceToHost));
+    EXECUTE_CUDA_FUNC (cudaMemcpy (neighbors[hop], device_additions, neighbors_sizes[hop], cudaMemcpyDeviceToHost));
     EXECUTE_CUDA_FUNC (cudaMemcpy (additions_sizes[hop], device_additions_sizes, csr->get_n_vertices ()*sizeof(VertexID)*2, cudaMemcpyDeviceToHost));
     
 #ifdef PROFILE
