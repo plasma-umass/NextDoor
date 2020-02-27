@@ -2140,11 +2140,11 @@ int main (int argc, char* argv[])
   EXECUTE_CUDA_FUNC (cudaMalloc (&device_filled_ranges, sizeof (int)*csr->get_n_vertices ()));
   int* device_prev_thread_idx_to_edge_in_additions = nullptr;
 
-  std::vector<std::vector <std::pair <VertexID, int>>> hop_vertex_data;
+  std::vector<std::vector <std::pair <VertexID, int>>> host_src_to_roots;
 
-  int *host_hop_vertex_data = nullptr;
+  int *host_src_to_roots_linear = nullptr;
 
-  for (auto v : hop_vertex_data) {
+  for (auto v : host_src_to_roots) {
     v.clear ();
   }
 
@@ -2157,8 +2157,8 @@ int main (int argc, char* argv[])
 
   for (int hop = 0; hop < N_HOPS; hop++) {
     int* source_vertex_idx;
-    int* device_hop_vertex_data;
-    int* device_map_vertex_to_hop_vertex_data;
+    int* device_src_to_roots;
+    int* device_src_to_root_positions;
     unsigned long long* device_max_neighbors_iter;
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
@@ -2335,12 +2335,13 @@ int main (int argc, char* argv[])
     neigbors_sizes[hop] = num_neighbors;
     
     if (hop > 0) {
-      int* host_map_vertex_to_hop_vertex_data = nullptr;
+      //TODO: turn this into a function that sets the device pointer, returns the size, and frees the allocated arrays
+      int* host_src_to_roots_positions = nullptr;
       double t1 = convertTimeValToDouble(getTimeOfDay ());
-      hop_vertex_data.clear ();
+      host_src_to_roots.clear ();
       //Create per hop vertex data
       for (int v = 0; v < csr->get_n_vertices (); v++) {
-        hop_vertex_data.push_back (std::vector<std::pair <VertexID, int> > ());
+        host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
       }
       for (int v = 0; v < csr->get_n_vertices (); v++) {
         int start = final_map_vertex_to_additions[hop-1][0][2*v];
@@ -2349,47 +2350,47 @@ int main (int argc, char* argv[])
           int src = neighbors[hop-1][start + i];
           assert (start + i < neigbors_sizes[hop-1]/sizeof(VertexID));
           assert (src >= 0 && src < N);
-          hop_vertex_data[src].push_back (std::make_pair (v, start + i));
+          host_src_to_roots[src].push_back (std::make_pair (v, start + i));
         }
       }
 
       int host_hop_vertex_data_size = 0;
 
       for (int v = 0; v < csr->get_n_vertices (); v++) {
-        host_hop_vertex_data_size += hop_vertex_data[v].size ();
+        host_hop_vertex_data_size += host_src_to_roots[v].size ();
       }
 
-      host_hop_vertex_data = new int [2*host_hop_vertex_data_size];
-      host_map_vertex_to_hop_vertex_data = new int[2*csr->get_n_vertices ()];
-      int host_hop_vertex_data_iter = 0;
+      host_src_to_roots_linear = new int [2*host_hop_vertex_data_size];
+      host_src_to_roots_positions = new int[2*csr->get_n_vertices ()];
+      int iter = 0;
 
       for (int v = 0; v < csr->get_n_vertices (); v++) {
-        for (int i = 0; i < hop_vertex_data[v].size (); i++) {
-          host_hop_vertex_data[host_hop_vertex_data_iter + 2*i] = std::get<0> (hop_vertex_data[v][i]);
-          host_hop_vertex_data[host_hop_vertex_data_iter + 2*i + 1] = std::get<1> (hop_vertex_data[v][i]);
+        for (int i = 0; i < host_src_to_roots[v].size (); i++) {
+          host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
+          host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
           if (v == 0) {
-            printf ("v %d i %d s %d\n", v, std::get<1> (hop_vertex_data[v][i]), hop_vertex_data[v].size ());
+            printf ("v %d i %d s %d\n", v, std::get<1> (host_src_to_roots[v][i]), host_src_to_roots[v].size ());
           }
         }
 
-        host_map_vertex_to_hop_vertex_data [2*v] = host_hop_vertex_data_iter;
-        host_map_vertex_to_hop_vertex_data [2*v + 1] = hop_vertex_data[v].size ();
-        host_hop_vertex_data_iter += 2*hop_vertex_data[v].size ();
+        host_src_to_roots_positions [2*v] = iter;
+        host_src_to_roots_positions [2*v + 1] = host_src_to_roots[v].size ();
+        iter += 2*host_src_to_roots[v].size ();
       }
 
       double t2 = convertTimeValToDouble(getTimeOfDay ());
             
       std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
-      EXECUTE_CUDA_FUNC (cudaMalloc (&device_hop_vertex_data, 
+      EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_roots, 
                                      2*host_hop_vertex_data_size*sizeof (int)));
-      EXECUTE_CUDA_FUNC (cudaMemcpy (device_hop_vertex_data, 
-                                     host_hop_vertex_data, 
+      EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_roots, 
+                                     host_src_to_roots_linear, 
                                      2*host_hop_vertex_data_size*sizeof (int), 
                                      cudaMemcpyHostToDevice));
-      EXECUTE_CUDA_FUNC (cudaMalloc (&device_map_vertex_to_hop_vertex_data, 
+      EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_root_positions, 
                                      2*csr->get_n_vertices()*sizeof (int)));
-      EXECUTE_CUDA_FUNC (cudaMemcpy (device_map_vertex_to_hop_vertex_data,  
-                                     host_map_vertex_to_hop_vertex_data, 
+      EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_root_positions,  
+                                     host_src_to_roots_positions, 
                                      2*csr->get_n_vertices()*sizeof (int), 
                                      cudaMemcpyHostToDevice));
     }
@@ -2412,8 +2413,8 @@ int main (int argc, char* argv[])
                                                             device_additions_prev_hop,
                                                             device_final_map_vertex_to_additions,
                                                             device_additions_sizes,
-                                                            device_hop_vertex_data,
-                                                            device_map_vertex_to_hop_vertex_data,
+                                                            device_src_to_roots,
+                                                            device_src_to_root_positions,
                                                             source_vertex_idx,
                                                             device_profile_branch_1,
                                                             device_profile_branch_2);
