@@ -1308,7 +1308,6 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
 
   int equal_edges = 0;
 
-  int target_vertices_3025 = 0;
   /*Check if union of all partitions is equal to the graph*/
   for (int p = 0; p < csr_partitions.size (); p++) {
     int u = csr_partitions[p].first_vertex_id;
@@ -1332,22 +1331,11 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
             << vertex << std::endl;  
             abort ();
           }
-          if (csr_partitions[p].get_edge (part_start) == 3025) {
-            target_vertices_3025 ++;
-          }
+          
           equal_edges++;
           part_start++;
           _start++;
         }
-      }
-    }
-  }
-
-  {
-    int t= 0;
-    for (int o = 0; o < csr->get_n_edges (); o++) {
-      if (csr->get_edges()[o] == 3025) {
-        t++;
       }
     }
   }
@@ -1494,7 +1482,8 @@ int main (int argc, char* argv[])
 
   const int N_HOPS = 2;
   
-  CSRPartition* device_csr; //Graph on GPU
+  //Graph on GPU
+  CSRPartition* device_csr;
   CSR::Vertex* device_vertex_array;
   CSR::Edge* device_edge_array;
   int* device_vertex_partition_positions;
