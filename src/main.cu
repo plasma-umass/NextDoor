@@ -23,7 +23,6 @@ typedef uint32_t VertexID;
 
 #include "csr.hpp"
 
-#define LINE_SIZE 1024*1024
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
 #define THREAD_BLOCK_SIZE 256
@@ -1539,44 +1538,13 @@ int main (int argc, char* argv[])
     return 1;
   }
 
-  while (true) {
-    char line[LINE_SIZE];
-    char num_str[LINE_SIZE];
-    size_t line_size;
-
-    if (fgets (line, LINE_SIZE, fp) == nullptr) {
-      break;
-    }
-
-    int id, label;
-    int bytes_read;
-
-    bytes_read = sscanf (line, "%d %d", &id, &label);
-    Vertex vertex (id, label);
-    char* _line = line + chars_in_int (id) + chars_in_int (label);
-    do {
-      int num;
-
-      bytes_read = sscanf (_line, "%d", &num);
-      if (bytes_read > 0) {
-        vertex.add_edge (num);
-        _line += chars_in_int (num);
-        n_edges++;
-      }
-
-    } while (bytes_read > 0);
-
-    vertex.sort_edges ();
-
-    vertices.push_back (vertex);
-  }
+  Graph graph (fp);
 
   fclose (fp);
 
-  std::cout << "n_edges "<<n_edges <<std::endl;
-  std::cout << "vertices " << vertices.size () << std::endl; 
+  std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
+  std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
 
-  Graph graph (vertices, n_edges);
 
   CSR* csr = new CSR(N, N_EDGES);
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
