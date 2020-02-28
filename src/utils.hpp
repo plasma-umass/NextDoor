@@ -31,4 +31,19 @@ __device__ __host__ bool intervals_intersect (int x1, int x2, int y1, int y2)
   return x1 <= y2 && y1 <= x2;
 }
 
+
+bool is_cuda_error (cudaError_t error) 
+{
+  //cudaError_t error = cudaGetLastError ();
+  if (error != cudaSuccess) {
+    const char* error_string = cudaGetErrorString (error);
+    std::cout << "Cuda Error: " << error_string << std::endl;
+    return true;
+  }
+
+  return false;
+}
+
+#define EXECUTE_CUDA_FUNC(x) assert (is_cuda_error (x) == false);
+
 #endif
