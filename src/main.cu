@@ -22,6 +22,7 @@ const int N_EDGES = 2160312;
 typedef uint32_t VertexID;
 
 #include "csr.hpp"
+#include "utils.hpp"
 
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
@@ -67,25 +68,6 @@ typedef uint8_t SharedMemElem;
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
 const int N_THREADS = 256;
-
-double_t convertTimeValToDouble (struct timeval _time)
-{
-  return ((double_t)_time.tv_sec) + ((double_t)_time.tv_usec)/1000000.0f;
-}
-
-
-struct timeval getTimeOfDay ()
-{
-  struct timeval _time;
-
-  if (gettimeofday (&_time, NULL) == -1) {
-    fprintf (stderr, "gettimeofday returned -1\n");
-    perror ("");
-    abort ();
-  }
-
-  return _time;
-}
 
 class GlobalMemAllocator
 {
@@ -1549,16 +1531,7 @@ int main (int argc, char* argv[])
   CSR* csr = new CSR(N, N_EDGES);
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
-  
-#ifdef USE_CONSTANT_MEM
-  cudaMemcpyToSymbol (csr_constant_buff, csr, sizeof(CSR));
-  //~ CSR* csr_constant = (CSR*) &csr_constant_buff[0];
-  //~ csr_constant->n_vertices = csr->get_n_vertices ();
-  //~ printf ("csr->get_n_vertices () = %d\n", csr->get_n_vertices ());
-  //~ csr_constant->n_edges = csr->get_n_edges ();
-  //~ csr_constant->copy_vertices (csr, 0, csr->get_n_vertices ());
-  //~ csr_constant->copy_edges (csr, 0, csr->get_n_edges ());
-#endif
+
   size_t global_mem_size = 15*1024*1024*1024UL;
   #define PINNED_MEMORY
   #ifdef PINNED_MEMORY

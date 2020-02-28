@@ -1,6 +1,8 @@
 #include <vector>
 #include <algorithm>
 #include <iostream>
+#include <assert.h>
+#include <math.h>
 
 #ifndef __GRAPH_HPP__
 #define __GRAPH_HPP__
@@ -60,8 +62,9 @@ public:
 
   Graph (FILE* fp) 
   {
+    assert (fp != nullptr);
     n_edges = 0;
-    
+
     while (true) {
       char line[LINE_SIZE];
       char num_str[LINE_SIZE];
@@ -97,7 +100,5 @@ public:
 
   const std::vector<Vertex>& get_vertices () {return vertices;}
   int get_n_edges () {return n_edges;}
-
-
 };
 #endif
