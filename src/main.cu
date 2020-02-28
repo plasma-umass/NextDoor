@@ -13,6 +13,16 @@
 #include <assert.h>
 #include <tuple>
 
+//citeseer.graph
+//const int N = 3312;
+//const int N_EDGES = 9074;
+//micro.graph
+const int N = 100000;
+const int N_EDGES = 2160312;
+typedef uint32_t VertexID;
+
+#include "csr.hpp"
+
 #define LINE_SIZE 1024*1024
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
@@ -51,15 +61,10 @@
 //#define USE_CONSTANT_MEM
 
 typedef uint8_t SharedMemElem;
-typedef uint32_t VertexID;
-//citeseer.graph
-//const int N = 3312;
-//const int N_EDGES = 9074;
+
 #define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 
-//micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
 const int N_THREADS = 256;
@@ -81,317 +86,6 @@ struct timeval getTimeOfDay ()
   }
 
   return _time;
-}
-
-enum BUFFER_STATUS {
-  GPU_USING,
-  CPU_COPYING,
-  READY_CPU_COPYING,
-  FREE,
-};
-
-class Vertex
-{
-private:
-  int id;
-  int label;
-  std::vector <int> edges;
-
-public:
-  Vertex (int _id, int _label) : label(_label), id (_id)
-  {
-  }
-
-  void set_id (int _id) {id = _id;}
-  int get_id () {return id;}
-  int get_label () {return label;}
-  void add_edge (int vertexID) {edges.push_back (vertexID);}
-  void sort_edges () {std::sort (edges.begin(), edges.end ());}
-  std::vector <int>& get_edges () {return edges;}
-  void print (std::ostream& os)
-  {
-    os << id << " " << label << " ";
-    for (auto edge : edges) {
-      os << edge << " ";
-    }
-
-    os << std::endl;
-  }
-
-  static bool compare_vertex (Vertex& v1, Vertex& v2) 
-  {
-    return v1.edges.size () < v2.edges.size ();
-  }
-};
-
-int chars_in_int (int num)
-{
-  if (num == 0) return sizeof(char);
-  return (int)((ceil(log10(num))+1)*sizeof(char));
-}
-
-class Graph
-{
-private:
-  std::vector<Vertex> vertices;
-  int n_edges;
-
-public:
-  Graph (std::vector<Vertex> _vertices, int _n_edges) :
-    vertices (_vertices), n_edges(_n_edges)
-  {}
-
-  const std::vector<Vertex>& get_vertices () {return vertices;}
-  int get_n_edges () {return n_edges;}
-};
-
-
-
-class CSR
-{
-public:
-  struct Vertex
-{
-  int id;
-  int label;
-  int start_edge_id;
-  int end_edge_id;
-  __host__ __device__
-  Vertex ()
-  {
-    id = -1;
-    label = -1;
-    start_edge_id = -1;
-    end_edge_id = -1;
-  }
-
-  void set_from_graph_vertex (::Vertex& vertex)
-  {
-    id = vertex.get_id ();
-    label = vertex.get_label ();
-  }
-
-  __host__ __device__ int get_start_edge_idx () {return start_edge_id;}
-  __host__ __device__ int get_end_edge_idx () {return end_edge_id;}
-  __host__ __device__ VertexID get_id () {return id;}
-  __host__ __device__ void set_start_edge_id (int start) {start_edge_id = start;}
-  __host__ __device__ void set_end_edge_id (int end) {end_edge_id = end;}
-};
-
-typedef int Edge;
-
-  CSR::Vertex vertices[N];
-  CSR::Edge edges[N_EDGES];
-  int n_vertices;
-  int n_edges;
-
-public:
-  CSR (int _n_vertices, int _n_edges)
-  {
-    n_vertices = _n_vertices;
-    n_edges = _n_edges;
-  }
-
-  __host__ __device__
-  CSR ()
-  {
-    n_vertices = N;
-    n_edges = N_EDGES;
-  }
-
-  void print (std::ostream& os)
-  {
-    for (int i = 0; i < n_vertices; i++) {
-      os << vertices[i].id << " " << vertices[i].label << " ";
-      for (int edge_iter = vertices[i].start_edge_id;
-           edge_iter <= vertices[i].end_edge_id; edge_iter++) {
-        os << edges[edge_iter] << " ";
-      }
-      os << std::endl;
-    }
-  }
-
-  __host__ __device__
-  int get_start_edge_idx (int vertex_id)
-  {
-    if (!(vertex_id < n_vertices && 0 <= vertex_id)) {
-      printf ("vertex_id %d, n_vertices %d\n", vertex_id, n_vertices);
-      assert (false);
-    }
-    return vertices[vertex_id].start_edge_id;
-  }
-
-  __host__ __device__
-  int get_end_edge_idx (int vertex_id)
-  {
-    assert (vertex_id < n_vertices && 0 <= vertex_id);
-    return vertices[vertex_id].end_edge_id;
-  }
-
-  __host__ __device__
-  bool has_edge (int u, int v)
-  {
-    //TODO: Since graph is sorted, do this using binary search
-    for (int e = get_start_edge_idx (u); e <= get_end_edge_idx (u); e++) {
-      if (edges[e] == v) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  __host__ __device__
-  const CSR::Edge* get_edges () {return &edges[0];}
-
-  __host__ __device__
-  const CSR::Vertex* get_vertices () {return &vertices[0];}
-
-  __host__ __device__
-  int get_n_vertices () {return n_vertices;}
-
-  __host__ __device__
-  void copy_vertices (CSR* src, int start, int end)
-  {
-    for (int i = start; i < end; i++) {
-      vertices[i] = src->get_vertices()[i];
-    }
-  }
-
-  __host__ __device__
-  void copy_edges (CSR* src, int start, int end)
-  {
-    for (int i = start; i < end; i++) {
-      edges[i] = src->get_edges ()[i];
-    }
-  }
-
-  __host__ __device__
-  int get_n_edges () {return n_edges;}
-};
-
-class CSRPartition
-{
-public:
-  int start_vertex_id;
-  int end_vertex_id;
-  int edge_start_idx;
-  int edge_end_idx;
-  const CSR::Vertex *vertices;
-  const CSR::Edge *edges;
-
-  __device__
-  CSRPartition () 
-  {
-
-  }
-
-  __device__
-  void initialize (int _start, int _end, int _edge_start_idx, int _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges)
-  {
-    start_vertex_id = _start;
-    end_vertex_id = _end;
-    vertices = _vertices;
-    edges = _edges;
-    edge_start_idx = _edge_start_idx;
-    edge_end_idx = _edge_end_idx;
-  }
-
-  __host__
-  CSRPartition (int _start, int _end, int _edge_start_idx, int _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges)
-  {
-    start_vertex_id = _start;
-    end_vertex_id = _end;
-    vertices = _vertices;
-    edges = _edges;
-    edge_start_idx = _edge_start_idx;
-    edge_end_idx = _edge_end_idx;
-  }
-
-  __host__ __device__
-  int get_start_edge_idx (int vertex_id) {
-    if (!(vertex_id <= end_vertex_id && start_vertex_id <= vertex_id)) {
-      printf ("vertex_id %d, end_vertex %d, start_vertex %d\n", vertex_id, end_vertex_id, start_vertex_id);
-      assert (false);
-    }
-    return vertices[vertex_id - start_vertex_id].start_edge_id;
-  }
-
-  __host__ __device__
-  int get_end_edge_idx (int vertex_id)
-  {
-    assert (vertex_id <= end_vertex_id && start_vertex_id <= vertex_id);
-    return vertices[vertex_id - start_vertex_id].end_edge_id;
-  }
-  
-  __host__ __device__
-  CSR::Edge get_edge (int idx) 
-  {
-    assert (idx >= edge_start_idx && idx <= edge_end_idx);
-    return edges[idx - edge_start_idx];
-  }
-
-  int get_vertex_for_edge_idx (int idx)
-  {
-    for (int v = start_vertex_id; v < end_vertex_id; v++) {
-      if (idx >= get_start_edge_idx (v) && idx <= get_end_edge_idx (v)) {
-        return v;
-      }
-    }
-
-    return -1;
-  }
-
-  __host__ __device__
-  const CSR::Edge* get_edges () 
-  {
-    return edges;
-  }
-
-  __host__ __device__
-  const CSR::Vertex* get_vertices () 
-  {
-    return vertices;
-  }
-
-  __host__ __device__
-  size_t get_n_vertices ()
-  {
-    return end_vertex_id - start_vertex_id + 1;
-  }
-
-  __host__ __device__
-  size_t get_n_edges ()
-  {
-    return edge_end_idx - edge_start_idx + 1;
-  }
-
-  __host__ __device__ 
-  bool is_vertex_in_partition (int v) 
-  {
-    return v >= start_vertex_id && v <= end_vertex_id;
-  }
-};
-
-#ifdef USE_CONSTANT_MEM
-  __constant__ unsigned char csr_constant_buff[sizeof(CSR)];
-#endif
-
-void csr_from_graph (CSR* csr, Graph& graph)
-{
-  int edge_iterator = 0;
-  auto graph_vertices = graph.get_vertices ();
-  for (int i = 0; i < graph_vertices.size (); i++) {
-    ::Vertex& vertex = graph_vertices[i];
-    csr->vertices[i].set_from_graph_vertex (graph_vertices[i]);
-    csr->vertices[i].set_start_edge_id (edge_iterator);
-    for (auto edge : vertex.get_edges ()) {
-      csr->edges[edge_iterator] = edge;
-      edge_iterator++;
-    }
-
-    csr->vertices[i].set_end_edge_id (edge_iterator-1);
-  }
 }
 
 class GlobalMemAllocator
@@ -469,17 +163,6 @@ public:
   void* get_array () {return array;}
   __device__ __host__
   uint64_t get_array_start_idx () { return array_start_idx;}
-  // __host__ __device__
-  // VectorVertexEmbedding (const VectorVertexEmbedding& embedding)
-  // {
-  // #if DEBUG
-  //   assert (embedding.get_max_size () <= get_max_size ());
-  // #endif
-  //   filled_size = 0;
-  //   for (int i = 0; i < embedding.get_n_vertices (); i++) {
-  //     add (embedding.get_vertex (i));
-  //   }
-  // }
   
   __host__ __device__
   void add (int v)
@@ -703,136 +386,136 @@ bool is_cuda_error (cudaError_t error)
 
 
 
-__global__ void run_single_step_embedding (int N_HOPS, void* void_csr, int* partition_range, int n_partitions, void* input, size_t n_embeddings, void* void_embedding_storage, uint64_t global_mem_start_idx,
-                                           void* void_embeddings_additions, 
-                                           size_t num_neighbors,
-                                           void* void_map_orig_embedding_to_additions, 
-                                           size_t map_vertex_to_additions_size,
-                                           int* additions_sizes)
-{
-  CSR* csr = (CSR*)void_csr;
-  int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+// __global__ void run_single_step_embedding (int N_HOPS, void* void_csr, int* partition_range, int n_partitions, void* input, size_t n_embeddings, void* void_embedding_storage, uint64_t global_mem_start_idx,
+//                                            void* void_embeddings_additions, 
+//                                            size_t num_neighbors,
+//                                            void* void_map_orig_embedding_to_additions, 
+//                                            size_t map_vertex_to_additions_size,
+//                                            int* additions_sizes)
+// {
+//   CSR* csr = (CSR*)void_csr;
+//   int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
   
-#ifdef ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
-  __shared__ CSRPartition csr_partition;
-  __shared__ char partition_vertex_edges [GRAPH_PARTITION_SIZE - sizeof (CSRPartition)];
-  int partition_idx = n_partitions - 1;  
+// #ifdef ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
+//   __shared__ CSRPartition csr_partition;
+//   __shared__ char partition_vertex_edges [GRAPH_PARTITION_SIZE - sizeof (CSRPartition)];
+//   int partition_idx = n_partitions - 1;  
 
-  for (int i = 0; i < n_partitions; i++) {
-    if (thread_idx >= partition_range[2*i] && thread_idx <= partition_range[2*i + 1]) {
-      partition_idx = i;
-      break;
-    }
-  }
-  int partition_start_vertex = partition_range[2*partition_idx];
-  int partition_end_vertex = partition_range[2*partition_idx + 1];
-  int partition_n_vertices = partition_end_vertex - partition_start_vertex;
-  CSR::Vertex* vertex_array = (CSR::Vertex*)&partition_vertex_edges[0];
-  int vertex_array_size = (partition_end_vertex - partition_start_vertex + 1)*sizeof(CSR::Vertex);
-  CSR::Edge* edge_array = (CSR::Edge*)&partition_vertex_edges[vertex_array_size];
+//   for (int i = 0; i < n_partitions; i++) {
+//     if (thread_idx >= partition_range[2*i] && thread_idx <= partition_range[2*i + 1]) {
+//       partition_idx = i;
+//       break;
+//     }
+//   }
+//   int partition_start_vertex = partition_range[2*partition_idx];
+//   int partition_end_vertex = partition_range[2*partition_idx + 1];
+//   int partition_n_vertices = partition_end_vertex - partition_start_vertex;
+//   CSR::Vertex* vertex_array = (CSR::Vertex*)&partition_vertex_edges[0];
+//   int vertex_array_size = (partition_end_vertex - partition_start_vertex + 1)*sizeof(CSR::Vertex);
+//   CSR::Edge* edge_array = (CSR::Edge*)&partition_vertex_edges[vertex_array_size];
   
-  int end_edge = csr->get_end_edge_idx (partition_end_vertex);
-  if (end_edge == -1)
-    end_edge = csr->get_start_edge_idx (partition_end_vertex);
-  int start_edge = csr->get_start_edge_idx (partition_start_vertex);
-  int partition_n_edges = end_edge - start_edge + 1;
-  //if (!(sizeof (partition_vertex_edges) >= vertex_array_size + partition_n_edges*sizeof (CSR::Edge))) 
-   // printf ("sizeof (partition_vertex_edges) %d vertex_array_size %d partition_n_edges*sizeof (CSR::Edge) %d \n", (int)sizeof (partition_vertex_edges), vertex_array_size, (int) partition_n_edges*sizeof (CSR::Edge));
-  assert (sizeof (partition_vertex_edges) >= vertex_array_size + partition_n_edges*sizeof (CSR::Edge));
-  csr_partition.initialize (partition_start_vertex, partition_end_vertex, start_edge, end_edge, vertex_array, edge_array);
-  for (int i = 0; i < partition_n_vertices; i+=blockDim.x) {
-    if (i + threadIdx.x <= partition_n_vertices) {
-      vertex_array[i + threadIdx.x] = csr->get_vertices () [partition_start_vertex + i + threadIdx.x];
-    }
-  }
+//   int end_edge = csr->get_end_edge_idx (partition_end_vertex);
+//   if (end_edge == -1)
+//     end_edge = csr->get_start_edge_idx (partition_end_vertex);
+//   int start_edge = csr->get_start_edge_idx (partition_start_vertex);
+//   int partition_n_edges = end_edge - start_edge + 1;
+//   //if (!(sizeof (partition_vertex_edges) >= vertex_array_size + partition_n_edges*sizeof (CSR::Edge))) 
+//    // printf ("sizeof (partition_vertex_edges) %d vertex_array_size %d partition_n_edges*sizeof (CSR::Edge) %d \n", (int)sizeof (partition_vertex_edges), vertex_array_size, (int) partition_n_edges*sizeof (CSR::Edge));
+//   assert (sizeof (partition_vertex_edges) >= vertex_array_size + partition_n_edges*sizeof (CSR::Edge));
+//   //csr_partition.initialize (partition_start_vertex, partition_end_vertex, start_edge, end_edge, vertex_array, edge_array);
+//   for (int i = 0; i < partition_n_vertices; i+=blockDim.x) {
+//     if (i + threadIdx.x <= partition_n_vertices) {
+//       vertex_array[i + threadIdx.x] = csr->get_vertices () [partition_start_vertex + i + threadIdx.x];
+//     }
+//   }
 
-  for (int i = 0; i < partition_n_edges; i+=blockDim.x) {
-    if (i + threadIdx.x <= partition_n_edges) {
-      edge_array[i + threadIdx.x] = csr->get_edges () [start_edge + i + threadIdx.x];
-    }
-  }
+//   for (int i = 0; i < partition_n_edges; i+=blockDim.x) {
+//     if (i + threadIdx.x <= partition_n_edges) {
+//       edge_array[i + threadIdx.x] = csr->get_edges () [start_edge + i + threadIdx.x];
+//     }
+//   }
   
-  __syncthreads ();
-#endif
+//   __syncthreads ();
+// #endif
 
-  if (thread_idx >= n_embeddings) {
-    return;
-  }
+//   if (thread_idx >= n_embeddings) {
+//     return;
+//   }
 
-  VectorVertexEmbedding* input_embeddings = (VectorVertexEmbedding*) input;
-  VectorVertexEmbedding* input_embedding = &input_embeddings[thread_idx];
-  VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
+//   VectorVertexEmbedding* input_embeddings = (VectorVertexEmbedding*) input;
+//   VectorVertexEmbedding* input_embedding = &input_embeddings[thread_idx];
+//   VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
 
-  int* map_orig_embedding_to_additions = (int*) void_map_orig_embedding_to_additions;
+//   int* map_orig_embedding_to_additions = (int*) void_map_orig_embedding_to_additions;
 
-  unsigned long long int new_edges = 0;
-  // printf ("thread idx %d array_start_idx %ld\n", thread_idx, input_embedding->get_array_start_idx ());
-  /*Perform a single hop for all vertices in the input embedding*/
-  int additions_filled = map_orig_embedding_to_additions[2*thread_idx];
-  int start = map_orig_embedding_to_additions[2*thread_idx];
-  int size = map_orig_embedding_to_additions[2*thread_idx+1];
+//   unsigned long long int new_edges = 0;
+//   // printf ("thread idx %d array_start_idx %ld\n", thread_idx, input_embedding->get_array_start_idx ());
+//   /*Perform a single hop for all vertices in the input embedding*/
+//   int additions_filled = map_orig_embedding_to_additions[2*thread_idx];
+//   int start = map_orig_embedding_to_additions[2*thread_idx];
+//   int size = map_orig_embedding_to_additions[2*thread_idx+1];
 
-  for (int vertex_idx = 0; vertex_idx < input_embedding->get_n_vertices (); vertex_idx++) {
-    VertexID vertex = input_embedding->get_vertex (vertex_idx, void_embedding_storage, global_mem_start_idx);
-  #ifdef ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
-    int start_edge_idx = csr_partition.get_start_edge_idx (vertex);
-    const int end_edge_idx = csr_partition.get_end_edge_idx (vertex);
-  #else
-    int start_edge_idx = csr->get_start_edge_idx (vertex);
-    const int end_edge_idx = csr->get_end_edge_idx (vertex);
-  #endif
-    if (start_edge_idx != -1) {
-      while (start_edge_idx <= end_edge_idx) {
-        VertexID edge = csr->get_edges ()[start_edge_idx];
-        embeddings_additions[additions_filled++] = edge;
-        start_edge_idx++;
-      }
-    }
-  }
+//   for (int vertex_idx = 0; vertex_idx < input_embedding->get_n_vertices (); vertex_idx++) {
+//     VertexID vertex = input_embedding->get_vertex (vertex_idx, void_embedding_storage, global_mem_start_idx);
+//   #ifdef ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
+//     int start_edge_idx = csr_partition.get_start_edge_idx (vertex);
+//     const int end_edge_idx = csr_partition.get_end_edge_idx (vertex);
+//   #else
+//     int start_edge_idx = csr->get_start_edge_idx (vertex);
+//     const int end_edge_idx = csr->get_end_edge_idx (vertex);
+//   #endif
+//     if (start_edge_idx != -1) {
+//       while (start_edge_idx <= end_edge_idx) {
+//         VertexID edge = csr->get_edges ()[start_edge_idx];
+//         embeddings_additions[additions_filled++] = edge;
+//         start_edge_idx++;
+//       }
+//     }
+//   }
 
-  int additions_end_idx = additions_filled;
-  int additions_start_idx = start;
-  int hop = 1;
+//   int additions_end_idx = additions_filled;
+//   int additions_start_idx = start;
+//   int hop = 1;
 
-  while (hop < N_HOPS) {    
-    for (int vertex_idx = additions_start_idx; vertex_idx < additions_end_idx; vertex_idx++) {
-      int vertex = embeddings_additions [vertex_idx];
-#ifdef ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
-      int start_edge_idx = (vertex >= partition_start_vertex && vertex <= partition_end_vertex) ? csr_partition.get_start_edge_idx (vertex) : csr->get_start_edge_idx (vertex);
-      const int end_edge_idx = (vertex >= partition_start_vertex && vertex <= partition_end_vertex) ? csr_partition.get_end_edge_idx (vertex) : csr->get_end_edge_idx (vertex);
-#else
-      int start_edge_idx = csr->get_start_edge_idx (vertex);
-      const int end_edge_idx = csr->get_end_edge_idx (vertex);
-#endif
+//   while (hop < N_HOPS) {    
+//     for (int vertex_idx = additions_start_idx; vertex_idx < additions_end_idx; vertex_idx++) {
+//       int vertex = embeddings_additions [vertex_idx];
+// #ifdef ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
+//       int start_edge_idx = (vertex >= partition_start_vertex && vertex <= partition_end_vertex) ? csr_partition.get_start_edge_idx (vertex) : csr->get_start_edge_idx (vertex);
+//       const int end_edge_idx = (vertex >= partition_start_vertex && vertex <= partition_end_vertex) ? csr_partition.get_end_edge_idx (vertex) : csr->get_end_edge_idx (vertex);
+// #else
+//       int start_edge_idx = csr->get_start_edge_idx (vertex);
+//       const int end_edge_idx = csr->get_end_edge_idx (vertex);
+// #endif
 
-      if (start_edge_idx != -1) {
-        while (start_edge_idx <= end_edge_idx) {
-          VertexID edge = csr->get_edges ()[start_edge_idx];
-          // bool present = false;
-          // for (int i = start; i < additions_filled; i++) {
-          //   if (embeddings_additions[i] == edge) {
-          //     present = true;
-          //     break;
-          //   }
-          // }
-          // if (present == false)
-          embeddings_additions[additions_filled++] = edge;
-          start_edge_idx++;
-        }
-      }
-    }
+//       if (start_edge_idx != -1) {
+//         while (start_edge_idx <= end_edge_idx) {
+//           VertexID edge = csr->get_edges ()[start_edge_idx];
+//           // bool present = false;
+//           // for (int i = start; i < additions_filled; i++) {
+//           //   if (embeddings_additions[i] == edge) {
+//           //     present = true;
+//           //     break;
+//           //   }
+//           // }
+//           // if (present == false)
+//           embeddings_additions[additions_filled++] = edge;
+//           start_edge_idx++;
+//         }
+//       }
+//     }
 
-    additions_start_idx = additions_end_idx;
-    additions_end_idx = additions_filled;
+//     additions_start_idx = additions_end_idx;
+//     additions_end_idx = additions_filled;
 
-    hop++;
-  }
+//     hop++;
+//   }
 
-  //if (thread_idx == 0) {
-    //printf ("additions_filled %d start %d\n", additions_filled, start);
-  //}
-  additions_sizes[thread_idx] = additions_filled - start;
-}
+//   //if (thread_idx == 0) {
+//     //printf ("additions_filled %d start %d\n", additions_filled, start);
+//   //}
+//   additions_sizes[thread_idx] = additions_filled - start;
+// }
 
 std::vector <std::vector <VertexID>> n_hop_cpu (CSR* csr, const int N_HOPS)
 {
@@ -1253,7 +936,7 @@ __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* void_csr
         new_edges += map_orig_embedding_to_additions_prev_iter [2*(v-start_vertex)+1];
       }
       else
-        new_edges += edges_to_prev_iter_additions[start_edge_idx - csr->edge_start_idx];
+        new_edges += edges_to_prev_iter_additions[start_edge_idx - csr->first_edge_idx];
 
       start_edge_idx++;
     }
@@ -1537,16 +1220,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr
     }
 
     __syncwarp ();
-    __syncthreads ();
-    // TODO: if working on last hop of the  vertex then set start to end
-    // _curr_vertex_id = thread_idx_to_load[2*threadIdx.x];
-    // if (_curr_vertex_id != -1 && vertices[_curr_vertex_id] < gridDim.x) {
-    //   int v = vertices[_curr_vertex_id];
-    //   previous_stage_filled_range[2*v] = previous_step_end[_curr_vertex_id];
-    // }
-    __syncthreads ();
-
-    //warp_hop_mask = get_warp_mask_and_participating_threads (last_vertex_id != -1 && last_vertex_id_hops_remaining != -1, participating_threads, first_active_thread);
     
     if (last_hop_vertex_id != -1 && last_hop_vertex_roots_remaining != -1) {
       int hop_vertex = vertices[last_hop_vertex_id];
@@ -1555,45 +1228,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr
       
       __syncthreads ();
       
-      //assert (last_vertex_id_hops_done + last_vertex_id_hops_remaining == hops_so_far);
-
-#if 0
-      for (int i = 0; i < last_vertex_id_hops_remaining/(blockDim.x/warpSize) + 1; i++) {
-        int hop_idx = i*(blockDim.x/warpSize) + warpid;
-        if (hop_idx >= last_vertex_id_hops_remaining) {
-          continue;
-        }
-        
-        int hop_vertex = embeddings_additions[start + previous_step_start + hops_done + hop_idx];
-        int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
-        const int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
-
-        __syncwarp (warp_hop_mask);
-
-        int e = -1;
-        if (end_edge_idx != -1) {
-          if (laneid == first_active_thread) {
-            e = atomicAdd (end, end_edge_idx - start_edge_idx + 1);
-          }
-        }
-
-        for (int th = 0; th < participating_threads; th++) {
-          int target_thread_id = warpid*warpSize + th;
-          
-          if (end_edge_idx != -1) {
-            int _e = __shfl_sync (warp_hop_mask, e, first_active_thread, warpSize);
-            assert (_e != -1);
-            int iter = 0;
-            while (start_edge_idx + laneid <= end_edge_idx) {
-              VertexID edge = csr->get_edges ()[start_edge_idx + laneid];
-              embeddings_additions[start + _e + iter*participating_threads + laneid] = edge;
-              start_edge_idx += participating_threads;
-              iter++;
-            }
-          }
-        }
-      }
-#else
       for (int i = 0; i < last_hop_vertex_roots_remaining/blockDim.x + 1; i++) {
         int root_idx = i*blockDim.x + threadIdx.x;
         if (root_idx >= last_hop_vertex_roots_remaining) {
@@ -1623,8 +1257,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr
           }
         }
       }
-#endif
-
       __syncthreads ();
     }
   } else {
@@ -1791,8 +1423,8 @@ void copy_partition_to_gpu (CSRPartition& partition, CSRPartition*& device_csr, 
   EXECUTE_CUDA_FUNC (cudaMemcpy (device_vertex_array, partition.vertices, sizeof (CSR::Vertex)*partition.get_n_vertices (), cudaMemcpyHostToDevice));
   EXECUTE_CUDA_FUNC (cudaMemcpy (device_edge_array, partition.edges, sizeof (CSR::Edge)*partition.get_n_edges (), cudaMemcpyHostToDevice));
 
-  CSRPartition device_csr_partition_value = CSRPartition (partition.start_vertex_id, partition.end_vertex_id, 
-                                                          partition.edge_start_idx, partition.edge_end_idx, 
+  CSRPartition device_csr_partition_value = CSRPartition (partition.first_vertex_id, partition.last_vertex_id, 
+                                                          partition.first_edge_idx, partition.last_edge_idx, 
                                                           device_vertex_array, device_edge_array);
   EXECUTE_CUDA_FUNC (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
 }
@@ -1802,8 +1434,8 @@ int get_common_vertex_with_previous_partition (std::vector<CSRPartition> csr_par
   if (partition_idx <= 0)
     return -1;
 
-  if (csr_partitions[partition_idx].start_vertex_id == csr_partitions[partition_idx - 1].end_vertex_id) {
-    return csr_partitions[partition_idx].start_vertex_id;
+  if (csr_partitions[partition_idx].first_vertex_id == csr_partitions[partition_idx - 1].last_vertex_id) {
+    return csr_partitions[partition_idx].first_vertex_id;
   }
 
   return -1;
@@ -1815,8 +1447,8 @@ int get_common_vertex_with_next_partition (std::vector<CSRPartition> csr_partiti
   if (partition_idx >= csr_partitions.size () - 1)
     return -1;
 
-  if (csr_partitions[partition_idx].end_vertex_id == csr_partitions[partition_idx + 1].start_vertex_id) {
-    return csr_partitions[partition_idx].end_vertex_id;
+  if (csr_partitions[partition_idx].last_vertex_id == csr_partitions[partition_idx + 1].first_vertex_id) {
+    return csr_partitions[partition_idx].last_vertex_id;
   }
 
   return -1;
@@ -1862,9 +1494,6 @@ size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID,
     for (int i = 0; i < host_src_to_roots[v].size (); i++) {
       host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
       host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
-      if (v == 0) {
-        printf ("v %d i %d s %d\n", v, std::get<1> (host_src_to_roots[v][i]), host_src_to_roots[v].size ());
-      }
     }
 
     host_src_to_roots_positions [2*v] = iter;
@@ -2099,9 +1728,9 @@ int main (int argc, char* argv[])
 
   for (int id = 0; id < csr_partitions.size (); id++) {
     auto part = csr_partitions[id];
-    std::cout << id << " " << part.edge_end_idx << " " << part.edge_start_idx << " " << part.start_vertex_id << " " << part.end_vertex_id << std::endl;
-    if (part.edge_end_idx != -1) {
-      sum_partition_edges += part.edge_end_idx - part.edge_start_idx + 1;
+    std::cout << id << " " << part.last_edge_idx << " " << part.first_edge_idx << " " << part.first_vertex_id << " " << part.last_vertex_id << std::endl;
+    if (part.last_edge_idx != -1) {
+      sum_partition_edges += part.last_edge_idx - part.first_edge_idx + 1;
     }
   }
 
@@ -2112,10 +1741,10 @@ int main (int argc, char* argv[])
 
   int sum_vertices = 0;
   for (int p = 0; p < csr_partitions.size (); p++) {
-    if (p > 0 && csr_partitions[p].start_vertex_id == csr_partitions[p-1].end_vertex_id) {
-      sum_vertices += csr_partitions[p].end_vertex_id - (csr_partitions[p].start_vertex_id);
+    if (p > 0 && csr_partitions[p].first_vertex_id == csr_partitions[p-1].last_vertex_id) {
+      sum_vertices += csr_partitions[p].last_vertex_id - (csr_partitions[p].first_vertex_id);
     } else {
-      sum_vertices += csr_partitions[p].end_vertex_id - csr_partitions[p].start_vertex_id + 1;
+      sum_vertices += csr_partitions[p].last_vertex_id - csr_partitions[p].first_vertex_id + 1;
     }
   }
 
@@ -2126,13 +1755,13 @@ int main (int argc, char* argv[])
   int target_vertices_3025 = 0;
   /*Check if union of all partitions is equal to the graph*/
   for (int p = 0; p < csr_partitions.size (); p++) {
-    int u = csr_partitions[p].start_vertex_id;
-    int v = csr_partitions[p].end_vertex_id;
-    int end = csr_partitions[p].edge_end_idx;
-    int start = csr_partitions[p].edge_start_idx;
+    int u = csr_partitions[p].first_vertex_id;
+    int v = csr_partitions[p].last_vertex_id;
+    int end = csr_partitions[p].last_edge_idx;
+    int start = csr_partitions[p].first_edge_idx;
     for (int vertex = u; vertex <= v; vertex++) {
       int _start = csr->get_start_edge_idx (vertex);
-      if (p > 0 && vertex == csr_partitions[p-1].end_vertex_id) {
+      if (p > 0 && vertex == csr_partitions[p-1].last_vertex_id) {
         _start = start;
       }
       int _end = csr->get_end_edge_idx (vertex);
@@ -2255,7 +1884,7 @@ int main (int argc, char* argv[])
       EXECUTE_CUDA_FUNC (cudaMalloc (&device_map_vertex_to_additions[hop][partition_idx], 
                                      partition_map_vertex_to_additions_size*sizeof (VertexID)));
 
-      std::cout << "Calling cuda kernel for hop: " << hop << " partition: " << partition_idx << " vertex = [" << csr_partitions[partition_idx].start_vertex_id << ", "<< csr_partitions[partition_idx].end_vertex_id << "]" << std::endl;
+      std::cout << "Calling cuda kernel for hop: " << hop << " partition: " << partition_idx << " vertex = [" << csr_partitions[partition_idx].first_vertex_id << ", "<< csr_partitions[partition_idx].last_vertex_id << "]" << std::endl;
 
       int N_THREADS = 128;
       int N_BLOCKS = (partition.get_n_vertices ()%128 == 0) ? partition.get_n_vertices ()/128 : partition.get_n_vertices ()/128 + 1;
@@ -2268,11 +1897,11 @@ int main (int argc, char* argv[])
       if (hop > 0) {
         int* edges_to_prev_iter_additions;
         edges_to_prev_iter_additions = new int[partition.get_n_edges ()];
-        for (int e = partition.edge_start_idx; e <= partition.edge_end_idx; e++) {
+        for (int e = partition.first_edge_idx; e <= partition.last_edge_idx; e++) {
           VertexID v = partition.get_edge (e);
           if (!partition.is_vertex_in_partition(v) || 
               v == vertex_with_next_partition || v == vertex_with_prev_partition) {
-            edges_to_prev_iter_additions[e - partition.edge_start_idx] = final_map_vertex_to_additions[hop-1][0][2*v + 1];
+            edges_to_prev_iter_additions[e - partition.first_edge_idx] = final_map_vertex_to_additions[hop-1][0][2*v + 1];
           }
         }
 
@@ -2285,13 +1914,13 @@ int main (int argc, char* argv[])
       }
 
       if (hop == 0) {
-        get_max_lengths_for_vertices_first_iter <<<N_BLOCKS, N_THREADS>>> (device_csr, partition.start_vertex_id, 
-                                                                           partition.end_vertex_id,
+        get_max_lengths_for_vertices_first_iter <<<N_BLOCKS, N_THREADS>>> (device_csr, partition.first_vertex_id, 
+                                                                           partition.last_vertex_id,
                                                                            device_max_neighbors_iter,
                                                                            device_map_vertex_to_additions[hop][partition_idx]);
       } else {
-        get_max_lengths_for_vertices_single_step <<<N_BLOCKS, N_THREADS>>> (device_csr, partition.start_vertex_id, 
-                                                                            partition.end_vertex_id,
+        get_max_lengths_for_vertices_single_step <<<N_BLOCKS, N_THREADS>>> (device_csr, partition.first_vertex_id, 
+                                                                            partition.last_vertex_id,
                                                                             device_max_neighbors_iter,
                                                                             device_map_vertex_to_additions[hop-1][partition_idx],
                                                                             device_map_vertex_to_additions[hop][partition_idx],
@@ -2327,8 +1956,8 @@ int main (int argc, char* argv[])
         int common_vertex_new_additions = partition_map_vertex_to_additions[2*(common_vertex - common_vertex) + 1];
         int common_vertex_start_pos = final_map_vertex_to_additions[hop][0][2*common_vertex];
 
-        for (int v = csr_partitions[partition_idx - 1].start_vertex_id; 
-             v < csr_partitions[partition_idx - 1].end_vertex_id; v++) {
+        for (int v = csr_partitions[partition_idx - 1].first_vertex_id; 
+             v < csr_partitions[partition_idx - 1].last_vertex_id; v++) {
           if (final_map_vertex_to_additions[hop][0][2*v] > common_vertex_start_pos) {
             final_map_vertex_to_additions[hop][0][2*v] += common_vertex_new_additions;
           }
@@ -2337,8 +1966,8 @@ int main (int argc, char* argv[])
         int start_pos = 0;
         //TODO: start_pos is sum of all embedding additions so far
         int max_v = 0;
-        for (int v = csr_partitions[partition_idx - 1].start_vertex_id; 
-             v <= csr_partitions[partition_idx - 1].end_vertex_id; v++) {
+        for (int v = csr_partitions[partition_idx - 1].first_vertex_id; 
+             v <= csr_partitions[partition_idx - 1].last_vertex_id; v++) {
           int p = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
           if (p > start_pos) {
             start_pos = p;
@@ -2348,7 +1977,7 @@ int main (int argc, char* argv[])
         
         assert (start_pos <= (num_neighbors + common_vertex_new_additions));
         for (int v = 1; v < csr_partitions[partition_idx].get_n_vertices (); v++) {
-          int vertex = csr_partitions[partition_idx].start_vertex_id + v;
+          int vertex = csr_partitions[partition_idx].first_vertex_id + v;
           assert (partition_map_vertex_to_additions[2*v] >= 0);
           int vertex_start_pos = partition_map_vertex_to_additions[2*v];
           if (vertex_start_pos > partition_map_vertex_to_additions[0]) {
@@ -2362,14 +1991,14 @@ int main (int argc, char* argv[])
         final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size - 2;
       } else {
         int start_pos = 0;
-        for (int v = csr_partitions[partition_idx - 1].start_vertex_id; 
-             v <= csr_partitions[partition_idx - 1].end_vertex_id; v++) {
+        for (int v = csr_partitions[partition_idx - 1].first_vertex_id; 
+             v <= csr_partitions[partition_idx - 1].last_vertex_id; v++) {
           int pos = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
           start_pos = max (start_pos, pos);
         }
         assert (start_pos <= num_neighbors);
         for (int v = 0; v < csr_partitions[partition_idx].get_n_vertices (); v++) {
-          int vertex = csr_partitions[partition_idx].start_vertex_id + v;
+          int vertex = csr_partitions[partition_idx].first_vertex_id + v;
           final_map_vertex_to_additions[hop][0][2*vertex] = start_pos + partition_map_vertex_to_additions[2*v];
           final_map_vertex_to_additions[hop][0][2*vertex + 1] = partition_map_vertex_to_additions[2*v + 1];
         }
@@ -2415,8 +2044,10 @@ int main (int argc, char* argv[])
 
     EXECUTE_CUDA_FUNC (cudaMemset (device_additions_sizes, 0, sizeof(VertexID)*csr->get_n_vertices ()*2));
     EXECUTE_CUDA_FUNC (cudaMalloc (&device_final_map_vertex_to_additions, map_vertex_to_additions_size));
-    std::cout << "map_vertex_to_additions_size " << map_vertex_to_additions_size << " final_map_vertex_to_additions_iter " << final_map_vertex_to_additions_iter << std::endl;
-    EXECUTE_CUDA_FUNC (cudaMemcpy (device_final_map_vertex_to_additions, &final_map_vertex_to_additions[hop][0][0], map_vertex_to_additions_size, cudaMemcpyHostToDevice));
+    EXECUTE_CUDA_FUNC (cudaMemcpy (device_final_map_vertex_to_additions, 
+                                   &final_map_vertex_to_additions[hop][0][0],
+                                   map_vertex_to_additions_size,
+                                   cudaMemcpyHostToDevice));
 
     double t1 = convertTimeValToDouble(getTimeOfDay ());
     run_hop_parallel_single_step <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr1,  
