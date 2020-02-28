@@ -26,4 +26,9 @@ struct timeval getTimeOfDay ()
   return _time;
 }
 
+__device__ __host__ bool intervals_intersect (int x1, int x2, int y1, int y2)
+{
+  return x1 <= y2 && y1 <= x2;
+}
+
 #endif

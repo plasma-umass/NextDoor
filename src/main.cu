@@ -585,11 +585,6 @@ __device__ int n_edges_to_warp_size (const int n_edges)
     return 32;
 }
 
-__device__ __host__ bool intervals_intersect (int x1, int x2, int y1, int y2)
-{
-  return x1 <= y2 && y1 <= x2;
-}
-
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 #undef USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
@@ -678,11 +673,8 @@ __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* void_csr
   unsigned long long int additions_start_iter = atomicAdd (embeddings_additions_iter, new_edges);
   map_orig_embedding_to_additions_next_iter[2*thread_idx] = additions_start_iter;
   map_orig_embedding_to_additions_next_iter[2*thread_idx+1] = new_edges;
-
-  if (vertex == 3025) {
-    printf ("GPU: 3025 new edges %d\n", new_edges);
-  }
 }
+
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr,
   void* void_embeddings_additions, 
   size_t num_neighbors,
@@ -1186,140 +1178,12 @@ int get_common_vertex_with_next_partition (std::vector<CSRPartition> csr_partiti
   return -1;
 }
 
-size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
-                                    CSR* csr, int hop, int*** final_map_vertex_to_additions, int** additions_sizes, 
-                                    VertexID** neighbors, int* neighbors_sizes,
-                                    int*& device_src_to_roots, int*& device_src_to_root_positions)
+void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions, const size_t effective_partition_size)
 {
-  //TODO: turn this into a function that sets the device pointer, returns the size, and frees the allocated arrays
-  int* host_src_to_roots_positions = nullptr;
-  int *host_src_to_roots_linear = nullptr;
-
-  double t1 = convertTimeValToDouble(getTimeOfDay ());
-  host_src_to_roots.clear ();
-  //Create per hop vertex data
-  for (int v = 0; v < csr->get_n_vertices (); v++) {
-    host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
-  }
-  for (int v = 0; v < csr->get_n_vertices (); v++) {
-    int start = final_map_vertex_to_additions[hop-1][0][2*v];
-    int end   = additions_sizes[hop-1][2*v + 1];
-    for (int i = 0; i < end; i++) {
-      int src = neighbors[hop-1][start + i];
-      assert (start + i < neighbors_sizes[hop-1]/sizeof(VertexID));
-      assert (src >= 0 && src < N);
-      host_src_to_roots[src].push_back (std::make_pair (v, start + i));
-    }
-  }
-
-  int host_hop_vertex_data_size = 0;
-
-  for (int v = 0; v < csr->get_n_vertices (); v++) {
-    host_hop_vertex_data_size += host_src_to_roots[v].size ();
-  }
-
-  host_src_to_roots_linear = new int [2*host_hop_vertex_data_size];
-  host_src_to_roots_positions = new int[2*csr->get_n_vertices ()];
-  int iter = 0;
-
-  for (int v = 0; v < csr->get_n_vertices (); v++) {
-    for (int i = 0; i < host_src_to_roots[v].size (); i++) {
-      host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
-      host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
-    }
-
-    host_src_to_roots_positions [2*v] = iter;
-    host_src_to_roots_positions [2*v + 1] = host_src_to_roots[v].size ();
-    iter += 2*host_src_to_roots[v].size ();
-  }
-
-  double t2 = convertTimeValToDouble(getTimeOfDay ());
-        
-  std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
-  EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_roots, 
-                                  2*host_hop_vertex_data_size*sizeof (int)));
-  EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_roots, 
-                                  host_src_to_roots_linear, 
-                                  2*host_hop_vertex_data_size*sizeof (int), 
-                                  cudaMemcpyHostToDevice));
-  EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_root_positions, 
-                                  2*csr->get_n_vertices()*sizeof (int)));
-  EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_root_positions,  
-                                  host_src_to_roots_positions, 
-                                  2*csr->get_n_vertices()*sizeof (int), 
-                                  cudaMemcpyHostToDevice));
-  delete host_src_to_roots_linear;
-  delete host_src_to_roots_positions;
-
-  return host_hop_vertex_data_size;
-}
-
-int main (int argc, char* argv[])
-{
-  std::vector<Vertex> vertices;
-  int n_edges = 0;
-
-  if (argc < 2) {
-    std::cout << "Arguments: graph-file" << std::endl;
-    return -1;
-  }
-
-  char* graph_file = argv[1];
-  FILE* fp = fopen (graph_file, "r+");
-  if (fp == nullptr) {
-    std::cout << "File '" << graph_file << "' not found" << std::endl;
-    return 1;
-  }
-
-  Graph graph (fp);
-
-  fclose (fp);
-
-  std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
-  std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
-
-
-  CSR* csr = new CSR(N, N_EDGES);
-  std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
-  csr_from_graph (csr, graph);
-
-  size_t global_mem_size = 15*1024*1024*1024UL;
-  #define PINNED_MEMORY
-  #ifdef PINNED_MEMORY
-    char* global_mem_ptr;
-    cudaError_t malloc_error = cudaMallocHost ((void**)&global_mem_ptr, global_mem_size);
-    std::cout << "Malloc error: " << cudaGetErrorString (malloc_error) << std::endl;
-    assert (malloc_error == cudaSuccess);
-  #else
-    char* global_mem_ptr = new char[global_mem_size];
-  #endif
-
-  std::cout << "Pinned Memory Allocated" << std::endl;
-  GlobalMemAllocator::initialize (global_mem_ptr, global_mem_size);
-
-  std::vector<VectorVertexEmbedding> initial_embeddings = get_initial_embedding_vector (csr);
-  std::vector<VectorVertexEmbedding> output;
-  size_t new_embeddings_size = 0;
-
-  std::vector<VectorVertexEmbedding>& input_embeddings = initial_embeddings;
-  std::vector<VectorVertexEmbedding> iter_1_embeddings;
-  {
-    run_single_step_initial_vector (input_embeddings, csr, output, iter_1_embeddings);
-    input_embeddings = iter_1_embeddings;
-  }
-
-  double total_stream_time = 0;
-
-  const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
-  double_t kernelTotalTime = 0.0;
-  std::vector<CSRPartition> csr_partitions;
-
-#ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM 
   std::vector<std::tuple<VertexID, VertexID, int, int>> vertex_partition_positions_vector;
 
   //Create Partitions.
   int u = 0;
-  const size_t effective_partition_size = GRAPH_PARTITION_SIZE - sizeof (CSRPartition);
   int partition_edge_start_idx = 0;
 
   while (u < csr->get_n_vertices ()) {
@@ -1486,29 +1350,150 @@ int main (int argc, char* argv[])
         t++;
       }
     }
-
-    std::cout << "target_vertices_3025 from partitions " << target_vertices_3025 << " from graph "<<t << std::endl;
   }
 
   assert (equal_edges == N_EDGES);  
+  /********Checking DONE*******/
+}
+
+
+size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
+                                    CSR* csr, int hop, int*** final_map_vertex_to_additions, int** additions_sizes, 
+                                    VertexID** neighbors, int* neighbors_sizes,
+                                    int*& device_src_to_roots, int*& device_src_to_root_positions)
+{
+  int* host_src_to_roots_positions = nullptr;
+  int *host_src_to_roots_linear = nullptr;
+
+  double t1 = convertTimeValToDouble(getTimeOfDay ());
+  host_src_to_roots.clear ();
+  //Create per hop vertex data
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
+  }
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    int start = final_map_vertex_to_additions[hop-1][0][2*v];
+    int end   = additions_sizes[hop-1][2*v + 1];
+    for (int i = 0; i < end; i++) {
+      int src = neighbors[hop-1][start + i];
+      assert (start + i < neighbors_sizes[hop-1]/sizeof(VertexID));
+      assert (src >= 0 && src < N);
+      host_src_to_roots[src].push_back (std::make_pair (v, start + i));
+    }
+  }
+
+  int host_hop_vertex_data_size = 0;
+
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    host_hop_vertex_data_size += host_src_to_roots[v].size ();
+  }
+
+  host_src_to_roots_linear = new int [2*host_hop_vertex_data_size];
+  host_src_to_roots_positions = new int[2*csr->get_n_vertices ()];
+  int iter = 0;
+
+  for (int v = 0; v < csr->get_n_vertices (); v++) {
+    for (int i = 0; i < host_src_to_roots[v].size (); i++) {
+      host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
+      host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
+    }
+
+    host_src_to_roots_positions [2*v] = iter;
+    host_src_to_roots_positions [2*v + 1] = host_src_to_roots[v].size ();
+    iter += 2*host_src_to_roots[v].size ();
+  }
+
+  double t2 = convertTimeValToDouble(getTimeOfDay ());
+        
+  std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_roots, 
+                                  2*host_hop_vertex_data_size*sizeof (int)));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_roots, 
+                                  host_src_to_roots_linear, 
+                                  2*host_hop_vertex_data_size*sizeof (int), 
+                                  cudaMemcpyHostToDevice));
+  EXECUTE_CUDA_FUNC (cudaMalloc (&device_src_to_root_positions, 
+                                  2*csr->get_n_vertices()*sizeof (int)));
+  EXECUTE_CUDA_FUNC (cudaMemcpy (device_src_to_root_positions,  
+                                  host_src_to_roots_positions, 
+                                  2*csr->get_n_vertices()*sizeof (int), 
+                                  cudaMemcpyHostToDevice));
+  delete host_src_to_roots_linear;
+  delete host_src_to_roots_positions;
+
+  return host_hop_vertex_data_size;
+}
+
+int main (int argc, char* argv[])
+{
+  std::vector<Vertex> vertices;
+  int n_edges = 0;
+
+  if (argc < 2) {
+    std::cout << "Arguments: graph-file" << std::endl;
+    return -1;
+  }
+
+  char* graph_file = argv[1];
+  FILE* fp = fopen (graph_file, "r+");
+  if (fp == nullptr) {
+    std::cout << "File '" << graph_file << "' not found" << std::endl;
+    return 1;
+  }
+
+  Graph graph (fp);
+
+  fclose (fp);
+
+  std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
+  std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
+
+
+  CSR* csr = new CSR(N, N_EDGES);
+  std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
+  csr_from_graph (csr, graph);
+
+  size_t global_mem_size = 15*1024*1024*1024UL;
+  #define PINNED_MEMORY
+  #ifdef PINNED_MEMORY
+    char* global_mem_ptr;
+    cudaError_t malloc_error = cudaMallocHost ((void**)&global_mem_ptr, global_mem_size);
+    std::cout << "Malloc error: " << cudaGetErrorString (malloc_error) << std::endl;
+    assert (malloc_error == cudaSuccess);
+  #else
+    char* global_mem_ptr = new char[global_mem_size];
+  #endif
+
+  std::cout << "Pinned Memory Allocated" << std::endl;
+  GlobalMemAllocator::initialize (global_mem_ptr, global_mem_size);
+
+  std::vector<VectorVertexEmbedding> initial_embeddings = get_initial_embedding_vector (csr);
+  std::vector<VectorVertexEmbedding> output;
+  size_t new_embeddings_size = 0;
+
+  std::vector<VectorVertexEmbedding>& input_embeddings = initial_embeddings;
+  std::vector<VectorVertexEmbedding> iter_1_embeddings;
+  {
+    run_single_step_initial_vector (input_embeddings, csr, output, iter_1_embeddings);
+    input_embeddings = iter_1_embeddings;
+  }
+
+  double total_stream_time = 0;
+
+  const size_t max_embedding_size_per_iter = (12000000/THREAD_BLOCK_SIZE)*THREAD_BLOCK_SIZE;
+  double_t kernelTotalTime = 0.0;
+  std::vector<CSRPartition> csr_partitions;
+
+#ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM 
+  create_csr_partitions (csr, csr_partitions, GRAPH_PARTITION_SIZE - sizeof (CSRPartition));
 #else
   CSRPartition full_partition = CSRPartition (0, csr->get_n_vertices () - 1, 0, csr->get_n_edges () - 1, 
                                               csr->get_vertices (), csr->get_edges ());
   csr_partitions.push_back (full_partition);
 #endif
-  /********Checking DONE*******/
-
-  /*Code for preparing additions kernels*/
-  uint64_t vertices_in_embedding = input_embeddings[0].get_n_vertices ();
-  uint64_t global_mem_start_idx = input_embeddings[0].get_array_start_idx ();
-  uint64_t global_mem_end_idx = input_embeddings[input_embeddings.size () - 1].get_array_start_idx () + input_embeddings[input_embeddings.size () - 1].get_n_vertices ()*sizeof (VertexID);
 
   const int N_HOPS = 2;
-  // std::cout << "-2   " << input_embeddings[input_embeddings.size () - 2].get_array_start_idx () + input_embeddings[input_embeddings.size () - 2].get_n_vertices ()*sizeof (VertexID) << std::endl;
-  std::cout << "Number of input embeddings " << input_embeddings.size() << std::endl;
-  std::cout << "global_mem_start_idx " << global_mem_start_idx << " global_mem_end_idx " << global_mem_end_idx << " allocated " << GlobalMemAllocator::allocated () << std::endl;
-  std::cout << "vertices_in_embedding " << vertices_in_embedding << std::endl;
-  assert (global_mem_end_idx == GlobalMemAllocator::allocated ());
+  
   CSRPartition* device_csr; //Graph on GPU
   CSR::Vertex* device_vertex_array;
   CSR::Edge* device_edge_array;
