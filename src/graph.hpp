@@ -3,6 +3,8 @@
 #include <iostream>
 #include <assert.h>
 #include <math.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #ifndef __GRAPH_HPP__
 #define __GRAPH_HPP__
@@ -26,6 +28,22 @@ public:
   int get_label () {return label;}
   void add_edge (int vertexID) {edges.push_back (vertexID);}
   void sort_edges () {std::sort (edges.begin(), edges.end ());}
+  void update_edges (std::unordered_map <int, int>& prev_to_new_ids) 
+  {
+    for (int i = 0; i < edges.size (); i++) {
+      edges[i] = prev_to_new_ids[edges[i]];
+    }
+
+    sort_edges ();
+  }
+
+  void remove_duplicate_edges () 
+  {
+    std::unordered_set <int> set_edges = std::unordered_set<int> (edges.begin(), edges.end ());
+    edges = std::vector<int> (set_edges.begin (), set_edges.end ());
+    //sort_edges ();
+  }
+
   std::vector <int>& get_edges () {return edges;}
   void print (std::ostream& os)
   {
@@ -92,13 +110,33 @@ public:
 
       } while (bytes_read > 0);
 
+      vertex.remove_duplicate_edges ();
       vertex.sort_edges ();
-
       vertices.push_back (vertex);
+    }
+
+
+    std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
+
+    std::unordered_map <int, int> previous_id_to_new_ids;
+    for (int i = 0; i < vertices.size (); i++) {
+      previous_id_to_new_ids[vertices[i].get_id ()] = i;
+      vertices[i].set_id (i);
+    }
+
+    for (int i = 0; i < vertices.size (); i++) {
+      vertices[i].update_edges (previous_id_to_new_ids);
     }
   }
 
   const std::vector<Vertex>& get_vertices () {return vertices;}
   int get_n_edges () {return n_edges;}
+
+  void print (std::ostream& os) 
+  {
+    for (auto v : vertices) {
+      v.print (os);
+    }
+  }
 };
 #endif

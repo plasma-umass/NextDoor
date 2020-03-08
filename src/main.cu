@@ -17,8 +17,11 @@
 //const int N = 3312;
 //const int N_EDGES = 9074;
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
+//rmat.graph
+const int N = 1024;
+const int N_EDGES = 29381;
 typedef uint32_t VertexID;
 
 #include "csr.hpp"
@@ -26,15 +29,10 @@ typedef uint32_t VertexID;
 
 //#define USE_FIXED_THREADS
 #define MAX_CUDA_THREADS (96*96)
-#define THREAD_BLOCK_SIZE 256
+#define THREAD_BLOCK_SIZE 1024
 #define WARP_SIZE 32
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING false
 
-#define ENABLE_GRAPH_PARTITION_IN_SHARED_MEM
-#if defined (ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX)  && !defined (EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK) 
-  #error "For ALL_THREAD_BLOCK_EMBEDDINGS_IN_SHARED_MEM_PER_VERTEX, EMBEDDING_PER_PARTITIONS_IN_THREADBLOCK should be defined "
-#endif
-#define USE_EMBEDDING_IN_LOCAL_MEM
 //#define PROCESS_EMBEDDINGS_PER_VERTEX
 #define GPU_QUERY_WAIT_TIME 1000UL
 
@@ -67,7 +65,7 @@ typedef uint8_t SharedMemElem;
 
 //#define ENABLE_NEW_EMBEDDINGS_ON_THE_FLY_COPYING true
 
-const int N_THREADS = 256;
+const int N_THREADS = 1024;
 
 class GlobalMemAllocator
 {
@@ -439,9 +437,9 @@ __device__ int n_edges_to_warp_size (const int n_edges)
 }
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
-#undef USE_PARTITION_FOR_SHMEM
+#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
-#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+//#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
 __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
                                                           int start_vertex, int end_vertex,
@@ -592,9 +590,11 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr
         int start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
         const int end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
         const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+        int root_vertices = map_vertex_to_hop_vertex_data[2*vertices[n_vertex_load] + 1];
 #ifdef USE_PARTITION_FOR_SHMEM
-        if (hop_vertices_in_shared_mem_size < MAX_HOP_VERTICES_IN_SH_MEM && n_edges != 0 && 
-            n_edges + edges_in_shared_mem < MAX_EDGES) {
+        if (hop_vertices_in_shared_mem_size < MAX_HOP_VERTICES_IN_SH_MEM &&
+            n_edges != 0 && n_edges + edges_in_shared_mem < MAX_EDGES && 
+            root_vertices != 0) {
           int v = vertices[n_vertex_load];
           hop_vertex_in_shared_mem[hop_vertices_in_shared_mem_size] = v;
           edges_in_shared_mem += n_edges;
@@ -602,7 +602,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr
         }
 #endif
         int shfl_warp_size = n_edges_to_warp_size(n_edges);
-        int root_vertices = map_vertex_to_hop_vertex_data[2*vertices[n_vertex_load] + 1];
 
         if (root_vertices != 0 and n_edges != 0) {
           int root_vertex_idx;
@@ -731,6 +730,9 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSR* void_csr
             int iter = 0;
             int _start_edge_idx = hop_vertices_in_shared_mem_start_edge_idx[_curr_vertex_id];
             int _end_edge_idx = hop_vertices_in_shared_mem_end_edge_idx[_curr_vertex_id];
+            if (!(hop_vertex == hop_vertex_in_shared_mem[_curr_vertex_id]))
+              printf ("hop_vertex %d hop_vertex_in_shared_mem[%d] %d sz %d\n", hop_vertex, _curr_vertex_id, hop_vertex_in_shared_mem[_curr_vertex_id], hop_vertices_in_shared_mem_size);
+            assert (hop_vertex_in_shared_mem[_curr_vertex_id] != -1);
             assert (hop_vertex == hop_vertex_in_shared_mem[_curr_vertex_id]);
             assert (n_edges == (_end_edge_idx - _start_edge_idx) + 1);
             while (_start_edge_idx + laneid%shfl_warp_size <= _end_edge_idx) {
@@ -1171,7 +1173,7 @@ int main (int argc, char* argv[])
   Graph graph (fp);
 
   fclose (fp);
-
+  //graph.print (std::cout);
   std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
   std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
 
@@ -1485,6 +1487,7 @@ int main (int argc, char* argv[])
   }
   
   std::cout << "Getting embeddings from GPU" << std::endl;
+  int total_neighbors[N_HOPS] = {0};
   std::vector <VectorVertexEmbedding> produced_embeddings;
   for (int input_embedding_idx = 0; input_embedding_idx < csr->get_n_vertices (); input_embedding_idx++) {
     size_t produced_embedding_size = 0;
@@ -1492,6 +1495,7 @@ int main (int argc, char* argv[])
       VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
       int n_additions = additions_sizes[hop][2*input_embedding_idx + 1];
       produced_embedding_size += n_additions;
+      total_neighbors[hop] += n_additions;
     }
     //std::cout << " input_embedding_idx " << input_embedding_idx << std::endl;
     int copied = 0;
@@ -1504,11 +1508,6 @@ int main (int argc, char* argv[])
       VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
       memcpy (ptr + copied, &neighbors[hop][start_idx], sizeof(VertexID)*n_additions);
 
-      if (input_embedding_idx == 3030) {
-        for (int ii = start_idx; ii < n_additions + start_idx; ii++) {
-          std::cout << neighbors[hop][ii] << std::endl;
-        }
-      }
       copied += n_additions;
     }
 
@@ -1519,6 +1518,7 @@ int main (int argc, char* argv[])
   cudaFree (device_csr);
 
   std::cout << "Generating CPU Embeddings:" << std::endl;
+  std::cout << "Total 2-hop neighbors " << total_neighbors[1] << std::endl;
   double cpu_t1 = convertTimeValToDouble (getTimeOfDay ());
   std::vector<std::vector<VertexID>> hops = n_hop_cpu (csr, N_HOPS);
   double cpu_t2 = convertTimeValToDouble (getTimeOfDay ());
