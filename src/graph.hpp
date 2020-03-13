@@ -110,23 +110,23 @@ public:
 
       } while (bytes_read > 0);
 
-      vertex.remove_duplicate_edges ();
+      //vertex.remove_duplicate_edges ();
+
       vertex.sort_edges ();
       vertices.push_back (vertex);
     }
 
+    // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
 
-    std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
+    // std::unordered_map <int, int> previous_id_to_new_ids;
+    // for (int i = 0; i < vertices.size (); i++) {
+    //   previous_id_to_new_ids[vertices[i].get_id ()] = i;
+    //   vertices[i].set_id (i);
+    // }
 
-    std::unordered_map <int, int> previous_id_to_new_ids;
-    for (int i = 0; i < vertices.size (); i++) {
-      previous_id_to_new_ids[vertices[i].get_id ()] = i;
-      vertices[i].set_id (i);
-    }
-
-    for (int i = 0; i < vertices.size (); i++) {
-      vertices[i].update_edges (previous_id_to_new_ids);
-    }
+    // for (int i = 0; i < vertices.size (); i++) {
+    //   vertices[i].update_edges (previous_id_to_new_ids);
+    // }
   }
 
   const std::vector<Vertex>& get_vertices () {return vertices;}
