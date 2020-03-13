@@ -55,7 +55,7 @@ public:
     n_edges = N_EDGES;
   }
 
-  void print (std::ostream& os)
+  void print (std::ostream& os) const 
   {
     for (int i = 0; i < n_vertices; i++) {
       os << vertices[i].id << " " << vertices[i].label << " ";
@@ -68,7 +68,7 @@ public:
   }
 
   __host__ __device__
-  int get_start_edge_idx (int vertex_id)
+  int get_start_edge_idx (int vertex_id) const 
   {
     if (!(vertex_id < n_vertices && 0 <= vertex_id)) {
       printf ("vertex_id %d, n_vertices %d\n", vertex_id, n_vertices);
@@ -78,14 +78,14 @@ public:
   }
 
   __host__ __device__
-  int get_end_edge_idx (int vertex_id)
+  int get_end_edge_idx (int vertex_id) const 
   {
     assert (vertex_id < n_vertices && 0 <= vertex_id);
     return vertices[vertex_id].end_edge_id;
   }
 
   __host__ __device__
-  bool has_edge (int u, int v)
+  bool has_edge (int u, int v) const 
   {
     //TODO: Since graph is sorted, do this using binary search
     for (int e = get_start_edge_idx (u); e <= get_end_edge_idx (u); e++) {
@@ -98,13 +98,13 @@ public:
   }
 
   __host__ __device__
-  const CSR::Edge* get_edges () {return &edges[0];}
+  const CSR::Edge* get_edges () const  {return &edges[0];}
 
   __host__ __device__
-  const CSR::Vertex* get_vertices () {return &vertices[0];}
+  const CSR::Vertex* get_vertices () const  {return &vertices[0];}
 
   __host__ __device__
-  int get_n_vertices () {return n_vertices;}
+  int get_n_vertices () const  {return n_vertices;}
 
   __host__ __device__
   void copy_vertices (CSR* src, int start, int end)
@@ -123,7 +123,7 @@ public:
   }
 
   __host__ __device__
-  int get_n_edges () {return n_edges;}
+  int get_n_edges () const  {return n_edges;}
 };
 
 class CSRPartition
@@ -145,7 +145,7 @@ public:
   }
 
   __host__ __device__
-  int get_start_edge_idx (int vertex_id) {
+  int get_start_edge_idx (int vertex_id) const  {
     if (!(vertex_id <= last_vertex_id && first_vertex_id <= vertex_id)) {
       printf ("vertex_id %d, end_vertex %d, start_vertex %d\n", vertex_id, last_vertex_id, first_vertex_id);
       assert (false);
@@ -154,20 +154,20 @@ public:
   }
 
   __host__ __device__
-  int get_end_edge_idx (int vertex_id)
+  int get_end_edge_idx (int vertex_id) const 
   {
     assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
     return vertices[vertex_id - first_vertex_id].end_edge_id;
   }
   
   __host__ __device__
-  CSR::Edge get_edge (int idx) 
+  CSR::Edge get_edge (int idx)  const 
   {
     assert (idx >= first_edge_idx && idx <= last_edge_idx);
     return edges[idx - first_edge_idx];
   }
 
-  int get_vertex_for_edge_idx (int idx)
+  int get_vertex_for_edge_idx (int idx) const 
   {
     for (int v = first_vertex_id; v < last_vertex_id; v++) {
       if (idx >= get_start_edge_idx (v) && idx <= get_end_edge_idx (v)) {
@@ -179,34 +179,40 @@ public:
   }
 
   __host__ __device__
-  const CSR::Edge* get_edges () 
+  const CSR::Edge* get_edges () const 
   {
     return edges;
   }
 
   __host__ __device__
-  const CSR::Vertex* get_vertices () 
+  const CSR::Vertex* get_vertices () const 
   {
     return vertices;
   }
 
   __host__ __device__
-  size_t get_n_vertices ()
+  size_t get_n_vertices () const 
   {
     return last_vertex_id - first_vertex_id + 1;
   }
 
   __host__ __device__
-  size_t get_n_edges ()
+  size_t get_n_edges () const 
   {
     return last_edge_idx - first_edge_idx + 1;
   }
 
   __host__ __device__ 
-  bool is_vertex_in_partition (int v) 
+  bool has_vertex (int v) const 
   {
     return v >= first_vertex_id && v <= last_vertex_id;
   }
+
+  // static struct HasVertex {
+  //   bool operator () (CSRPartition& partition, const VertexID& v) const {
+  //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);
+  //   }
+  // }
 };
 
 #ifdef USE_CONSTANT_MEM

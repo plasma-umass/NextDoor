@@ -44,6 +44,6 @@ bool is_cuda_error (cudaError_t error)
   return false;
 }
 
-#define EXECUTE_CUDA_FUNC(x) assert (is_cuda_error (x) == false);
+#define CHK_CU(x) assert (is_cuda_error (x) == false);
 
 #endif
