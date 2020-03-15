@@ -1353,20 +1353,12 @@ int main (int argc, char* argv[])
   CSR::Edge* device_edge_array;
   int* device_vertex_partition_positions;
 
-#if 0
-  CHK_CU (cudaMalloc (&device_vertex_partition_positions, n_partitions*sizeof(int)*2));
-  CHK_CU (cudaMemcpy (device_vertex_partition_positions, vertex_partition_positions, n_partitions*sizeof(int)*2, cudaMemcpyHostToDevice));
-#endif
-
   double gpu_time = 0;
   
   std::cout << "Generating additions" << std::endl;
   int* device_additions_sizes;
   void* device_additions; //Storage to store inputs added to each embedding
-  void* device_additions_prev_hop;
-
-  int* device_filled_ranges;
-  CHK_CU (cudaMalloc (&device_filled_ranges, sizeof (int)*csr->get_n_vertices ()));
+  void* device_additions_prev_hop = nullptr;
   int* device_prev_thread_idx_to_edge_in_additions = nullptr;
 
   std::vector<std::vector <std::pair <VertexID, int>>> host_src_to_roots;
@@ -1382,8 +1374,6 @@ int main (int argc, char* argv[])
   CHK_CU (cudaMalloc (&source_vertex_idx, sizeof(int)));
   
   for (int hop = 0; hop < N_HOPS; hop++) {
-    int* device_src_to_roots;
-    int* device_src_to_root_positions;
     unsigned long long* device_max_neighbors_iter;
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
@@ -1484,11 +1474,12 @@ int main (int argc, char* argv[])
 
       num_neighbors += num_neighbors_iter;
       per_part_num_neighbors [root_part_idx] = num_neighbors_iter;
+
       CHK_CU (cudaFree (device_max_neighbors_iter));
       CHK_CU (cudaFree ((void*)device_vertex_array));
       CHK_CU (cudaFree ((void*)device_edge_array));
       CHK_CU (cudaFree ((void*)device_root_partition));
-      
+
       std::unordered_set<int> src_partitions;
       std::vector<int*> per_part_src_to_roots;
       std::vector<int*> per_part_src_to_roots_positions;
@@ -1526,11 +1517,14 @@ int main (int argc, char* argv[])
       const int vertex_with_prev_partition_adds = additions_sizes[hop][2*vertex_with_prev_partition + 1];
 
       for (auto part_idx : src_partitions) {
+        int* device_src_to_roots;
+        int* device_src_to_root_positions;
         CSRPartition& src_partition = csr_partitions[part_idx];
         std::cout << "Find " << hop << "-hops for root partition " << root_part_idx << " using src partition " << part_idx << std::endl;
         copy_partition_to_gpu (src_partition, device_csr, device_vertex_array, device_edge_array);
         CHK_CU (cudaMemcpy (source_vertex_idx, &src_partition.first_vertex_id,  sizeof (int), cudaMemcpyHostToDevice));
-        
+        //TODO: Free source_vertex_idx
+
         if (hop > 0) {
           CHK_CU (cudaMalloc (&device_src_to_roots, 
                               2*per_part_src_to_roots_size[part_idx]*sizeof (int)));
@@ -1566,6 +1560,15 @@ int main (int argc, char* argv[])
         CHK_CU (cudaDeviceSynchronize ());
         double t2 = convertTimeValToDouble(getTimeOfDay ());
         gpu_time += t2 - t1;
+
+        if (hop > 0) {
+          CHK_CU (cudaFree (device_src_to_roots))
+          CHK_CU (cudaFree (device_src_to_root_positions));
+        }
+
+        CHK_CU (cudaFree ((void*)device_vertex_array));
+        CHK_CU (cudaFree ((void*)device_edge_array));
+        CHK_CU (cudaFree ((void*)device_csr));
       }
 
   #ifdef PROFILE
@@ -1582,7 +1585,8 @@ int main (int argc, char* argv[])
                           device_map_vertex_to_additions[hop][root_part_idx], 
                           partition_map_vertex_to_additions_size (root_partition)*sizeof (int), 
                           cudaMemcpyDeviceToHost));
-      
+      //TODO: Free device_map_vertex_to_additions
+
       if (root_part_idx == 0) {
         memcpy (&final_map_vertex_to_additions[hop][0][final_map_vertex_to_additions_iter],
                 partition_map_vertex_to_additions[root_part_idx],
@@ -1654,6 +1658,9 @@ int main (int argc, char* argv[])
       CHK_CU (cudaMemcpy (part_additions_sizes[root_part_idx], device_additions_sizes, 
                           partition_additions_sizes_size, 
                           cudaMemcpyDeviceToHost));
+      
+      CHK_CU (cudaFree (device_additions));
+      CHK_CU (cudaFree (device_additions_sizes));
 
       VertexID first_vertex_id;
       if (root_part_idx == 0) {
@@ -1717,11 +1724,24 @@ int main (int argc, char* argv[])
       }
     }
 
+    if (device_additions_prev_hop != nullptr) {
+      CHK_CU (cudaFree (device_additions_prev_hop));
+    }
     CHK_CU (cudaMalloc (&device_additions_prev_hop, neighbors_sizes[hop]));
     CHK_CU (cudaMemcpy (device_additions_prev_hop, neighbors[hop], 
                         neighbors_sizes[hop], cudaMemcpyHostToDevice));
   }
   
+  if (device_additions_prev_hop != nullptr) {
+    CHK_CU (cudaFree (device_additions_prev_hop));
+  }
+
+  for (int i = 0; i < N_HOPS; i++) {
+    for (int part = 0; part < csr_partitions.size (); part++) {
+      cudaFree (device_map_vertex_to_additions[i][part]);
+    }
+  }
+
   std::cout << "Getting embeddings from GPU" << std::endl;
   int total_neighbors[N_HOPS] = {0};
   std::vector <VectorVertexEmbedding> produced_embeddings;
@@ -1750,8 +1770,6 @@ int main (int argc, char* argv[])
     VectorVertexEmbedding embedding = VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true);
     produced_embeddings.push_back (embedding);
   }
-
-  cudaFree (device_csr);
 
   std::cout << "Generating CPU Embeddings:" << std::endl;
   std::cout << "Total 2-hop neighbors " << total_neighbors[1] << std::endl;
