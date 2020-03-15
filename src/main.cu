@@ -16,11 +16,11 @@
 #include <queue>
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 //rmat.graph
 //const int N = 1024;
 //const int N_EDGES = 29381;
@@ -527,6 +527,11 @@ __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* void_csr
   map_orig_embedding_to_additions_next_iter[2*thread_idx+1] = new_edges;
 }
 
+__device__ int src_vertex_to_part_vertex_idx (CSRPartition* csr, int src) 
+{
+  return src - csr->first_vertex_id;
+}
+
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSRPartition* csr,
   CSRPartition* root_partition,
   void* void_embeddings_additions, 
@@ -597,7 +602,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSRPartition*
         int start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
         const int end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
         const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
-        int root_vertices = map_vertex_to_hop_vertex_data[2*vertices[n_vertex_load] + 1];
+        int root_vertices = map_vertex_to_hop_vertex_data[2*src_vertex_to_part_vertex_idx(csr, vertices[n_vertex_load]) + 1];
 #ifdef USE_PARTITION_FOR_SHMEM
         if (hop_vertices_in_shared_mem_size < MAX_HOP_VERTICES_IN_SH_MEM &&
             n_edges != 0 && n_edges + edges_in_shared_mem < MAX_EDGES && 
@@ -683,8 +688,9 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSRPartition*
     int participating_threads = 0;
 
     if (_curr_vertex_id != -1 && root_vertex_idx != -1 && vertices[_curr_vertex_id] <= csr->last_vertex_id) {
-      hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*vertices[_curr_vertex_id]];
-      n_root_vertices = map_vertex_to_hop_vertex_data[2*vertices[_curr_vertex_id] + 1];
+      int part_vertex_id = src_vertex_to_part_vertex_idx (csr, vertices[_curr_vertex_id]);
+      hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
+      n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
       root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx];
       hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx + 1];
 
@@ -770,9 +776,9 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, CSRPartition*
     __syncwarp ();
     
     if (last_hop_vertex_id != -1 && last_hop_vertex_roots_remaining != -1) {
-      int hop_vertex = vertices[last_hop_vertex_id];
-      int hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*hop_vertex];
-      int n_root_vertices = map_vertex_to_hop_vertex_data[2*hop_vertex + 1];
+      int part_vertex_id = src_vertex_to_part_vertex_idx(csr, vertices[last_hop_vertex_id]);
+      int hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
+      int n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
       
       __syncthreads ();
       
@@ -1123,15 +1129,15 @@ const size_t partition_map_vertex_to_additions_size (CSRPartition& partition)
   return partition.get_n_vertices ()* 2;
 }
 
-const std::vector<int> get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, VertexID v) 
+const int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, VertexID v) 
 {
   std::vector<int> parts;
   for (int part_idx = 0; part_idx < csr_partitions.size (); part_idx++) {
     if (csr_partitions[part_idx].has_vertex (v))
-      parts.push_back (part_idx);
+      return part_idx;
   }
-
-  return parts;
+  assert (false);
+  return -1;
 }
 
 size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
@@ -1143,8 +1149,9 @@ size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID,
                                     VertexID** neighbors, 
                                     int* neighbors_sizes,
                                     std::unordered_set<int>& src_partitions,
-                                    int*& device_src_to_roots, 
-                                    int*& device_src_to_root_positions)
+                                    std::vector<int*>& per_part_src_to_roots,
+                                    std::vector<size_t>& per_part_src_to_roots_size, 
+                                    std::vector<int*>& per_part_src_to_root_positions)
 {
   int* host_src_to_roots_positions = nullptr;
   int *host_src_to_roots_linear = nullptr;
@@ -1167,54 +1174,51 @@ size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID,
     int end   = additions_sizes[hop-1][2*v + 1];
     for (int i = 0; i < end; i++) {
       int src = neighbors[hop-1][start + i];
-      std::vector<int> parts = get_partition_idx_of_vertex (csr_partitions, src);
-      src_partitions.insert (parts.begin (), parts.end ());
+      int part = get_partition_idx_of_vertex (csr_partitions, src);
+      src_partitions.insert (part);
       assert (start + i < neighbors_sizes[hop-1]/sizeof(VertexID));
       assert (src >= 0 && src < N);
       host_src_to_roots[src].push_back (std::make_pair (v, start + i));
     }
   }
 
-  int host_hop_vertex_data_size = 0;
+  per_part_src_to_roots = std::vector<int*> (csr_partitions.size (), nullptr);
+  per_part_src_to_root_positions = std::vector<int*> (csr_partitions.size (), nullptr);
+  per_part_src_to_roots_size = std::vector<size_t> (csr_partitions.size(), 0);
 
   for (int v = 0; v < csr->get_n_vertices (); v++) {
-    host_hop_vertex_data_size += host_src_to_roots[v].size ();
+    int part = get_partition_idx_of_vertex (csr_partitions, v);
+    per_part_src_to_roots_size[part] += host_src_to_roots[v].size ();
   }
 
-  host_src_to_roots_linear = new int [2*host_hop_vertex_data_size];
-  host_src_to_roots_positions = new int[2*csr->get_n_vertices ()];
-  int iter = 0;
+  for (int part = 0; part < csr_partitions.size (); part++) {    
+    per_part_src_to_root_positions[part] = new int[2*csr_partitions[part].get_n_vertices ()];
+    per_part_src_to_roots[part] = new int[2*per_part_src_to_roots_size[part]];
+  }
 
-  for (int v = 0; v < csr->get_n_vertices (); v++) {
-    for (int i = 0; i < host_src_to_roots[v].size (); i++) {
-      host_src_to_roots_linear[iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
-      host_src_to_roots_linear[iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
+  for (int part = 0; part < csr_partitions.size (); part++) {
+    int iter = 0;
+
+    for (int v = csr_partitions[part].first_vertex_id; 
+         v <= csr_partitions[part].last_vertex_id; v++) {
+      int part_v = v - csr_partitions[part].first_vertex_id;
+      for (int i = 0; i < host_src_to_roots[v].size (); i++) {
+        per_part_src_to_roots[part][iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
+        per_part_src_to_roots[part][iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
+      }
+
+      per_part_src_to_root_positions[part][2*part_v] = iter;
+      per_part_src_to_root_positions[part][2*part_v + 1] = host_src_to_roots[v].size ();
+      iter += 2*host_src_to_roots[v].size ();
     }
-
-    host_src_to_roots_positions [2*v] = iter;
-    host_src_to_roots_positions [2*v + 1] = host_src_to_roots[v].size ();
-    iter += 2*host_src_to_roots[v].size ();
   }
 
   double t2 = convertTimeValToDouble(getTimeOfDay ());
         
   std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
-  CHK_CU (cudaMalloc (&device_src_to_roots, 
-                                  2*host_hop_vertex_data_size*sizeof (int)));
-  CHK_CU (cudaMemcpy (device_src_to_roots, 
-                                  host_src_to_roots_linear, 
-                                  2*host_hop_vertex_data_size*sizeof (int), 
-                                  cudaMemcpyHostToDevice));
-  CHK_CU (cudaMalloc (&device_src_to_root_positions,
-                                  2*csr->get_n_vertices()*sizeof (int)));
-  CHK_CU (cudaMemcpy (device_src_to_root_positions,  
-                                  host_src_to_roots_positions, 
-                                  2*csr->get_n_vertices()*sizeof (int), 
-                                  cudaMemcpyHostToDevice));
-  delete host_src_to_roots_linear;
-  delete host_src_to_roots_positions;
 
-  return host_hop_vertex_data_size;
+  // delete host_src_to_roots_linear;
+  // delete host_src_to_roots_positions;
 }
 
 void bfs (CSR* csr) 
@@ -1546,7 +1550,9 @@ int main (int argc, char* argv[])
     for (int partition_idx = 0; partition_idx < csr_partitions.size (); partition_idx++) {
       std::unordered_set<int> src_partitions;
       CSRPartition& root_partition = csr_partitions[partition_idx];
-
+      std::vector<int*> per_part_src_to_roots;
+      std::vector<int*> per_part_src_to_roots_positions;
+      std::vector<size_t> per_part_src_to_roots_size;
       CSRPartition* device_root_partition;
       CHK_CU (cudaMalloc (&device_root_partition, sizeof (CSRPartition)));
       CHK_CU (cudaMemcpy (device_root_partition, &root_partition, 
@@ -1575,17 +1581,19 @@ int main (int argc, char* argv[])
                                      additions_sizes, neighbors, 
                                      neighbors_sizes, 
                                      src_partitions,
-                                     device_src_to_roots, 
-                                     device_src_to_root_positions);
+                                     per_part_src_to_roots, 
+                                     per_part_src_to_roots_size,
+                                     per_part_src_to_roots_positions);
       } else {
         src_partitions.insert (partition_idx);
       }
 
       //TODO: partition following device pointers:
-      //( ) device_src_to_roots device_src_to_root_positions
-      //( ) device_additions
-      //( ) device_final_map_vertex_to_additions
+      //(X) device_src_to_roots device_src_to_root_positions
+      //(X) device_additions
+      //(X) device_final_map_vertex_to_additions
       //(X) device_additions_sizes
+      //( ) fuse both
       
       const int vertex_with_prev_partition_adds = additions_sizes[hop][2*vertex_with_prev_partition + 1];
       CHK_CU (cudaMalloc (&device_map_vertex_to_additions[hop][partition_idx], 
@@ -1600,6 +1608,20 @@ int main (int argc, char* argv[])
         copy_partition_to_gpu (src_partition, device_csr, device_vertex_array, device_edge_array);
         CHK_CU (cudaMemcpy (source_vertex_idx, &src_partition.first_vertex_id,  sizeof (int), cudaMemcpyHostToDevice));
         
+        if (hop > 0) {
+          CHK_CU (cudaMalloc (&device_src_to_roots, 
+                              2*per_part_src_to_roots_size[part_idx]*sizeof (int)));
+          CHK_CU (cudaMemcpy (device_src_to_roots, 
+                              per_part_src_to_roots[part_idx], 
+                              2*per_part_src_to_roots_size[part_idx]*sizeof (int), 
+                              cudaMemcpyHostToDevice));
+          CHK_CU (cudaMalloc (&device_src_to_root_positions,
+                              2*src_partition.get_n_vertices()*sizeof (int)));
+          CHK_CU (cudaMemcpy (device_src_to_root_positions,  
+                              per_part_src_to_roots_positions[part_idx],
+                              2*src_partition.get_n_vertices()*sizeof (int), 
+                              cudaMemcpyHostToDevice));
+        }
         //printf ("p %d\n", partition.first_vertex_id);
         int N_BLOCKS = src_partition.get_n_vertices ();
 
