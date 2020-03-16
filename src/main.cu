@@ -1306,7 +1306,7 @@ int main (int argc, char* argv[])
     std::cout << "Time spent in BFS " << (t2- t1) << " secs"<< std::endl;
   }
 
-  size_t global_mem_size = 15*1024*1024*1024UL;
+  size_t global_mem_size = 1024*1024*1024;//15*1024*1024*1024UL;
   #define PINNED_MEMORY
   #ifdef PINNED_MEMORY
     char* global_mem_ptr;
@@ -1439,6 +1439,7 @@ int main (int argc, char* argv[])
                             edges_to_prev_iter_additions, 
                             root_partition.get_n_edges ()*sizeof(VertexID), 
                             cudaMemcpyHostToDevice));
+        delete edges_to_prev_iter_additions;
       }
 
       if (hop == 0) {
@@ -1564,6 +1565,10 @@ int main (int argc, char* argv[])
         if (hop > 0) {
           CHK_CU (cudaFree (device_src_to_roots))
           CHK_CU (cudaFree (device_src_to_root_positions));
+
+
+          delete per_part_src_to_roots[part_idx];
+          delete per_part_src_to_roots_positions[part_idx];
         }
 
         CHK_CU (cudaFree ((void*)device_vertex_array));
@@ -1722,6 +1727,10 @@ int main (int argc, char* argv[])
           neighbors[hop][final_idx++] = part_neighbors[part][idx];
         }
       }
+
+      delete part_neighbors[part];
+      delete part_additions_sizes[part];
+      delete partition_map_vertex_to_additions[part];
     }
 
     if (device_additions_prev_hop != nullptr) {
