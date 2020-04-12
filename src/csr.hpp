@@ -97,6 +97,10 @@ public:
     return false;
   }
 
+  int n_edges_for_vertex (int vertex) const 
+  {
+    return (get_end_edge_idx (vertex) != -1) ? (get_end_edge_idx (vertex) - get_start_edge_idx (vertex) + 1) : 0;
+  }
   __host__ __device__
   const CSR::Edge* get_edges () const  {return &edges[0];}
 

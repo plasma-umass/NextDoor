@@ -3,7 +3,9 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <algorithm>
+#include <iterator>
+ 
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
@@ -12,6 +14,13 @@ double convertTimeValToDouble (struct timeval _time)
   return ((double)_time.tv_sec) + ((double)_time.tv_usec)/1000000.0f;
 }
 
+template<class T>
+void print_container(T const &s)
+{
+    std::copy(s.begin(),
+            s.end(),
+            std::ostream_iterator<int>(std::cout, " "));
+}
 
 struct timeval getTimeOfDay ()
 {
