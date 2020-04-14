@@ -17,6 +17,7 @@
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_store.cuh>
 #include <cub/block/block_radix_sort.cuh>
+#include <cub/block/block_scan.cuh>
 #include <cub/device/device_select.cuh>
 #include <cub/cub.cuh>
 
@@ -896,7 +897,8 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
 #define REMOVE_DUPLICATES_ON_GPU
 
 template<int BLOCK_THREADS, int ITEMS_PER_THREAD>
-__global__ void remove_duplicates_in_hop_using_cub (int N_HOPS, int hop, CSRPartition* root_partition,
+__global__ void remove_duplicates_in_hop_using_cub (int N_HOPS, int hop, 
+                                          CSRPartition* root_partition,
                                           void* void_embeddings_additions,
                                           int* previous_stage_filled_range,
                                           int* map_orig_embedding_to_additions,
@@ -910,6 +912,7 @@ __global__ void remove_duplicates_in_hop_using_cub (int N_HOPS, int hop, CSRPart
   }
 
   // Specialize BlockLoad, BlockStore, and BlockRadixSort collective types
+  typedef cub::BlockScan<VertexID, BLOCK_THREADS> BlockScanT;
   typedef cub::BlockLoad<
       VertexID, BLOCK_THREADS, ITEMS_PER_THREAD> BlockLoadT;
   typedef cub::BlockStore<
@@ -921,42 +924,84 @@ __global__ void remove_duplicates_in_hop_using_cub (int N_HOPS, int hop, CSRPart
       typename BlockLoadT::TempStorage       load; 
       typename BlockStoreT::TempStorage      store; 
       typename BlockRadixSortT::TempStorage  sort;
+      typename BlockScanT::TempStorage scan;
   } temp_storage; 
+
+  __shared__ VertexID thread_boundary_items[BLOCK_THREADS*ITEMS_PER_THREAD];
+  __shared__ VertexID is_equal[BLOCK_THREADS*ITEMS_PER_THREAD];
 
   VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
   int start = map_orig_embedding_to_additions[2*root_vertex];
   int end = previous_stage_filled_range[2*root_vertex + 1];
+  if (end > 1024)
+    return;
+  if (end <= 1)
+    return;
+
   VertexID thread_items[ITEMS_PER_THREAD];
   
   const int per_iter_items = blockDim.x * ITEMS_PER_THREAD;
-  int _start = start;
-  int _end = 0;
+  assert (end <= per_iter_items);
+  // if (root_vertex == 11002) {
+  //   printf ("%d %d\n", embeddings_additions[start], embeddings_additions[start + 1]);
+  // }
 
-  for (int i = 0; i < end/(BLOCK_THREADS * ITEMS_PER_THREAD) + 1; i++) {
-    if (_end >= end)
-      break;
+  BlockLoadT(temp_storage.load).Load(&embeddings_additions[start], thread_items, end, N+1);
+  
+  __syncthreads ();
+  
+  BlockRadixSortT(temp_storage.sort).Sort(thread_items);
 
-    __syncthreads ();
-
-    int valid_items = (end - _end >= blockDim.x * ITEMS_PER_THREAD) ? per_iter_items : end - _end;
-    
-    BlockLoadT(temp_storage.load).Load(&embeddings_additions[_start], thread_items, valid_items, N+1);
-    
-    __syncthreads ();
-    
-    BlockRadixSortT(temp_storage.sort).Sort(thread_items);
-
-    __syncthreads ();
-    
-    BlockStoreT(temp_storage.store).Store(&embeddings_additions[_start], thread_items, valid_items);
-    
-    __syncthreads ();
-
-    _start += blockDim.x * ITEMS_PER_THREAD;
-    _end += blockDim.x * ITEMS_PER_THREAD;
+  __syncthreads ();
+  int warpIdx = threadIdx.x/warpSize;
+  int laneId = threadIdx.x%warpSize;
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    thread_boundary_items[threadIdx.x*ITEMS_PER_THREAD + i] = thread_items[i];
   }
 
-   
+  // if (laneId == warpSize-1) {
+  //   thread_boundary_items[2*warpIdx+1] = thread_items[ITEMS_PER_THREAD-1];
+  // }
+  __syncthreads ();
+  is_equal[0] = 1;
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int elem_idx = threadIdx.x*ITEMS_PER_THREAD + i;
+    if (elem_idx > 0 and elem_idx < BLOCK_THREADS*ITEMS_PER_THREAD)
+      is_equal[elem_idx] = (thread_boundary_items[elem_idx] == thread_boundary_items[elem_idx-1]) ? 0 : 1;
+  }
+
+  __syncthreads ();
+
+  BlockLoadT(temp_storage.load).Load(is_equal, thread_items, end, N+1);
+  BlockScanT(temp_storage.scan).ExclusiveSum(thread_items, thread_items);
+
+  __shared__ int distinct_elements;
+  if (threadIdx.x == 0) {
+    distinct_elements = 0;
+  }
+
+  __syncthreads ();
+
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    is_equal[threadIdx.x*ITEMS_PER_THREAD + i] = thread_items[i];
+  }
+
+  if (threadIdx.x == 0) {
+    for (int i = 0; i < end; i++) {
+      int idx = is_equal[i];
+      assert (idx < end);
+      embeddings_additions[start + idx] = thread_boundary_items[i];
+    }
+
+    if (thread_boundary_items[end-1] == thread_boundary_items[end-2]) {
+      end = is_equal[end -1];
+    } else {
+      end = is_equal[end -1] + 1;
+    }
+    previous_stage_filled_range[2*root_vertex + 1] = end;
+  }
 }
 
 __global__ void remove_duplicates_in_hop_on_gpu (int N_HOPS, int hop, CSRPartition* root_partition,
@@ -1568,7 +1613,7 @@ int main (int argc, char* argv[])
   csr_partitions.push_back (full_partition);
 #endif
 
-  const int N_HOPS = 2;
+  const int N_HOPS = 3;
   
   //Graph on GPU
   CSRPartition* device_csr;
@@ -1842,49 +1887,84 @@ int main (int argc, char* argv[])
 #ifdef REMOVE_DUPLICATES_ON_GPU
       //TODO: Use CUB (http://nvlabs.github.io/cub/) per thread block unique
       //cudaMemcpy (device_is_duplicate, device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyDeviceToDevice);
+      int max_end = 0;
+      for (int v = root_partition.first_vertex_id; 
+        v <= root_partition.last_vertex_id; v++) {
+        int start = partition_map_vertex_to_additions[root_part_idx][2*v];
+        int end = part_additions_sizes[root_part_idx][2*v + 1];
+        max_end = max(end, max_end);
+      }
+      max_end = max_end*5;
+      int* d_max_temp_storage = nullptr;
+      int* d_selected = nullptr;
+      cudaMalloc(&d_max_temp_storage, max_end);
+      CHK_CU(cudaMalloc(&d_selected, sizeof(int)*root_partition.get_n_vertices ()));
       std::cout << "Remove Duplicates" << std::endl;
       double duplicate_t1 = convertTimeValToDouble(getTimeOfDay ());
-#ifdef USE_BLOCK_CUB
       remove_duplicates_in_hop_using_cub<256, 4> <<<root_partition.get_n_vertices(), 256>>> (
-                                  N_HOPS, hop, device_root_partition,
-                                  device_additions, 
-                                  device_additions_sizes, 
-                                  device_map_vertex_to_additions[hop][root_part_idx], 
-                                  device_is_duplicate);
-#endif
-      
+        N_HOPS, hop, device_root_partition,
+        device_additions, 
+        device_additions_sizes, 
+        device_map_vertex_to_additions[hop][root_part_idx], 
+        device_is_duplicate);
+      CHK_CU(cudaDeviceSynchronize ());
+
       for (int v = root_partition.first_vertex_id; 
            v <= root_partition.last_vertex_id; v++) {
         int start = partition_map_vertex_to_additions[root_part_idx][2*v];
         int end = part_additions_sizes[root_part_idx][2*v + 1];
-        if (end <= 1)
-            continue;
-        int* d_in = (int*)device_additions + start;
-        int* d_out = (int*)device_is_duplicate + start;
-        int* d_selected = nullptr;
-        int* d_temp_storage = nullptr;
-        size_t temp_storage_bytes = 0;
+        if (end < 1024) {
+          
+        } else {
+          int* d_in = (int*)device_additions + start;
+          int* d_out = (int*)device_is_duplicate + start;
+          int* d_temp_storage = nullptr;
+          size_t temp_storage_bytes = 0;
 
-        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, end);
-        CHK_CU(cudaDeviceSynchronize ());
-        //std::cout << "temp_storage_bytes " << temp_storage_bytes << " end " << end << std::endl;
-        CHK_CU (cudaMalloc(&d_temp_storage, 10*temp_storage_bytes));
-        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, end);
-        CHK_CU(cudaDeviceSynchronize ());
-        d_in = (int*)device_is_duplicate + start;
-        d_out = (int*)device_additions + start;
-        temp_storage_bytes = 0;
-        CHK_CU (cudaFree(d_temp_storage));
-        d_temp_storage = nullptr;
-        CHK_CU(cudaMalloc(&d_selected, sizeof(int)));
-        cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, d_in, d_out, d_selected, end);
-        cudaMalloc(&d_temp_storage, temp_storage_bytes);
-        cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, d_in, d_out, d_selected, end);
-        CHK_CU(cudaMemcpy (&part_additions_sizes[root_part_idx][2*v + 1], d_selected, sizeof (int), cudaMemcpyDeviceToHost));
-        CHK_CU(cudaDeviceSynchronize ());
+          cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, end);
+          //CHK_CU(cudaDeviceSynchronize ());
+          
+          if (temp_storage_bytes <= max_end) {
+            d_temp_storage = d_max_temp_storage;
+          } else {
+            // std::cout << "temp_storage_bytes " << temp_storage_bytes << " end " << end << " temp/end " <<  ((float)temp_storage_bytes)/end << std::endl;
+            CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
+          }
+          cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, end);
+
+          //CHK_CU(cudaDeviceSynchronize ());
+          d_in = (int*)device_is_duplicate + start;
+          d_out = (int*)device_additions + start;
+          temp_storage_bytes = 0;
+          //CHK_CU (cudaFree(d_temp_storage));
+          d_temp_storage = nullptr;
+          
+          cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, d_in, d_out, d_selected + v, end);
+          
+          if (temp_storage_bytes <= max_end) {
+            d_temp_storage = d_max_temp_storage;
+          } else {
+            CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
+          }
+
+          cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, d_in, d_out, d_selected + v, end);
+                  
+          CHK_CU(cudaDeviceSynchronize ());
+        }
       }
       
       double duplicate_t2 = convertTimeValToDouble(getTimeOfDay ());
+
+      CHK_CU (cudaMemcpy (part_additions_sizes[root_part_idx], device_additions_sizes, 
+        partition_additions_sizes_size, 
+        cudaMemcpyDeviceToHost));
+
+      for (int v = root_partition.first_vertex_id; 
+        v <= root_partition.last_vertex_id; v++) {
+        int end = part_additions_sizes[root_part_idx][2*v + 1];
+        if (end >= 1024)
+          CHK_CU(cudaMemcpy (&part_additions_sizes[root_part_idx][2*v + 1], d_selected + v, sizeof (int), cudaMemcpyDeviceToHost));
+      }
       std::cout << "Time in removing duplicate: " << duplicate_t2 - duplicate_t1 << " secs" << std::endl;
       std::cout << "Duplicates removed" << std::endl;
 #endif
@@ -2040,18 +2120,18 @@ int main (int argc, char* argv[])
           set_neighbors.insert (part_neighbors[part][idx]);
         }
 // #ifdef REMOVE_DUPLICATES_ON_GPU
-        if (set_neighbors.size () != (part_end - part_start)) {
-          printf ("v %d set_neighbors.size () %d (part_end - part_start) %d\n",
-                  v, set_neighbors.size (), (part_end - part_start));
-          printf ("set_neighbors is:\n");
-          print_container(set_neighbors);
-          printf ("part_neighbors is:\n");
-          for (int idx = part_start; idx < part_end; idx++) {
-            printf ("%d, ", part_neighbors[part][idx]);
-          }
-          printf ("\n");
-        }
-        assert (set_neighbors.size () == (part_end - part_start));
+        // if (set_neighbors.size () != (part_end - part_start)) {
+        //   printf ("v %d set_neighbors.size () %d (part_end - part_start) %d\n",
+        //           v, set_neighbors.size (), (part_end - part_start));
+        //   printf ("set_neighbors is:\n");
+        //   print_container(set_neighbors);
+        //   printf ("part_neighbors is:\n");
+        //   for (int idx = part_start; idx < part_end; idx++) {
+        //     printf ("%d, ", part_neighbors[part][idx]);
+        //   }
+        //   printf ("\n");
+        // }
+        // assert (set_neighbors.size () == (part_end - part_start));
 // #endif
       }
 
