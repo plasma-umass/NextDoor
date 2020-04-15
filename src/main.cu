@@ -22,15 +22,15 @@
 #include <cub/cub.cuh>
 
 //citeseer.graph
-// const int N = 3312;
-// const int N_EDGES = 9074;
+const int N = 3312;
+const int N_EDGES = 9074;
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 //rmat.graph
 //const int N = 1024;
 //const int N_EDGES = 29381;
-typedef uint32_t VertexID;
+
 
 #include "csr.hpp"
 #include "utils.hpp"
@@ -105,7 +105,7 @@ public:
   {
     std::vector<VertexID> v;
     
-    for (int i = 0; i < get_n_vertices (); i++) {
+    for (size_t i = 0; i < get_n_vertices (); i++) {
       v.push_back (get_vertex (i));
     }
 
@@ -174,9 +174,9 @@ public:
   // }
   
   __host__ __device__
-  bool has (int v) const
+  bool has (VertexID v) const
   {
-    for (int i = 0; i < filled_size; i++) {
+    for (size_t i = 0; i < filled_size; i++) {
       if (array[i] == v) {
         return true;
       }
@@ -192,26 +192,26 @@ public:
   }
   
   __host__ __device__
-  int get_vertex (int index, void* global_storage_start) const
+  VertexID get_vertex (int index, void* global_storage_start) const
   {
     return ((VertexID*)((char*)global_storage_start + array_start_idx))[index];
   }
 
   __device__
-  int get_vertex (int index, void* global_storage_start, uint64_t global_start_idx) const
+  VertexID get_vertex (int index, void* global_storage_start, uint64_t global_start_idx) const
   {
     assert (array_start_idx >= global_start_idx);
     return ((VertexID*)((char*)global_storage_start + (array_start_idx - global_start_idx)))[index];
   }
 
   __host__ 
-  int get_vertex (int index) const
+  VertexID get_vertex (int index) const
   {
     return array[index];
   }
   
   __host__ __device__
-  int get_last_vertex () const
+  VertexID get_last_vertex () const
   {
     return array[filled_size-1];
   }
@@ -271,7 +271,7 @@ void vector_embedding_from_one_less_size (VectorVertexEmbedding const & in,
   //  assert (false);
   //}
   assert (in.get_n_vertices () <= out.get_n_vertices ());
-  for (int i = 0; i < in.get_n_vertices (); i++) {
+  for (size_t i = 0; i < in.get_n_vertices (); i++) {
     out.add (in.get_vertex (i));
   }
 }
@@ -1820,6 +1820,7 @@ int main (int argc, char* argv[])
         max_end = max(end, max_end);
       }
       max_end = max_end*5;
+
       CHK_CU (cudaMalloc(&d_max_temp_storage, max_end));
       CHK_CU(cudaMalloc(&d_selected, sizeof(int)*root_partition.get_n_vertices ()));
       VertexID* device_intermediate_storage = nullptr;
@@ -1849,8 +1850,9 @@ int main (int argc, char* argv[])
           int* d_out = (int*)device_intermediate_storage + start;
           int* d_temp_storage = nullptr;
           size_t temp_storage_bytes = 0;
-
-          //cub::DoubleBuffer<VertexID> d_keys (d_in, d_);
+          
+          //Check if the space runs out.
+          //TODO: Use DoubleBuffer version that requires O(P) space.
           cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, end);
           
           if (d_temp_storage != nullptr and temp_storage_bytes <= max_end) {

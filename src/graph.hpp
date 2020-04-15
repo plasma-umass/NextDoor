@@ -30,7 +30,7 @@ public:
   void sort_edges () {std::sort (edges.begin(), edges.end ());}
   void update_edges (std::unordered_map <int, int>& prev_to_new_ids) 
   {
-    for (int i = 0; i < edges.size (); i++) {
+    for (size_t i = 0; i < edges.size (); i++) {
       edges[i] = prev_to_new_ids[edges[i]];
     }
 

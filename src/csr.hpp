@@ -3,6 +3,9 @@
 #ifndef __CSR_HPP__
 #define __CST_HPP__
 
+typedef int32_t VertexID;
+typedef int32_t EdgePos_t;
+
 class CSR
 {
 public:
@@ -10,8 +13,8 @@ public:
 {
   int id;
   int label;
-  int start_edge_id;
-  int end_edge_id;
+  EdgePos_t start_edge_id;
+  EdgePos_t end_edge_id;
   __host__ __device__
   Vertex ()
   {
@@ -27,22 +30,22 @@ public:
     label = vertex.get_label ();
   }
 
-  __host__ __device__ int get_start_edge_idx () {return start_edge_id;}
-  __host__ __device__ int get_end_edge_idx () {return end_edge_id;}
+  __host__ __device__ EdgePos_t get_start_edge_idx () {return start_edge_id;}
+  __host__ __device__ EdgePos_t get_end_edge_idx () {return end_edge_id;}
   __host__ __device__ VertexID get_id () {return id;}
-  __host__ __device__ void set_start_edge_id (int start) {start_edge_id = start;}
-  __host__ __device__ void set_end_edge_id (int end) {end_edge_id = end;}
+  __host__ __device__ void set_start_edge_id (EdgePos_t start) {start_edge_id = start;}
+  __host__ __device__ void set_end_edge_id (EdgePos_t end) {end_edge_id = end;}
 };
 
-typedef int Edge;
+typedef VertexID Edge;
 
   CSR::Vertex vertices[N];
   CSR::Edge edges[N_EDGES];
   int n_vertices;
-  int n_edges;
+  EdgePos_t n_edges;
 
 public:
-  CSR (int _n_vertices, int _n_edges)
+  CSR (int _n_vertices, EdgePos_t _n_edges)
   {
     n_vertices = _n_vertices;
     n_edges = _n_edges;
@@ -59,7 +62,7 @@ public:
   {
     for (int i = 0; i < n_vertices; i++) {
       os << vertices[i].id << " " << vertices[i].label << " ";
-      for (int edge_iter = vertices[i].start_edge_id;
+      for (EdgePos_t edge_iter = vertices[i].start_edge_id;
            edge_iter <= vertices[i].end_edge_id; edge_iter++) {
         os << edges[edge_iter] << " ";
       }
@@ -68,7 +71,7 @@ public:
   }
 
   __host__ __device__
-  int get_start_edge_idx (int vertex_id) const 
+  EdgePos_t get_start_edge_idx (VertexID vertex_id) const 
   {
     if (!(vertex_id < n_vertices && 0 <= vertex_id)) {
       printf ("vertex_id %d, n_vertices %d\n", vertex_id, n_vertices);
@@ -78,17 +81,17 @@ public:
   }
 
   __host__ __device__
-  int get_end_edge_idx (int vertex_id) const 
+  EdgePos_t get_end_edge_idx (VertexID vertex_id) const 
   {
     assert (vertex_id < n_vertices && 0 <= vertex_id);
     return vertices[vertex_id].end_edge_id;
   }
 
   __host__ __device__
-  bool has_edge (int u, int v) const 
+  bool has_edge (VertexID u, VertexID v) const 
   {
     //TODO: Since graph is sorted, do this using binary search
-    for (int e = get_start_edge_idx (u); e <= get_end_edge_idx (u); e++) {
+    for (EdgePos_t e = get_start_edge_idx (u); e <= get_end_edge_idx (u); e++) {
       if (edges[e] == v) {
         return true;
       }
@@ -97,7 +100,7 @@ public:
     return false;
   }
 
-  int n_edges_for_vertex (int vertex) const 
+  EdgePos_t n_edges_for_vertex (VertexID vertex) const 
   {
     return (get_end_edge_idx (vertex) != -1) ? (get_end_edge_idx (vertex) - get_start_edge_idx (vertex) + 1) : 0;
   }
@@ -119,9 +122,9 @@ public:
   }
 
   __host__ __device__
-  void copy_edges (CSR* src, int start, int end)
+  void copy_edges (CSR* src, EdgePos_t start, EdgePos_t end)
   {
-    for (int i = start; i < end; i++) {
+    for (EdgePos_t i = start; i < end; i++) {
       edges[i] = src->get_edges ()[i];
     }
   }
@@ -141,7 +144,7 @@ public:
   const CSR::Edge *edges;
 
    __host__
-  CSRPartition (int _start, int _end, int _edge_start_idx, int _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges) : 
+  CSRPartition (int _start, int _end, EdgePos_t _edge_start_idx, EdgePos_t _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges) : 
                 first_vertex_id (_start), last_vertex_id(_end), vertices(_vertices), edges(_edges), 
                 first_edge_idx(_edge_start_idx), last_edge_idx (_edge_end_idx)
   {
@@ -149,7 +152,7 @@ public:
   }
 
   __host__ __device__
-  int get_start_edge_idx (int vertex_id) const  {
+  EdgePos_t get_start_edge_idx (int vertex_id) const  {
     if (!(vertex_id <= last_vertex_id && first_vertex_id <= vertex_id)) {
       printf ("vertex_id %d, end_vertex %d, start_vertex %d\n", vertex_id, last_vertex_id, first_vertex_id);
       assert (false);
@@ -158,20 +161,20 @@ public:
   }
 
   __host__ __device__
-  int get_end_edge_idx (int vertex_id) const 
+  EdgePos_t get_end_edge_idx (int vertex_id) const 
   {
     assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
     return vertices[vertex_id - first_vertex_id].end_edge_id;
   }
   
   __host__ __device__
-  CSR::Edge get_edge (int idx)  const 
+  CSR::Edge get_edge (EdgePos_t idx)  const 
   {
     assert (idx >= first_edge_idx && idx <= last_edge_idx);
     return edges[idx - first_edge_idx];
   }
 
-  int get_vertex_for_edge_idx (int idx) const 
+  VertexID get_vertex_for_edge_idx (EdgePos_t idx) const 
   {
     for (int v = first_vertex_id; v < last_vertex_id; v++) {
       if (idx >= get_start_edge_idx (v) && idx <= get_end_edge_idx (v)) {
@@ -201,7 +204,7 @@ public:
   }
 
   __host__ __device__
-  size_t get_n_edges () const 
+  EdgePos_t get_n_edges () const 
   {
     return last_edge_idx - first_edge_idx + 1;
   }
@@ -225,9 +228,9 @@ public:
 
 void csr_from_graph (CSR* csr, Graph& graph)
 {
-  int edge_iterator = 0;
+  EdgePos_t edge_iterator = 0;
   auto graph_vertices = graph.get_vertices ();
-  for (int i = 0; i < graph_vertices.size (); i++) {
+  for (size_t i = 0; i < graph_vertices.size (); i++) {
     ::Vertex& vertex = graph_vertices[i];
     csr->vertices[i].set_from_graph_vertex (graph_vertices[i]);
     csr->vertices[i].set_start_edge_id (edge_iterator);
