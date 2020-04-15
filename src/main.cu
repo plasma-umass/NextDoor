@@ -1489,7 +1489,7 @@ int main (int argc, char* argv[])
 
   std::vector<VectorVertexEmbedding> initial_embeddings = get_initial_embedding_vector (csr);
   std::vector<VectorVertexEmbedding> output;
-  size_t new_embeddings_size = 0;
+  EdgePos_t new_embeddings_size = 0;
 
   std::vector<VectorVertexEmbedding>& input_embeddings = initial_embeddings;
   std::vector<VectorVertexEmbedding> iter_1_embeddings;
@@ -1517,27 +1517,26 @@ int main (int argc, char* argv[])
   CSRPartition* device_csr;
   CSR::Vertex* device_vertex_array;
   CSR::Edge* device_edge_array;
-  int* device_vertex_partition_positions;
+  EdgePos_t* device_vertex_partition_positions;
 
   double gpu_time = 0;
   
   std::cout << "Generating additions" << std::endl;
-  int* device_additions_sizes;
+  EdgePos_t* device_additions_sizes;
   VertexID* device_additions; //Storage to store inputs added to each embedding
-  int* device_is_duplicate;
+  EdgePos_t* device_is_duplicate;
   VertexID* device_additions_prev_hop = nullptr;
-  int* device_prev_thread_idx_to_edge_in_additions = nullptr;
 
   std::vector<std::vector <std::pair <VertexID, int>>> host_src_to_roots;
 
   VertexID** neighbors = new VertexID* [N_HOPS];
-  int* neighbors_sizes = new int [N_HOPS];
-  int** additions_sizes = new int* [N_HOPS];
-  int*** final_map_vertex_to_additions = new int**[N_HOPS];
+  EdgePos_t* neighbors_sizes = new EdgePos_t [N_HOPS];
+  EdgePos_t** additions_sizes = new EdgePos_t* [N_HOPS];
+  EdgePos_t*** final_map_vertex_to_additions = new EdgePos_t**[N_HOPS];
   //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
-  int*** device_map_vertex_to_additions = new int**[N_HOPS]; new int*[csr_partitions.size ()]; 
+  EdgePos_t*** device_map_vertex_to_additions = new EdgePos_t**[N_HOPS];
 
-  int* source_vertex_idx;
+  VertexID* source_vertex_idx;
   CHK_CU (cudaMalloc (&source_vertex_idx, sizeof(int)));
   unsigned long long* device_max_neighbors_iter;
   CHK_CU (cudaMalloc (&device_max_neighbors_iter, 
@@ -1546,18 +1545,18 @@ int main (int argc, char* argv[])
   for (int hop = 0; hop < N_HOPS; hop++) {
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
-    int* partition_map_vertex_to_additions[csr_partitions.size ()] = {nullptr};
+    EdgePos_t* partition_map_vertex_to_additions[csr_partitions.size ()] = {nullptr};
     std::vector<size_t> per_part_num_neighbors = std::vector<size_t> (csr_partitions.size (), 0);
     size_t num_neighbors = 0;
     final_map_vertex_to_additions[hop] = new int*[csr_partitions.size ()];
     //size_t map_vertex_to_additions_size;
-    const size_t map_vertex_to_additions_size = csr->get_n_vertices () * sizeof (VertexID) * 2;
-    final_map_vertex_to_additions[hop][0] = (int*)new char[map_vertex_to_additions_size];
-    size_t final_map_vertex_to_additions_iter = 0;
-    device_map_vertex_to_additions[hop] = new int*[csr_partitions.size ()];
-    additions_sizes[hop] = new int[csr->get_n_vertices () * 2];
+    const EdgePos_t map_vertex_to_additions_size = csr->get_n_vertices () * sizeof (VertexID) * 2;
+    final_map_vertex_to_additions[hop][0] = (EdgePos_t*)new char[map_vertex_to_additions_size];
+    EdgePos_t final_map_vertex_to_additions_iter = 0;
+    device_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
+    additions_sizes[hop] = new EdgePos_t[csr->get_n_vertices () * 2];
     VertexID** part_neighbors = new VertexID*[csr_partitions.size ()];
-    int** part_additions_sizes = new int*[csr_partitions.size ()];
+    EdgePos_t** part_additions_sizes = new EdgePos_t*[csr_partitions.size ()];
 
     for (int p = 0; p < csr_partitions.size (); p++) {
       device_map_vertex_to_additions[hop][p] = nullptr;
@@ -1583,13 +1582,14 @@ int main (int argc, char* argv[])
       int MAX_LENGTHS_N_THREADS = 128;
       int N_BLOCKS = (root_partition.get_n_vertices ()%MAX_LENGTHS_N_THREADS == 0) ? root_partition.get_n_vertices ()/128 : root_partition.get_n_vertices ()/MAX_LENGTHS_N_THREADS + 1;
 
-      int* device_edges_to_prev_iter_additions;
-      int* device_prev_hop_addition_sizes;
-      const int vertex_with_next_partition = get_common_vertex_with_next_partition (csr_partitions, root_part_idx);
-      const int vertex_with_prev_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
+      VertexID* device_edges_to_prev_iter_additions;
+      EdgePos_t* device_prev_hop_addition_sizes;
+      const VertexID vertex_with_next_partition = get_common_vertex_with_next_partition (csr_partitions, root_part_idx);
+      const VertexID vertex_with_prev_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
       assert (vertex_with_next_partition == -1 and vertex_with_prev_partition == -1);
 
       if (hop > 0) {
+        //TODO: Probably don't need this anymore
         int* edges_to_prev_iter_additions;
         edges_to_prev_iter_additions = new int[root_partition.get_n_edges ()];
         for (int e = root_partition.first_edge_idx; e <= root_partition.last_edge_idx; e++) {
