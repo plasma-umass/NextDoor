@@ -1191,7 +1191,7 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
   //Sum of edges of all partitions is equal to N_EDGES
   EdgePos_t sum_partition_edges = 0;
 
-  for (int id = 0; id < csr_partitions.size (); id++) {
+  for (int id = 0; id < (int)csr_partitions.size (); id++) {
     auto part = csr_partitions[id];
     std::cout << id << " " << part.last_edge_idx << " " << part.first_edge_idx << " " << part.first_vertex_id << " " << part.last_vertex_id << std::endl;
     if (part.last_edge_idx != -1) {
@@ -1205,7 +1205,7 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
   assert (sum_partition_edges == N_EDGES);
 
   VertexID sum_vertices = 0;
-  for (int p = 0; p < csr_partitions.size (); p++) {
+  for (int p = 0; p < (int)csr_partitions.size (); p++) {
     if (p > 0 && csr_partitions[p].first_vertex_id == csr_partitions[p-1].last_vertex_id) {
       sum_vertices += csr_partitions[p].last_vertex_id - (csr_partitions[p].first_vertex_id);
     } else {
@@ -1218,7 +1218,7 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
   EdgePos_t equal_edges = 0;
 
   /*Check if union of all partitions is equal to the graph*/
-  for (int p = 0; p < csr_partitions.size (); p++) {
+  for (int p = 0; p < (int)csr_partitions.size (); p++) {
     VertexID u = csr_partitions[p].first_vertex_id;
     VertexID v = csr_partitions[p].last_vertex_id;
     EdgePos_t end = csr_partitions[p].last_edge_idx;
@@ -1288,7 +1288,7 @@ size_t partition_map_vertex_to_additions_size (CSRPartition& partition)
 int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, VertexID v) 
 {
   std::vector<int> parts;
-  for (int part_idx = 0; part_idx < csr_partitions.size (); part_idx++) {
+  for (int part_idx = 0; part_idx < (int)csr_partitions.size (); part_idx++) {
     if (csr_partitions[part_idx].has_vertex (v))
       return part_idx;
   }
@@ -1345,18 +1345,18 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
     per_part_src_to_roots_size[part] += host_src_to_roots[v].size ();
   }
 
-  for (int part = 0; part < csr_partitions.size (); part++) {    
+  for (int part = 0; part < (int)csr_partitions.size (); part++) {    
     per_part_src_to_root_positions[part] = new EdgePos_t[2*csr_partitions[part].get_n_vertices ()];
     per_part_src_to_roots[part] = new VertexID[2*per_part_src_to_roots_size[part]];
   }
 
-  for (int part = 0; part < csr_partitions.size (); part++) {
+  for (int part = 0; part < (int)csr_partitions.size (); part++) {
     int iter = 0;
 
     for (VertexID v = csr_partitions[part].first_vertex_id; 
          v <= csr_partitions[part].last_vertex_id; v++) {
       int part_v = v - csr_partitions[part].first_vertex_id;
-      for (VertexID i = 0; i < host_src_to_roots[v].size (); i++) {
+      for (VertexID i = 0; i < (VertexID)host_src_to_roots[v].size (); i++) {
         per_part_src_to_roots[part][iter + 2*i] = std::get<0> (host_src_to_roots[v][i]);
         per_part_src_to_roots[part][iter + 2*i + 1] = std::get<1> (host_src_to_roots[v][i]);
       }
@@ -1531,7 +1531,7 @@ int main (int argc, char* argv[])
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
     EdgePos_t* partition_map_vertex_to_additions[csr_partitions.size ()] = {nullptr};
-    std::vector<size_t> per_part_num_neighbors = std::vector<size_t> (csr_partitions.size (), 0);
+    std::vector<EdgePos_t> per_part_num_neighbors = std::vector<EdgePos_t> (csr_partitions.size (), 0);
     size_t num_neighbors = 0;
     final_map_vertex_to_additions[hop] = new int*[csr_partitions.size ()];
     //size_t map_vertex_to_additions_size;
@@ -1543,12 +1543,12 @@ int main (int argc, char* argv[])
     VertexID** part_neighbors = new VertexID*[csr_partitions.size ()];
     EdgePos_t** part_additions_sizes = new EdgePos_t*[csr_partitions.size ()];
 
-    for (int p = 0; p < csr_partitions.size (); p++) {
+    for (int p = 0; p < (int)csr_partitions.size (); p++) {
       device_map_vertex_to_additions[hop][p] = nullptr;
     }
 
     /********************Get the output additions lengths*******************/
-    for (int root_part_idx = 0; root_part_idx < csr_partitions.size (); root_part_idx++) {
+    for (int root_part_idx = 0; root_part_idx < (int)csr_partitions.size (); root_part_idx++) {
       unsigned long long num_neighbors_iter = 0;
       CSRPartition& root_partition = csr_partitions[root_part_idx];
       CSRPartition* device_root_partition;
@@ -1818,7 +1818,7 @@ int main (int argc, char* argv[])
           //TODO: Use DoubleBuffer version that requires O(P) space.
           cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, end);
           
-          if (d_temp_storage != nullptr and temp_storage_bytes <= max_end) {
+          if (d_temp_storage != nullptr and temp_storage_bytes <= (size_t)max_end) {
             d_temp_storage = d_max_temp_storage;
           } else {
             // std::cout << "temp_storage_bytes " << temp_storage_bytes << " end " << end << " temp/end " <<  ((float)temp_storage_bytes)/end << std::endl;
@@ -1835,7 +1835,7 @@ int main (int argc, char* argv[])
           
           cub::DeviceSelect::Unique(d_temp_storage, temp_storage_bytes, d_in, d_out, d_selected + v, end);
           
-          if (temp_storage_bytes <= max_end) {
+          if (temp_storage_bytes <= (size_t)max_end) {
             d_temp_storage = d_max_temp_storage;
           } else {
             CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
@@ -1995,7 +1995,7 @@ int main (int argc, char* argv[])
     neighbors[hop] = (VertexID*) new char[num_neighbors];
     neighbors_sizes[hop] = num_neighbors;
 
-    for (int part = 0; part < csr_partitions.size (); part++) {
+    for (int part = 0; part < (int)csr_partitions.size (); part++) {
       //Copy back the neighbors at the correct place
       for (VertexID v = csr_partitions[part].first_vertex_id; 
         v <= csr_partitions[part].last_vertex_id; v++) {
@@ -2048,7 +2048,7 @@ int main (int argc, char* argv[])
   }
 
   for (int i = 0; i < N_HOPS; i++) {
-    for (int part = 0; part < csr_partitions.size (); part++) {
+    for (int part = 0; part < (int)csr_partitions.size (); part++) {
       cudaFree (device_map_vertex_to_additions[i][part]);
     }
   }
@@ -2092,7 +2092,7 @@ int main (int argc, char* argv[])
   std::cout << "CPU Time: " << (cpu_t2 - cpu_t1) << " secs" << std::endl;
   std::cout << "GPU Time: " << gpu_time << " secs" << std::endl;
   assert (produced_embeddings.size () == hops.size ());
-  for (VertexID idx = 0; idx < produced_embeddings.size (); idx++) {
+  for (size_t idx = 0; idx < produced_embeddings.size (); idx++) {
     std::unordered_set<VertexID> cpu_set = std::unordered_set<VertexID> (hops[idx].begin (), hops[idx].end ());
     std::vector<VertexID> vector_hops;
     vector_hops.insert (vector_hops.begin (), cpu_set.begin(), cpu_set.end ());
@@ -2106,7 +2106,7 @@ int main (int argc, char* argv[])
       std::cout << "checking for vertex " << idx << " start " << final_map_vertex_to_additions[0][0][2*idx] << " " << additions_sizes[0][2*idx+1] << std::endl;
       std::cout << "size " << vector_hops.size () << " " << gpu_vector.size () << std::endl;
       #if 1
-      for (int i = 0; i < max (vector_hops.size (), gpu_vector.size ()); i++) {
+      for (size_t i = 0; i < max (vector_hops.size (), gpu_vector.size ()); i++) {
         if (i < min (vector_hops.size (), gpu_vector.size ()))
           std::cout << vector_hops[i] << "  " << gpu_vector[i] << std::endl;
         else if (i < vector_hops.size ()) 

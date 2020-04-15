@@ -111,7 +111,7 @@ public:
   const CSR::Vertex* get_vertices () const  {return &vertices[0];}
 
   __host__ __device__
-  int get_n_vertices () const  {return n_vertices;}
+  VertexID get_n_vertices () const  {return n_vertices;}
 
   __host__ __device__
   void copy_vertices (CSR* src, int start, int end)
@@ -198,7 +198,7 @@ public:
   }
 
   __host__ __device__
-  size_t get_n_vertices () const 
+  VertexID get_n_vertices () const 
   {
     return last_vertex_id - first_vertex_id + 1;
   }
