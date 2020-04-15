@@ -85,8 +85,6 @@ public:
 
     while (true) {
       char line[LINE_SIZE];
-      char num_str[LINE_SIZE];
-      size_t line_size;
 
       if (fgets (line, LINE_SIZE, fp) == nullptr) {
         break;

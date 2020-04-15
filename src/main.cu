@@ -327,8 +327,6 @@ std::vector <std::vector <VertexID>> n_hop_cpu (CSR* csr, const int N_HOPS)
 {
   std::vector <std::vector <VertexID>> hops = std::vector<std::vector<VertexID>> (csr->get_n_vertices ());
 
-  int hop = 0;
-
   for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
     EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
     EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
@@ -398,6 +396,7 @@ __device__ int n_edges_to_warp_size (const EdgePos_t n_edges)
   //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
   //Best is 4.
   return 4;
+  #if 0
   if (n_edges <= 4) 
     return 2;
   else if (n_edges > 4 && n_edges <= 8)
@@ -408,6 +407,7 @@ __device__ int n_edges_to_warp_size (const EdgePos_t n_edges)
     return 16;
   else
     return 32;
+  #endif
 }
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
@@ -582,9 +582,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
 #endif 
 
   int laneid = threadIdx.x%warpSize;
-  int warpid = threadIdx.x/warpSize;
-
-  int thread_idx = blockIdx.x*blockDim.x + threadIdx.x;
 
   if (hop != 0) {
     thread_idx_to_load [2*threadIdx.x] = -1;
@@ -712,7 +709,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
     assert (n_vertex_load <= MAX_VERTICES_PER_TB);
    
     int hop_vertex_start_idx = -1;
-    int n_root_vertices = -1;
+    //int n_root_vertices = -1;
     int root_vertex = -1;
     int hop_idx = -1;
     int first_active_thread = -1;
@@ -721,10 +718,9 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
     if (_curr_vertex_id != -1 && root_vertex_idx != -1 && vertices[_curr_vertex_id] <= csr->last_vertex_id) {
       VertexID part_vertex_id = src_vertex_to_part_vertex_idx (csr, vertices[_curr_vertex_id]);
       hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
-      n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
+      //n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
       root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx];
       hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx + 1];
-      VertexID hop_vertex = embeddings_additions_prev_hop[hop_idx];
     }
 
     __syncthreads ();
@@ -819,7 +815,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
     if (last_hop_vertex_id != -1 && last_hop_vertex_roots_remaining != -1) {
       VertexID part_vertex_id = src_vertex_to_part_vertex_idx(csr, vertices[last_hop_vertex_id]);
       VertexID hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
-      VertexID n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
+      //VertexID n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
       
       __syncthreads ();
       
@@ -973,11 +969,6 @@ __global__ void remove_duplicates_in_hop_per_block (int N_HOPS, int hop,
 
   BlockScanT(temp_storage.scan).ExclusiveSum(thread_items, thread_items);
 
-  __shared__ int distinct_elements;
-  if (threadIdx.x == 0) {
-    distinct_elements = 0;
-  }
-
   __syncthreads ();
 
   #pragma unroll
@@ -1023,8 +1014,6 @@ __global__ void update_filled_ranges (VertexID n_vertices, EdgePos_t* previous_s
 std::vector <std::unordered_set <VertexID>> n_hop_cpu_distinct (CSR* csr, const int N_HOPS)
 {
   std::vector <std::unordered_set <VertexID>> hops = std::vector<std::unordered_set<VertexID>> (csr->get_n_vertices ());
-
-  int hop = 0;
 
   for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
     EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
@@ -1291,12 +1280,12 @@ size_t cpu_get_max_lengths_for_vertices_single_step (CSRPartition& root_partitio
   return embeddings_additions_iter;
 }
 
-const size_t partition_map_vertex_to_additions_size (CSRPartition& partition)
+size_t partition_map_vertex_to_additions_size (CSRPartition& partition)
 {
   return partition.get_n_vertices ()* 2;
 }
 
-const int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, VertexID v) 
+int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, VertexID v) 
 {
   std::vector<int> parts;
   for (int part_idx = 0; part_idx < csr_partitions.size (); part_idx++) {
@@ -1307,7 +1296,7 @@ const int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions,
   return -1;
 }
 
-size_t compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
+void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
                                     const CSR* csr,
                                     const VertexID root_part_idx, const int hop, 
                                     const std::vector<CSRPartition>& csr_partitions,
@@ -1439,7 +1428,6 @@ void bfs (CSR* csr)
 int main (int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
-  int n_edges = 0;
 
   if (argc < 2) {
     std::cout << "Arguments: graph-file" << std::endl;
@@ -1489,7 +1477,6 @@ int main (int argc, char* argv[])
 
   std::vector<VectorVertexEmbedding> initial_embeddings = get_initial_embedding_vector (csr);
   std::vector<VectorVertexEmbedding> output;
-  EdgePos_t new_embeddings_size = 0;
 
   std::vector<VectorVertexEmbedding>& input_embeddings = initial_embeddings;
   std::vector<VectorVertexEmbedding> iter_1_embeddings;
@@ -1517,14 +1504,12 @@ int main (int argc, char* argv[])
   CSRPartition* device_csr;
   CSR::Vertex* device_vertex_array;
   CSR::Edge* device_edge_array;
-  EdgePos_t* device_vertex_partition_positions;
 
   double gpu_time = 0;
   
   std::cout << "Generating additions" << std::endl;
   EdgePos_t* device_additions_sizes;
   VertexID* device_additions; //Storage to store inputs added to each embedding
-  EdgePos_t* device_is_duplicate;
   VertexID* device_additions_prev_hop = nullptr;
 
   std::vector<std::vector <std::pair <VertexID, int>>> host_src_to_roots;
@@ -1794,7 +1779,6 @@ int main (int argc, char* argv[])
 
       for (VertexID v = root_partition.first_vertex_id; 
         v <= root_partition.last_vertex_id; v++) {
-        EdgePos_t start = partition_map_vertex_to_additions[root_part_idx][2*v];
         EdgePos_t end = part_additions_sizes[root_part_idx][2*v + 1];
         max_end = max(end, max_end);
       }
@@ -1926,13 +1910,11 @@ int main (int argc, char* argv[])
         final_map_vertex_to_additions[hop][0][2*common_vertex + 1] += common_vertex_new_additions;
         EdgePos_t start_pos = 0;
         //TODO: start_pos is sum of all embedding additions so far
-        EdgePos_t max_v = 0;
         for (VertexID v = csr_partitions[root_part_idx - 1].first_vertex_id; 
              v <= csr_partitions[root_part_idx - 1].last_vertex_id; v++) {
           EdgePos_t p = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
           if (p > start_pos) {
             start_pos = p;
-            max_v = v;
           }
         }
         
@@ -1979,7 +1961,7 @@ int main (int argc, char* argv[])
         EdgePos_t common_vertex_new_additions = part_additions_sizes[root_part_idx][2*(common_vertex - common_vertex) + 1];
         first_vertex_id = common_vertex + 1;
         EdgePos_t common_vertex_filled = additions_sizes[hop][2*common_vertex + 1];
-        for (VertexID v = common_vertex + 1; v <= root_partition.last_vertex_id; v++) {
+        for (VertexID v = first_vertex_id; v <= root_partition.last_vertex_id; v++) {
             additions_sizes[hop][2*v + 1] = part_additions_sizes[root_part_idx][2*(v - common_vertex) + 1];
         }
         
