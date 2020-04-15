@@ -291,10 +291,10 @@ std::vector<VectorVertexEmbedding> get_extensions_vector (VectorVertexEmbedding&
       extensions.push_back(extension);
     }
   } else {
-    for (int i = 0; i < size; i++) {
-      int u = embedding.get_vertex (i);
-      for (int e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
-        int v = csr->get_edges () [e];
+    for (size_t i = 0; i < size; i++) {
+      VertexID u = embedding.get_vertex (i);
+      for (EdgePos_t e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
+        VertexID v = csr->get_edges () [e];
         if (embedding.has (v) == false) {
           VectorVertexEmbedding extension(1, GlobalMemAllocator::alloc_vertices_array(size + 1));
           vector_embedding_from_one_less_size (embedding, extension);
@@ -313,7 +313,7 @@ void run_single_step_initial_vector (std::vector<VectorVertexEmbedding>& input_e
                                      std::vector<VectorVertexEmbedding>& output_embeddings,
                                      std::vector<VectorVertexEmbedding>& next_step_embeddings)
 {
-  for (int i = 0; i < input_embeddings.size (); i++) {
+  for (size_t i = 0; i < input_embeddings.size (); i++) {
     VectorVertexEmbedding& embedding = input_embeddings[i];
     std::vector<VectorVertexEmbedding> extensions = get_extensions_vector (embedding, csr);
     for (auto extension : extensions) {
@@ -329,28 +329,28 @@ std::vector <std::vector <VertexID>> n_hop_cpu (CSR* csr, const int N_HOPS)
 
   int hop = 0;
 
-  for (int vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
-    int start_edge_idx = csr->get_start_edge_idx (vertex);
-    int end_edge_idx = csr->get_end_edge_idx (vertex);
+  for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
+    EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
+    EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
     if (start_edge_idx != -1) {
-      for (int edge = start_edge_idx; edge <= end_edge_idx; edge++) {
+      for (EdgePos_t edge = start_edge_idx; edge <= end_edge_idx; edge++) {
         hops[vertex].push_back (csr->get_edges()[edge]);
       }
     }
   }
 
-  for (int vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
+  for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
     int hop = 1;
     std::vector <VertexID> vertex_hops[N_HOPS + 1];
     vertex_hops[0].insert (vertex_hops[0].begin(), hops[vertex].begin (), hops[vertex].end ());
     while (hop < N_HOPS) {
-      for (int hop_vertex : vertex_hops[hop - 1]) {
-        int start_edge_idx = csr->get_start_edge_idx (hop_vertex);
-        int end_edge_idx = csr->get_end_edge_idx (hop_vertex);
+      for (VertexID hop_vertex : vertex_hops[hop - 1]) {
+        EdgePos_t start_edge_idx = csr->get_start_edge_idx (hop_vertex);
+        EdgePos_t end_edge_idx = csr->get_end_edge_idx (hop_vertex);
         
         if (start_edge_idx != -1) {
-          for (int edge = start_edge_idx; edge <= end_edge_idx; edge++) {
-            int v = csr->get_edges()[edge];
+          for (EdgePos_t edge = start_edge_idx; edge <= end_edge_idx; edge++) {
+            VertexID v = csr->get_edges()[edge];
             vertex_hops[hop].push_back (v);
           }
         }
@@ -393,7 +393,7 @@ __device__ inline int get_warp_mask_and_participating_threads (int condition, in
   return warp_mask;
 }
 
-__device__ int n_edges_to_warp_size (const int n_edges) 
+__device__ int n_edges_to_warp_size (const EdgePos_t n_edges) 
 {
   //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
   //Best is 4.
@@ -416,9 +416,10 @@ __device__ int n_edges_to_warp_size (const int n_edges)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
 __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
-                                                          int start_vertex, int end_vertex,
-                                                          unsigned long long int* embeddings_additions_iter,
-                                                          void* void_map_orig_embedding_to_additions)
+                                                         VertexID start_vertex, 
+                                                         VertexID end_vertex,
+                                                         unsigned long long int* embeddings_additions_iter,
+                                                         void* void_map_orig_embedding_to_additions)
 {
   CSRPartition* csr = (CSRPartition*)void_csr;
 
@@ -428,15 +429,15 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
     return;
   }
 
-  int* map_orig_embedding_to_additions = (int*) void_map_orig_embedding_to_additions;
+  VertexID* map_orig_embedding_to_additions = (VertexID*) void_map_orig_embedding_to_additions;
   unsigned long long int new_edges = 0;
 
   /*Perform a single hop for all vertices in the input embedding*/
-  const int start_edge_idx = csr->get_start_edge_idx (vertex);
-  const int end_edge_idx = csr->get_end_edge_idx (vertex);
+  const EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
+  const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
 
   if (end_edge_idx != -1) {
-    int e = (end_edge_idx - start_edge_idx) + 1;
+    EdgePos_t e = (end_edge_idx - start_edge_idx) + 1;
     if (e < 0) {
       printf ("v %d s %d e %d\n", vertex, start_edge_idx, end_edge_idx);
     }
@@ -498,13 +499,14 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
 // }
 
 __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* csr,
-                                                          int start_vertex, int end_vertex,
+                                                          VertexID start_vertex, 
+                                                          VertexID end_vertex,
                                                           unsigned long long int* void_embeddings_additions_iter,
                                                           void* void_map_orig_embedding_to_additions_prev_iter,
                                                           void* void_map_orig_embedding_to_additions_next_iter,
-                                                          int* edges_to_prev_iter_additions,
-                                                          int common_vertex_with_previous_partition,
-                                                          int common_vertex_with_next_partition)
+                                                          VertexID* edges_to_prev_iter_additions,
+                                                          VertexID common_vertex_with_previous_partition,
+                                                          VertexID common_vertex_with_next_partition)
 {
   int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
   VertexID vertex = thread_idx + start_vertex;
@@ -513,14 +515,14 @@ __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* csr,
   }
 
   unsigned long long int* embeddings_additions_iter = void_embeddings_additions_iter;
-  int* map_orig_embedding_to_additions_next_iter = (int*)void_map_orig_embedding_to_additions_next_iter;
-  int* map_orig_embedding_to_additions_prev_iter = (int*)void_map_orig_embedding_to_additions_prev_iter;
+  VertexID* map_orig_embedding_to_additions_next_iter = (VertexID*)void_map_orig_embedding_to_additions_next_iter;
+  VertexID* map_orig_embedding_to_additions_prev_iter = (VertexID*)void_map_orig_embedding_to_additions_prev_iter;
   unsigned long long int new_edges = 0;
 
   /*Perform a single hop for all vertices in the input embedding*/
   
-  int start_edge_idx = csr->get_start_edge_idx (vertex);
-  const int end_edge_idx = csr->get_end_edge_idx (vertex);
+  EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
+  const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
   if (end_edge_idx != -1) {
     while (start_edge_idx <= end_edge_idx) {
       int v = csr->get_edge (start_edge_idx);
