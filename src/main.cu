@@ -22,11 +22,11 @@
 #include <cub/cub.cuh>
 
 //citeseer.graph
-const int N = 3312;
-const int N_EDGES = 9074;
+//const int N = 3312;
+//const int N_EDGES = 9074;
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 //rmat.graph
 //const int N = 1024;
 //const int N_EDGES = 29381;
@@ -525,7 +525,7 @@ __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* csr,
   const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
   if (end_edge_idx != -1) {
     while (start_edge_idx <= end_edge_idx) {
-      int v = csr->get_edge (start_edge_idx);
+      VertexID v = csr->get_edge (start_edge_idx);
       if (csr->has_vertex (v) and v != common_vertex_with_previous_partition and v != common_vertex_with_next_partition) {
         assert (v-start_vertex >= 0);
         new_edges += map_orig_embedding_to_additions_prev_iter [2*(v-start_vertex)+1];
@@ -548,43 +548,41 @@ __device__ int src_vertex_to_part_vertex_idx (CSRPartition* csr, int src)
   return src - csr->first_vertex_id;
 }
 
+typedef uint32_t ShMemEdgePos_t;
+
 __global__ void run_hop_parallel_single_step (int N_HOPS, int hop, 
               CSRPartition* csr,
               CSRPartition* root_partition,
-              void* void_embeddings_additions, 
-              size_t num_neighbors,
-              void* void_embeddings_additions_prev_hop,
-              int* map_orig_embedding_to_additions,
-              int* previous_stage_filled_range,
-              int* hop_vertex_to_roots,
-              int* map_vertex_to_hop_vertex_data,
-              int* source_vertex_idx,
-              const int common_vertex_with_previous_partition,
-              const int common_vertex_with_previous_partition_additions,
+              VertexID* embeddings_additions, 
+              EdgePos_t num_neighbors,
+              VertexID* embeddings_additions_prev_hop,
+              VertexID* map_orig_embedding_to_additions,
+              EdgePos_t* previous_stage_filled_range,
+              VertexID* hop_vertex_to_roots,
+              EdgePos_t* map_vertex_to_hop_vertex_data,
+              VertexID* source_vertex_idx,
+              const VertexID common_vertex_with_previous_partition,
+              const VertexID common_vertex_with_previous_partition_additions,
               unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2)
 {
-  __shared__ int vertices[MAX_VERTICES_PER_TB];
-  __shared__ int previous_step_end[MAX_VERTICES_PER_TB];
-  __shared__ int n_vertex_load;
-  __shared__ int thread_idx_to_load[2*MAX_LOAD_PER_TB];
-  __shared__ int last_hop_vertex_id;
-  __shared__ int last_hop_vertex_roots_remaining;
-  __shared__ int last_hop_vertex_roots_done;
+  __shared__ VertexID vertices[MAX_VERTICES_PER_TB];
+  __shared__ VertexID n_vertex_load;
+  __shared__ VertexID thread_idx_to_load[2*MAX_LOAD_PER_TB];
+  __shared__ VertexID last_hop_vertex_id;
+  __shared__ VertexID last_hop_vertex_roots_remaining;
+  __shared__ VertexID last_hop_vertex_roots_done;
 
 #ifdef USE_PARTITION_FOR_SHMEM
   __shared__ VertexID shmem_csr_edges[MAX_EDGES];
-  __shared__ int hop_vertex_in_shared_mem[MAX_HOP_VERTICES_IN_SH_MEM];
-  __shared__ int hop_vertices_in_shared_mem_start_edge_idx[MAX_HOP_VERTICES_IN_SH_MEM];
-  __shared__ int hop_vertices_in_shared_mem_end_edge_idx[MAX_HOP_VERTICES_IN_SH_MEM];
-  __shared__ int hop_vertices_in_shared_mem_size;
-  __shared__ int shmem_csr_edges_size;
+  __shared__ VertexID hop_vertex_in_shared_mem[MAX_HOP_VERTICES_IN_SH_MEM];
+  __shared__ ShMemEdgePos_t hop_vertices_in_shared_mem_start_edge_idx[MAX_HOP_VERTICES_IN_SH_MEM];
+  __shared__ ShMemEdgePos_t hop_vertices_in_shared_mem_end_edge_idx[MAX_HOP_VERTICES_IN_SH_MEM];
+  __shared__ VertexID hop_vertices_in_shared_mem_size;
+  __shared__ ShMemEdgePos_t shmem_csr_edges_size;
 #endif 
 
   int laneid = threadIdx.x%warpSize;
   int warpid = threadIdx.x/warpSize;
-
-  VertexID* embeddings_additions = (VertexID*)void_embeddings_additions;
-  VertexID* embeddings_additions_prev_hop = (VertexID*)void_embeddings_additions_prev_hop;
 
   int thread_idx = blockIdx.x*blockDim.x + threadIdx.x;
 
@@ -616,15 +614,15 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
         }
         
         assert (vertices[n_vertex_load] >= 0 && vertices[n_vertex_load] <= csr->last_vertex_id);
-        int start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
-        const int end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
-        const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
-        int root_vertices = map_vertex_to_hop_vertex_data[2*src_vertex_to_part_vertex_idx(csr, vertices[n_vertex_load]) + 1];
+        EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
+        const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
+        const EdgePos_t n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+        VertexID root_vertices = map_vertex_to_hop_vertex_data[2*src_vertex_to_part_vertex_idx(csr, vertices[n_vertex_load]) + 1];
 #ifdef USE_PARTITION_FOR_SHMEM
         if (hop_vertices_in_shared_mem_size < MAX_HOP_VERTICES_IN_SH_MEM &&
             n_edges != 0 && n_edges + edges_in_shared_mem < MAX_EDGES && 
             root_vertices != 0) {
-          int v = vertices[n_vertex_load];
+          VertexID v = vertices[n_vertex_load];
           hop_vertex_in_shared_mem[hop_vertices_in_shared_mem_size] = v;
           edges_in_shared_mem += n_edges;
           hop_vertices_in_shared_mem_size++;
@@ -681,10 +679,10 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
       if (hop >= hop_vertices_in_shared_mem_size) {
         continue;
       }
-
-      int start_edge_idx = csr->get_start_edge_idx (hop_vertex_in_shared_mem[hop]);
-      const int end_edge_idx = csr->get_end_edge_idx (hop_vertex_in_shared_mem[hop]);
-      const int n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
+//TODO: CONTINUE REFACTORING FROM HERE
+      EdgePos_t start_edge_idx = csr->get_start_edge_idx (hop_vertex_in_shared_mem[hop]);
+      const EdgePos_t end_edge_idx = csr->get_end_edge_idx (hop_vertex_in_shared_mem[hop]);
+      const EdgePos_t n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
       assert (n_edges > 0);
       int _shmem_start = -1;
       if (laneid == 0) {
@@ -693,8 +691,8 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
 
       int shmem_start = __shfl_sync (FULL_MASK, _shmem_start, 0, warpSize);
       assert (shmem_start != -1);
-      for (int e = 0; e < n_edges/warpSize + 1; e++) {
-        int edge_idx = e*warpSize + laneid;
+      for (EdgePos_t e = 0; e < n_edges/warpSize + 1; e++) {
+        EdgePos_t edge_idx = e*warpSize + laneid;
         if (edge_idx < n_edges) {
           shmem_csr_edges[shmem_start + edge_idx] = csr->get_edge (start_edge_idx + edge_idx);
         }
@@ -727,7 +725,6 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
       root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx];
       hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*root_vertex_idx + 1];
       int hop_vertex = embeddings_additions_prev_hop[hop_idx];
-      //if (hop_vertex == 3310) printf ("716: root_vertex %d hop_vertex %d root_idx %d\n", root_vertex, hop_vertex, root_vertex_idx);
     }
 
     __syncthreads ();
@@ -1549,9 +1546,9 @@ int main (int argc, char* argv[])
   
   std::cout << "Generating additions" << std::endl;
   int* device_additions_sizes;
-  void* device_additions; //Storage to store inputs added to each embedding
+  VertexID* device_additions; //Storage to store inputs added to each embedding
   int* device_is_duplicate;
-  void* device_additions_prev_hop = nullptr;
+  VertexID* device_additions_prev_hop = nullptr;
   int* device_prev_thread_idx_to_edge_in_additions = nullptr;
 
   std::vector<std::vector <std::pair <VertexID, int>>> host_src_to_roots;
