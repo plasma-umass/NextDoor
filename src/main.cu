@@ -35,6 +35,8 @@ const int N_EDGES = 2160312;
 #include "csr.hpp"
 #include "utils.hpp"
 
+using namespace utils;
+
 //#define GRAPH_PARTITION_SIZE (12*1024) //24 KB is the size of each partition of graph
 
 typedef uint8_t SharedMemElem;
@@ -419,7 +421,7 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
                                                          VertexID start_vertex, 
                                                          VertexID end_vertex,
                                                          unsigned long long int* embeddings_additions_iter,
-                                                         void* void_map_orig_embedding_to_additions)
+                                                         EdgePos_t* map_orig_embedding_to_additions)
 {
   CSRPartition* csr = (CSRPartition*)void_csr;
 
@@ -429,7 +431,6 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
     return;
   }
 
-  VertexID* map_orig_embedding_to_additions = (VertexID*) void_map_orig_embedding_to_additions;
   unsigned long long int new_edges = 0;
 
   /*Perform a single hop for all vertices in the input embedding*/
@@ -504,7 +505,7 @@ __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* csr,
                                                           unsigned long long int* void_embeddings_additions_iter,
                                                           void* void_map_orig_embedding_to_additions_prev_iter,
                                                           void* void_map_orig_embedding_to_additions_next_iter,
-                                                          VertexID* edges_to_prev_iter_additions,
+                                                          EdgePos_t* edges_to_prev_iter_additions,
                                                           VertexID common_vertex_with_previous_partition,
                                                           VertexID common_vertex_with_next_partition)
 {
@@ -556,7 +557,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
               VertexID* embeddings_additions, 
               EdgePos_t num_neighbors,
               VertexID* embeddings_additions_prev_hop,
-              VertexID* map_orig_embedding_to_additions,
+              EdgePos_t* map_orig_embedding_to_additions,
               EdgePos_t* previous_stage_filled_range,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
@@ -749,7 +750,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
           const EdgePos_t n_edges = end_edge_idx - start_edge_idx + 1;
           int shfl_warp_size = n_edges_to_warp_size(n_edges);
           if (laneid%shfl_warp_size == 0) {
-            e = atomicAdd (end, n_edges);
+            e = utils::atomicAdd (end, n_edges);
           }
           
           EdgePos_t _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);  
@@ -835,7 +836,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
         const EdgePos_t end_edge_idx = csr->get_end_edge_idx (hop_vertex);
 
         if (end_edge_idx != -1) {
-          EdgePos_t e = atomicAdd (end, end_edge_idx - start_edge_idx + 1);
+          EdgePos_t e = utils::atomicAdd (end, end_edge_idx - start_edge_idx + 1);
           int iter = 0;
           
           while (start_edge_idx <= end_edge_idx) {
@@ -877,7 +878,7 @@ __global__ void run_hop_parallel_single_step (int N_HOPS, int hop,
           //   printf ("previous_stage_filled_range %p end %p idx %d\n", previous_stage_filled_range, end, idx);
           // }
           VertexID edge = csr->get_edge (start_edge_idx + edge_idx);
-          EdgePos_t e = atomicAdd (end, 1);
+          EdgePos_t e = utils::atomicAdd (end, 1);
           assert (start + e < num_neighbors);
           assert (start + e >= 0);
           embeddings_additions[start + e] = edge;    
@@ -1448,7 +1449,6 @@ int main (int argc, char* argv[])
   std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
   std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
 
-
   CSR* csr = new CSR(N, N_EDGES);
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
@@ -1532,10 +1532,10 @@ int main (int argc, char* argv[])
     unsigned long long int* device_profile_branch_2;
     EdgePos_t* partition_map_vertex_to_additions[csr_partitions.size ()] = {nullptr};
     std::vector<EdgePos_t> per_part_num_neighbors = std::vector<EdgePos_t> (csr_partitions.size (), 0);
-    size_t num_neighbors = 0;
-    final_map_vertex_to_additions[hop] = new int*[csr_partitions.size ()];
+    EdgePos_t num_neighbors = 0;
+    final_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
     //size_t map_vertex_to_additions_size;
-    const EdgePos_t map_vertex_to_additions_size = csr->get_n_vertices () * sizeof (VertexID) * 2;
+    const EdgePos_t map_vertex_to_additions_size = csr->get_n_vertices () * sizeof (EdgePos_t) * 2;
     final_map_vertex_to_additions[hop][0] = (EdgePos_t*)new char[map_vertex_to_additions_size];
     EdgePos_t final_map_vertex_to_additions_iter = 0;
     device_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
@@ -1573,7 +1573,7 @@ int main (int argc, char* argv[])
       const VertexID vertex_with_prev_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
       assert (vertex_with_next_partition == -1 and vertex_with_prev_partition == -1);
 
-      if (hop > 0) {
+      if (hop > 0 and false) {
         //TODO: Probably don't need this anymore
         //TODO: not doing type refactoring
         int* edges_to_prev_iter_additions;
@@ -1615,12 +1615,12 @@ int main (int argc, char* argv[])
       double t2 = convertTimeValToDouble(getTimeOfDay ());
 
       if (hop > 0) {
-        CHK_CU (cudaFree (device_edges_to_prev_iter_additions));
-        CHK_CU (cudaFree (device_prev_hop_addition_sizes));
+        //CHK_CU (cudaFree (device_edges_to_prev_iter_additions));
+        //CHK_CU (cudaFree (device_prev_hop_addition_sizes));
       }
 
       if (hop > 0) {
-        CHK_CU (cudaMemcpy (device_map_vertex_to_additions[hop][root_part_idx], 
+        CHK_CU (cudaMemcpy (device_map_vertex_to_additions[hop][root_part_idx],
           partition_map_vertex_to_additions[root_part_idx], 
           partition_map_vertex_to_additions_size (root_partition)*sizeof (EdgePos_t), 
           cudaMemcpyHostToDevice));
@@ -1667,8 +1667,8 @@ int main (int argc, char* argv[])
                           partition_additions_sizes_size));
       CHK_CU (cudaMalloc (&device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID)));
       //TODO: Use ifdef NDEBUG
-      EdgePos_t *temp_array = new EdgePos_t[per_part_num_neighbors[root_part_idx]];
-      for (EdgePos_t i = 0; i < per_part_num_neighbors[root_part_idx]; i++)
+      VertexID *temp_array = new VertexID[per_part_num_neighbors[root_part_idx]];
+      for (VertexID i = 0; i < per_part_num_neighbors[root_part_idx]; i++)
         temp_array[i] = -1;
 
       CHK_CU (cudaMemcpy (device_additions, temp_array, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyHostToDevice));
@@ -1701,7 +1701,7 @@ int main (int argc, char* argv[])
                               2*per_part_src_to_roots_size[part_idx]*sizeof (per_part_src_to_roots_size[0])));
           CHK_CU (cudaMemcpy (device_src_to_roots, 
                               per_part_src_to_roots[part_idx], 
-                              2*per_part_src_to_roots_size[part_idx]*sizeof (per_part_src_to_roots_size[0]), 
+                              2*per_part_src_to_roots_size[part_idx]*sizeof (per_part_src_to_roots[0][0]), 
                               cudaMemcpyHostToDevice));
           CHK_CU (cudaMalloc (&device_src_to_root_positions,
                               2*src_partition.get_n_vertices()*sizeof (EdgePos_t)));
@@ -1770,6 +1770,7 @@ int main (int argc, char* argv[])
 
       //Remove Duplicates
 #ifdef REMOVE_DUPLICATES_ON_GPU
+#if 0
       //TODO: Use CUB (http://nvlabs.github.io/cub/) per thread block unique
       //cudaMemcpy (device_is_duplicate, device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyDeviceToDevice);
       const VertexID block_level_duplicate_find_max_val = 1024;
@@ -1864,6 +1865,7 @@ int main (int argc, char* argv[])
       std::cout << "Time in removing duplicate: " << duplicate_t2 - duplicate_t1 << " secs" << std::endl;
       std::cout << "Duplicates removed" << std::endl;
 #endif
+#endif
       
       part_neighbors[root_part_idx] = new VertexID[per_part_num_neighbors [root_part_idx]];
       CHK_CU (cudaMemcpy (part_neighbors[root_part_idx], device_additions, 
@@ -1874,6 +1876,7 @@ int main (int argc, char* argv[])
       CHK_CU (cudaFree (device_additions_sizes));
 
 #ifdef REMOVE_DUPLICATES_ON_CPU
+#if 0
       std::cout << "Remove Duplicates on CPU" << std::endl;
       double duplicate_t1 = convertTimeValToDouble(getTimeOfDay ());
       remove_duplicates_in_hop_on_cpu (root_partition, 
@@ -1885,6 +1888,7 @@ int main (int argc, char* argv[])
       std::cout << "Time in removing duplicate: " << duplicate_t2 - duplicate_t1 << " secs" << std::endl;
       //CHK_CU(cudaFree (device_is_duplicate));
       std::cout << "Duplicates removed" << std::endl;
+#endif
 #endif
 
       /***DONE***/

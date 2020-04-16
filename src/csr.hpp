@@ -1,17 +1,17 @@
 #include "graph.hpp"
 
 #ifndef __CSR_HPP__
-#define __CST_HPP__
+#define __CSR_HPP__
 
 typedef int32_t VertexID;
-typedef int32_t EdgePos_t;
+typedef int64_t EdgePos_t;
 
 class CSR
 {
 public:
   struct Vertex
 {
-  int id;
+  VertexID id;
   int label;
   EdgePos_t start_edge_id;
   EdgePos_t end_edge_id;

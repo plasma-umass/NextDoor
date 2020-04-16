@@ -10,7 +10,7 @@ gpuO0: src/main.cu
 gpu-gdb: src/main.cu
 	nvcc $< -std=c++11 -arch=compute_61 -O0 -g  -I/mnt/homes/abhinav/cub-1.8.0 -o gpu
 
-gpu: src/main.cu
+gpu: src/main.cu src/csr.hpp src/utils.hpp src/graph.hpp
 	nvcc $< -std=c++11 -arch=compute_61 -I/mnt/homes/abhinav/cub-1.8.0 -O2 -o gpu -Xptxas -O2 -Xcompiler -Wall
 
 clean:
