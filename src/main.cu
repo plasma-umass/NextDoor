@@ -57,7 +57,7 @@ using namespace utils;
 
 typedef uint8_t SharedMemElem;
 
-const int N_THREADS = 256;
+const int N_THREADS = 1024;
 
 #define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 1
@@ -1275,9 +1275,6 @@ int main (int argc, char* argv[])
   //PinnedMemory::allocate();
   void* _ptr = PinnedMemory::pinned_memory_heap.malloc(global_mem_size);
   global_mem_ptr = (char*)_ptr;
-  //TODO: Leaking memory right now. Remove GlobalMemAllocator
-#else
-  char* global_mem_ptr = new char[global_mem_size];
 #endif
 
 
@@ -1468,13 +1465,14 @@ int main (int argc, char* argv[])
       CHK_CU (cudaMemset (device_additions_sizes, 0, 
                           partition_additions_sizes_size));
       CHK_CU (cudaMalloc (&device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID)));
-      //TODO: Use ifdef NDEBUG
+#ifndef NDEBUG
       VertexID *temp_array = new VertexID[per_part_num_neighbors[root_part_idx]];
       for (VertexID i = 0; i < per_part_num_neighbors[root_part_idx]; i++)
         temp_array[i] = -1;
 
       CHK_CU (cudaMemcpy (device_additions, temp_array, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyHostToDevice));
       delete temp_array;
+#endif
 
       if (hop > 0) {
         compute_source_to_root_data (host_src_to_roots, csr, root_part_idx, hop,
@@ -1827,33 +1825,6 @@ int main (int argc, char* argv[])
         memcpy (&additions_sizes[hop][0], part_additions_sizes[root_part_idx], 
                 partition_additions_sizes_size);
         first_vertex_id = root_partition.first_vertex_id;
-      } else if (vertex_with_prev_partition != -1) {
-        //TODO remove the cases of vertex_with_prev_partition
-        VertexID common_vertex = vertex_with_prev_partition;
-        EdgePos_t common_vertex_new_additions = part_additions_sizes[root_part_idx][2*(common_vertex - common_vertex) + 1];
-        first_vertex_id = common_vertex + 1;
-        EdgePos_t common_vertex_filled = additions_sizes[hop][2*common_vertex + 1];
-        for (VertexID v = first_vertex_id; v <= root_partition.last_vertex_id; v++) {
-            additions_sizes[hop][2*v + 1] = part_additions_sizes[root_part_idx][2*(v - common_vertex) + 1];
-        }
-        
-        additions_sizes[hop][2*common_vertex + 1] += common_vertex_new_additions;
-
-        //Copy common vertex's neighbors
-        EdgePos_t part_start = partition_map_vertex_to_additions[root_part_idx][2*0];
-        const EdgePos_t part_end = part_start + part_additions_sizes[root_part_idx][2*0 + 1];
-        EdgePos_t final_idx = common_vertex_filled + final_map_vertex_to_additions[hop][0][2*common_vertex];
-        const EdgePos_t final_end = final_idx + final_map_vertex_to_additions[hop][0][2*common_vertex + 1];
-
-        std::cout << "Filled for common_vertex " << common_vertex_filled << " " << 
-        part_start << " " << part_end << " "<<  common_vertex_new_additions << std::endl;
-
-        for (EdgePos_t idx = part_start; idx < part_end; idx++) {
-          assert (final_idx < final_end);
-          std::cout << " final_idx " << final_idx << std::endl;
-          neighbors[hop][final_idx++] = part_neighbors[root_part_idx][idx];
-          std::cout << "write " << neighbors[hop][final_idx-1] << std::endl;
-        }
       } else {
         memcpy (&additions_sizes[hop][2*root_partition.first_vertex_id],
                 part_additions_sizes[root_part_idx], partition_additions_sizes_size);
@@ -2010,7 +1981,6 @@ int main (int argc, char* argv[])
 #ifdef PINNED_MEMORY
   // cudaFree (global_mem_ptr);
 #else
-  delete[] global_mem_ptr;
 #endif
   std::cout << "Time spent in GPU kernel execution " << kernelTotalTime << std::endl;
   std::cout << "Time spent in Streams " << total_stream_time << std::endl;
