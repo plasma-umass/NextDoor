@@ -46,13 +46,13 @@ const int N_EDGES = 2160312;
 using namespace utils;
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
-#undef USE_PARTITION_FOR_SHMEM
+#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
 //#define GRAPH_PARTITION_SIZE (50*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
 typedef uint8_t SharedMemElem;
 
@@ -597,6 +597,7 @@ __global__ void run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
   __shared__ VertexID last_hop_vertex_roots_remaining;
   __shared__ VertexID last_hop_vertex_roots_done;
 
+#if 0
 #ifdef USE_PARTITION_FOR_SHMEM
   __shared__ VertexID shmem_csr_edges[MAX_EDGES];
   __shared__ VertexID hop_vertex_in_shared_mem[MAX_HOP_VERTICES_IN_SH_MEM];
@@ -605,9 +606,11 @@ __global__ void run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
   __shared__ VertexID hop_vertices_in_shared_mem_size;
   __shared__ ShMemEdgePos_t shmem_csr_edges_size;
 #endif 
+#endif
 
   int laneid = threadIdx.x%warpSize;
 
+#if 0
 #ifdef USE_PARTITION_FOR_SHMEM
     assert (src_vertex_exec == SourceVertexExec_t::BlockLevel)
     for (int __hop = 0; __hop < hop_vertices_in_shared_mem_size/(blockDim.x/warpSize) + 1; __hop++) {
@@ -642,7 +645,7 @@ __global__ void run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
       __syncwarp ();
     }
 #endif
-
+#endif
     __syncthreads ();
    
     VertexID hop_vertex = source_vertex;
@@ -689,7 +692,9 @@ __global__ void run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
       
       _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);  
       assert (_e != -1);
+
 #ifdef USE_PARTITION_FOR_SHMEM
+#if 0
       assert (src_vertex_exec == SourceVertexExec_t::BlockLevel)
       if (_curr_vertex_id >= hop_vertices_in_shared_mem_size) {
         int iter = 0;
@@ -715,6 +720,7 @@ __global__ void run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
           iter++;
         }
       }
+#endif
 #else
       int iter = 0;
       while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
@@ -780,7 +786,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
   __shared__ ShMemEdgePos_t shmem_csr_edges_size;
 #endif 
 
-  int laneid = threadIdx.x%warpSize ;
+  int laneid = threadIdx.x%warpSize;
+  int warpid = threadIdx.x/warpSize;
   assert (last_src_vertex <= csr->last_vertex_id);
   assert (csr->first_vertex_id <= last_src_vertex);
 
@@ -874,7 +881,6 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
     root_vertex_idx = thread_idx_to_load[2*threadIdx.x + 1];
 
 #ifdef USE_PARTITION_FOR_SHMEM
-    assert (src_vertex_exec == SourceVertexExec_t::BlockLevel)
     for (int __hop = 0; __hop < hop_vertices_in_shared_mem_size/(blockDim.x/warpSize) + 1; __hop++) {
       int hop = __hop * (blockDim.x/warpSize) + warpid;
       if (hop >= hop_vertices_in_shared_mem_size) {
@@ -885,7 +891,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
       const EdgePos_t end_edge_idx = csr->get_end_edge_idx (hop_vertex_in_shared_mem[hop]);
       const EdgePos_t n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
       assert (n_edges > 0);
-      assert (n_edges <= N_THREADS);
+      
       int _shmem_start = -1;
       if (laneid == 0) {
         _shmem_start = atomicAdd (&shmem_csr_edges_size, n_edges);
@@ -966,11 +972,10 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
           _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);  
           assert (_e != -1);
 #ifdef USE_PARTITION_FOR_SHMEM
-          assert (src_vertex_exec == SourceVertexExec_t::BlockLevel)
           if (_curr_vertex_id >= hop_vertices_in_shared_mem_size) {
             int iter = 0;
             while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
-              VertexID edge = csr->get_edges (start_edge_idx + laneid%shfl_warp_size);
+              VertexID edge = csr->get_edge (start_edge_idx + laneid%shfl_warp_size);
               embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
               start_edge_idx += shfl_warp_size;
               iter++;
@@ -1925,7 +1930,7 @@ int main (int argc, char* argv[])
         
         if (hop >= 1) {
           VertexID vertex_for_block_level_exec = -1;
-
+#if 0
           for (VertexID src_vertex_id = src_partition.first_vertex_id; 
              src_vertex_id <= src_partition.last_vertex_id; src_vertex_id++) {
               
@@ -1954,7 +1959,8 @@ int main (int argc, char* argv[])
             }
           //CHK_CU (cudaDeviceSynchronize ());
           }
-
+#endif
+          vertex_for_block_level_exec = src_partition.last_vertex_id;
           if (vertex_for_block_level_exec != -1) {
             int N_BLOCKS = vertex_for_block_level_exec - src_partition.first_vertex_id + 1;
             run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
