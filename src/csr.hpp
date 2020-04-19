@@ -185,6 +185,11 @@ public:
     return -1;
   }
 
+  __host__ __device__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
+  {
+    return (get_end_edge_idx (v) != -1) ? (get_end_edge_idx(v) - get_start_edge_idx (v) + 1) : 0;
+  }
+
   __host__ __device__
   const CSR::Edge* get_edges () const 
   {
@@ -230,6 +235,7 @@ void csr_from_graph (CSR* csr, Graph& graph)
 {
   EdgePos_t edge_iterator = 0;
   auto graph_vertices = graph.get_vertices ();
+
   for (size_t i = 0; i < graph_vertices.size (); i++) {
     ::Vertex& vertex = graph_vertices[i];
     csr->vertices[i].set_from_graph_vertex (graph_vertices[i]);

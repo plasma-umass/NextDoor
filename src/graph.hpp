@@ -114,6 +114,11 @@ public:
       vertices.push_back (vertex);
     }
 
+    // for (int i = 0; i < vertices.size (); i++) {
+    //   if (vertices[i].id != i) {
+    //     vertices.insert (i, Vertex (i, 0));
+    //   }
+    // }
     // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
 
     // std::unordered_map <int, int> previous_id_to_new_ids;
