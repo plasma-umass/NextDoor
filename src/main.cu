@@ -42,6 +42,7 @@ const int N_EDGES = 2160312;
 
 #include "csr.hpp"
 #include "utils.hpp"
+#include "pinned_memory_alloc.hpp"
 
 using namespace utils;
 
@@ -1577,6 +1578,8 @@ void bfs (CSR* csr)
   }
 }
 
+#define PINNED_MEMORY
+
 int main (int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
@@ -1585,6 +1588,19 @@ int main (int argc, char* argv[])
     std::cout << "Arguments: graph-file" << std::endl;
     return -1;
   }
+
+  size_t global_mem_size = 1024UL*1024*1024;
+
+#ifdef PINNED_MEMORY
+  char* global_mem_ptr;
+  //PinnedMemory::allocate();
+  void* _ptr = PinnedMemory::pinned_memory_heap.malloc(global_mem_size);
+  global_mem_ptr = (char*)_ptr;
+  //TODO: Leaking memory right now. Remove GlobalMemAllocator
+#else
+  char* global_mem_ptr = new char[global_mem_size];
+#endif
+
 
   char* graph_file = argv[1];
   FILE* fp = fopen (graph_file, "r+");
@@ -1611,17 +1627,6 @@ int main (int argc, char* argv[])
 
     std::cout << "Time spent in BFS " << (t2- t1) << " secs"<< std::endl;
   }
-
-  size_t global_mem_size = 1024*1024*1024;//15*1024*1024*1024UL;
-  #undef PINNED_MEMORY
-  #ifdef PINNED_MEMORY
-    char* global_mem_ptr;
-    cudaError_t malloc_error = cudaMallocHost ((void**)&global_mem_ptr, global_mem_size);
-    std::cout << "Malloc error: " << cudaGetErrorString (malloc_error) << std::endl;
-    assert (malloc_error == cudaSuccess);
-  #else
-    char* global_mem_ptr = new char[global_mem_size];
-  #endif
 
   std::cout << "Pinned Memory Allocated" << std::endl;
   GlobalMemAllocator::initialize (global_mem_ptr, global_mem_size);
@@ -1678,6 +1683,7 @@ int main (int argc, char* argv[])
   CHK_CU (cudaMalloc (&device_max_neighbors_iter, 
                       sizeof(unsigned long long)));
 
+  double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int hop = 0; hop < N_HOPS; hop++) {
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
@@ -1724,33 +1730,8 @@ int main (int argc, char* argv[])
       const VertexID vertex_with_prev_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
       assert (vertex_with_next_partition == -1 and vertex_with_prev_partition == -1);
 
-      if (hop > 0 and false) {
-        //TODO: Probably don't need this anymore
-        //TODO: not doing type refactoring
-        int* edges_to_prev_iter_additions;
-        edges_to_prev_iter_additions = new int[root_partition.get_n_edges ()];
-        for (int e = root_partition.first_edge_idx; e <= root_partition.last_edge_idx; e++) {
-          VertexID v = root_partition.get_edge (e);
-          if (!root_partition.has_vertex(v) || 
-              v == vertex_with_next_partition || v == vertex_with_prev_partition) {
-            edges_to_prev_iter_additions[e - root_partition.first_edge_idx] = additions_sizes[hop-1][2*v + 1];
-          }
-        }
-
-        CHK_CU (cudaMalloc (&device_edges_to_prev_iter_additions, 
-                            root_partition.get_n_edges ()*sizeof(VertexID)));
-        CHK_CU (cudaMemcpy (device_edges_to_prev_iter_additions, 
-                            edges_to_prev_iter_additions, 
-                            root_partition.get_n_edges ()*sizeof(VertexID), 
-                            cudaMemcpyHostToDevice));
-        delete edges_to_prev_iter_additions;
-
-        CHK_CU (cudaMalloc (&device_prev_hop_addition_sizes, partition_map_vertex_to_additions_size (root_partition)*sizeof (VertexID)));
-        CHK_CU (cudaMemcpy (device_prev_hop_addition_sizes, &additions_sizes[hop-1][2*root_partition.first_vertex_id], partition_map_vertex_to_additions_size (root_partition)*sizeof (VertexID), cudaMemcpyHostToDevice));
-      }
-
-      partition_map_vertex_to_additions[root_part_idx] = new EdgePos_t[partition_map_vertex_to_additions_size (root_partition)];
-      
+      //partition_map_vertex_to_additions[root_part_idx] = new EdgePos_t[partition_map_vertex_to_additions_size (root_partition)];
+      partition_map_vertex_to_additions[root_part_idx] = (EdgePos_t*)PinnedMemory::pinned_memory_heap.malloc(partition_map_vertex_to_additions_size (root_partition)*sizeof(EdgePos_t));
       double t1 = convertTimeValToDouble(getTimeOfDay ());
 
       if (hop == 0) {
@@ -1977,7 +1958,8 @@ int main (int argc, char* argv[])
         cudaMemcpyDeviceToHost));
       
       if (hop == 0) {
-        partition_map_vertex_to_additions[root_part_idx] = new EdgePos_t[partition_map_vertex_to_additions_size (root_partition)];
+        partition_map_vertex_to_additions[root_part_idx] = (EdgePos_t*)PinnedMemory::pinned_memory_heap.malloc(
+        sizeof(EdgePos_t)*partition_map_vertex_to_additions_size (root_partition));
         CHK_CU (cudaMemcpy (partition_map_vertex_to_additions[root_part_idx], 
                           device_map_vertex_to_additions[hop][root_part_idx], 
                           partition_map_vertex_to_additions_size (root_partition)*sizeof (EdgePos_t), 
@@ -1986,8 +1968,6 @@ int main (int argc, char* argv[])
 
       //Remove Duplicates
 #ifdef REMOVE_DUPLICATES_ON_GPU
-      //TODO: Use CUB (http://nvlabs.github.io/cub/) per thread block unique
-      //cudaMemcpy (device_is_duplicate, device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyDeviceToDevice);
       const VertexID block_level_duplicate_find_max_val = 1024;
       EdgePos_t max_end = 0;
       VertexID* d_max_temp_storage = nullptr;
@@ -2253,7 +2233,7 @@ int main (int argc, char* argv[])
 
       delete part_neighbors[part];
       delete part_additions_sizes[part];
-      delete partition_map_vertex_to_additions[part];
+      PinnedMemory::pinned_memory_heap.free( partition_map_vertex_to_additions[part]);
     }
 
     if (device_additions_prev_hop != nullptr) {
@@ -2264,7 +2244,8 @@ int main (int argc, char* argv[])
                         neighbors_sizes[hop], cudaMemcpyHostToDevice));
       
   }
-  
+  double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());
+
   if (device_additions_prev_hop != nullptr) {
     CHK_CU (cudaFree (device_additions_prev_hop));
   }
@@ -2306,6 +2287,7 @@ int main (int argc, char* argv[])
 
   
   std::cout << "GPU Time: " << gpu_time << " secs" << std::endl;
+  std::cout << "End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
   std::cout << "Total 2-hop neighbors " << total_neighbors[1] << std::endl;
 
 #ifdef CHECK_RESULT
