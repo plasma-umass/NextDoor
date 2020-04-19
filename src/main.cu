@@ -59,327 +59,6 @@ typedef uint8_t SharedMemElem;
 
 const int N_THREADS = 256;
 
-class GlobalMemAllocator
-{
-  static uint64_t memory_length;
-  static uint64_t bump_pointer;
-  static char* global_mem_ptr;
-
-  public:
-
-    static void initialize (char* _global_mem_ptr, uint64_t _memory_length) {
-      global_mem_ptr = _global_mem_ptr;
-      memory_length = _memory_length;
-      bump_pointer = 0;
-    }
-
-    static uint64_t alloc (size_t sz) {
-      assert (bump_pointer + sz < memory_length);
-
-      uint64_t to = bump_pointer;
-
-      bump_pointer += sz;
-
-      return to;
-    }
-
-    static uint64_t allocated () {
-      return bump_pointer;
-    }
-    static uint64_t alloc_vertices_array (size_t n_vertices) {
-      return alloc (sizeof (VertexID)*n_vertices);
-    }
-    
-    static void* get_global_mem_ptr () {
-      return global_mem_ptr;
-    }
-
-};
-
-uint64_t GlobalMemAllocator::memory_length;
-uint64_t GlobalMemAllocator::bump_pointer;
-char* GlobalMemAllocator::global_mem_ptr;
-
-class VectorVertexEmbedding
-{
-private:
-  uint64_t array_start_idx;
-  uint32_t filled_size;
-  uint32_t size;
-  VertexID* array;
-
-public:
-  __host__
-  VectorVertexEmbedding (uint32_t _max_size, uint64_t _array_start_idx, bool filled = false)
-  {
-    size = _max_size;
-    filled_size = filled ? size : 0;
-    array_start_idx = _array_start_idx;
-    array = (VertexID*)((char*) GlobalMemAllocator::get_global_mem_ptr () + array_start_idx);
-  }
-
-  __host__ 
-  std::vector<VertexID> to_vector ()
-  {
-    std::vector<VertexID> v;
-    
-    for (size_t i = 0; i < get_n_vertices (); i++) {
-      v.push_back (get_vertex (i));
-    }
-
-    return v;
-  }
-
-  __host__
-  void* get_array () {return array;}
-  __device__ __host__
-  uint64_t get_array_start_idx () { return array_start_idx;}
-  
-  __host__ __device__
-  void add (int v)
-  {
-  #if DEBUG
-    if (!(size != 0 and filled_size < size)) {
-      printf ("filled_size %d, size %d\n", filled_size, size);
-      //assert (size != 0 and filled_size < size);
-      assert (false);
-    }
-  #endif
-  
-    add_unsorted (v);
-  }
-
-  __host__ __device__
-  void add_last_in_sort_order () 
-  {
-    int v = array[filled_size-1];
-    remove_last ();
-    add (v);
-  }
-
-  __host__ __device__
-  void add_unsorted (int v) 
-  {
-    array[filled_size++] = v;
-  }
-  
-  __host__ __device__
-  void remove (int v)
-  {
-    printf ("Do not support remove\n");
-    assert (false);
-  }
-  
-  // __host__ __device__
-  // const bool has_logn (int v)
-  // {
-  //   int l = 0;
-  //   int r = filled_size-1;
-    
-  //   while (l <= r) {
-  //     int m = l+(r-l)/2;
-      
-  //     if (array[m] == v)
-  //       return true;
-      
-  //     if (array[m] < v)
-  //       l = m + 1;
-  //     else
-  //       r = m - 1;
-  //   }
-    
-  //   return false;
-  // }
-  
-  __host__ __device__
-  bool has (VertexID v) const
-  {
-    for (size_t i = 0; i < filled_size; i++) {
-      if (array[i] == v) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
-  
-  __host__ __device__
-  size_t get_n_vertices () const
-  {
-    return filled_size;
-  }
-  
-  __host__ __device__
-  VertexID get_vertex (int index, void* global_storage_start) const
-  {
-    return ((VertexID*)((char*)global_storage_start + array_start_idx))[index];
-  }
-
-  __device__
-  VertexID get_vertex (int index, void* global_storage_start, uint64_t global_start_idx) const
-  {
-    assert (array_start_idx >= global_start_idx);
-    return ((VertexID*)((char*)global_storage_start + (array_start_idx - global_start_idx)))[index];
-  }
-
-  __host__ 
-  VertexID get_vertex (int index) const
-  {
-    return array[index];
-  }
-  
-  __host__ __device__
-  VertexID get_last_vertex () const
-  {
-    return array[filled_size-1];
-  }
-  
-  __host__ __device__
-  size_t get_max_size () const
-  {
-    return size;
-  }
-  
-  __host__ __device__
-  void clear ()
-  {
-    filled_size = 0;
-  }
-  
-  __host__ __device__
-  void remove_last () 
-  {
-    assert (filled_size > 0);
-    filled_size--;
-  }
-  __host__ __device__
-  ~VectorVertexEmbedding ()
-  {
-    //delete[] array;
-  }
-
-  void print () 
-  {
-    std::cout << "[";
-    for (size_t i = 0; i < filled_size; i++) {
-      std::cout << get_vertex (i) << ", ";
-    }
-    std::cout << "]";
-  }
-};
-
-std::vector<VectorVertexEmbedding> get_initial_embedding_vector (CSR* csr)
-{
-  VectorVertexEmbedding embedding (0, 0UL);
-  std::vector <VectorVertexEmbedding> embeddings;
-
-  embeddings.push_back (embedding);
-
-  return embeddings;
-}
-
-__host__
-void vector_embedding_from_one_less_size (VectorVertexEmbedding const & in,
-                                          VectorVertexEmbedding& out)
-{
-  //TODO: Optimize here, filled_size++ in add is being called several times
-  //but can be called only once too
-  //if  (false and vec_emb1.get_n_vertices () != size) {
-  //  printf ("vec_emb1.get_n_vertices () %ld != size %d\n", vec_emb1.get_n_vertices (), size);
-  //  assert (false);
-  //}
-  assert (in.get_n_vertices () <= out.get_n_vertices ());
-  for (size_t i = 0; i < in.get_n_vertices (); i++) {
-    out.add (in.get_vertex (i));
-  }
-}
-
-std::vector<VectorVertexEmbedding> get_extensions_vector (VectorVertexEmbedding& embedding, CSR* csr)
-{
-  std::vector<VectorVertexEmbedding> extensions;
-  size_t size;
-  
-  size = embedding.get_n_vertices ();
-
-  if (size == 0) {
-    for (int u = 0; u < N; u++) {
-      uint64_t ptr =  GlobalMemAllocator::alloc_vertices_array(1);
-      VectorVertexEmbedding extension(1,ptr);
-      extension.add(u);
-      extensions.push_back(extension);
-    }
-  } else {
-    for (size_t i = 0; i < size; i++) {
-      VertexID u = embedding.get_vertex (i);
-      for (EdgePos_t e = csr->get_start_edge_idx(u); e <= csr->get_end_edge_idx(u); e++) {
-        VertexID v = csr->get_edges () [e];
-        if (embedding.has (v) == false) {
-          VectorVertexEmbedding extension(1, GlobalMemAllocator::alloc_vertices_array(size + 1));
-          vector_embedding_from_one_less_size (embedding, extension);
-          extension.add(v);
-          extensions.push_back(extension);
-        }
-      }
-    }
-  }
-
-  return extensions;
-}
-
-void run_single_step_initial_vector (std::vector<VectorVertexEmbedding>& input_embeddings,
-                                     CSR* csr,
-                                     std::vector<VectorVertexEmbedding>& output_embeddings,
-                                     std::vector<VectorVertexEmbedding>& next_step_embeddings)
-{
-  for (size_t i = 0; i < input_embeddings.size (); i++) {
-    VectorVertexEmbedding& embedding = input_embeddings[i];
-    std::vector<VectorVertexEmbedding> extensions = get_extensions_vector (embedding, csr);
-    for (auto extension : extensions) {
-        output_embeddings.push_back (extension);
-        next_step_embeddings.push_back (extension);
-      }
-   }
-}
-
-std::vector <std::vector <VertexID>> n_hop_cpu (CSR* csr, const int N_HOPS)
-{
-  std::vector <std::vector <VertexID>> hops = std::vector<std::vector<VertexID>> (csr->get_n_vertices ());
-
-  for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
-    EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
-    EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
-    if (start_edge_idx != -1) {
-      for (EdgePos_t edge = start_edge_idx; edge <= end_edge_idx; edge++) {
-        hops[vertex].push_back (csr->get_edges()[edge]);
-      }
-    }
-  }
-
-  for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
-    int hop = 1;
-    std::vector <VertexID> vertex_hops[N_HOPS + 1];
-    vertex_hops[0].insert (vertex_hops[0].begin(), hops[vertex].begin (), hops[vertex].end ());
-    while (hop < N_HOPS) {
-      for (VertexID hop_vertex : vertex_hops[hop - 1]) {
-        EdgePos_t start_edge_idx = csr->get_start_edge_idx (hop_vertex);
-        EdgePos_t end_edge_idx = csr->get_end_edge_idx (hop_vertex);
-        
-        if (start_edge_idx != -1) {
-          for (EdgePos_t edge = start_edge_idx; edge <= end_edge_idx; edge++) {
-            VertexID v = csr->get_edges()[edge];
-            vertex_hops[hop].push_back (v);
-          }
-        }
-      }
-
-      hops[vertex].insert (hops[vertex].begin (), vertex_hops[hop].begin (), vertex_hops[hop].end ());
-      hop++;
-    }
-  }
-
-  return hops;
-}
-
 #define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 1
 #if MAX_VERTICES_PER_TB < 1
@@ -1629,17 +1308,6 @@ int main (int argc, char* argv[])
   }
 
   std::cout << "Pinned Memory Allocated" << std::endl;
-  GlobalMemAllocator::initialize (global_mem_ptr, global_mem_size);
-
-  std::vector<VectorVertexEmbedding> initial_embeddings = get_initial_embedding_vector (csr);
-  std::vector<VectorVertexEmbedding> output;
-
-  std::vector<VectorVertexEmbedding>& input_embeddings = initial_embeddings;
-  std::vector<VectorVertexEmbedding> iter_1_embeddings;
-  {
-    run_single_step_initial_vector (input_embeddings, csr, output, iter_1_embeddings);
-    input_embeddings = iter_1_embeddings;
-  }
 
   double total_stream_time = 0;
 
@@ -2273,31 +1941,30 @@ int main (int argc, char* argv[])
 
   std::cout << "Getting embeddings from GPU" << std::endl;
   EdgePos_t total_neighbors[N_HOPS] = {0};
-  std::vector <VectorVertexEmbedding> produced_embeddings;
-  for (VertexID input_embedding_idx = 0; input_embedding_idx < csr->get_n_vertices (); input_embedding_idx++) {
+  std::vector <std::vector<VertexID>> produced_embeddings(csr->get_n_vertices (), std::vector<VertexID>());
+  for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
     EdgePos_t produced_embedding_size = 0;
     for (int hop = 0; hop < N_HOPS; hop++) {
-      VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
-      int n_additions = additions_sizes[hop][2*input_embedding_idx + 1];
+      int n_additions = additions_sizes[hop][2*vertex + 1];
       produced_embedding_size += n_additions;
       total_neighbors[hop] += n_additions;
     }
     //std::cout << " input_embedding_idx " << input_embedding_idx << std::endl;
     EdgePos_t copied = 0;
-    size_t global_mem_idx = GlobalMemAllocator::alloc_vertices_array (produced_embedding_size);
+    produced_embeddings[vertex] = std::vector<VertexID>(produced_embedding_size);
+    
     for (int hop = 0; hop < N_HOPS; hop++) {
-      VectorVertexEmbedding& input_embedding = input_embeddings[input_embedding_idx];
-      EdgePos_t start_idx = final_map_vertex_to_additions[hop][0][2*input_embedding_idx];
-      EdgePos_t n_additions = additions_sizes[hop][2*input_embedding_idx + 1];
+      EdgePos_t start_idx = final_map_vertex_to_additions[hop][0][2*vertex];
+      EdgePos_t n_additions = additions_sizes[hop][2*vertex + 1];
       //std::cout << "i " << input_embedding_idx << " produced_embedding_size " << produced_embedding_size << " global_mem_idx " << global_mem_idx << std::endl;
-      VertexID* ptr = (VertexID*) ((char*)GlobalMemAllocator::get_global_mem_ptr () + global_mem_idx);
+      VertexID* ptr = &produced_embeddings[vertex][0];
       memcpy (ptr + copied, &neighbors[hop][start_idx], sizeof(VertexID)*n_additions);
 
       copied += n_additions;
     }
 
-    VectorVertexEmbedding embedding = VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true);
-    produced_embeddings.push_back (embedding);
+    //VectorVertexEmbedding embedding = VectorVertexEmbedding ((uint32_t)produced_embedding_size, global_mem_idx, true);
+    //produced_embeddings.push_back (embedding);
   }
 
   
@@ -2318,7 +1985,7 @@ int main (int argc, char* argv[])
     std::vector<VertexID> vector_hops;
     vector_hops.insert (vector_hops.begin (), cpu_set.begin(), cpu_set.end ());
     std::sort (vector_hops.begin (), vector_hops.end ());
-    std::vector<VertexID> gpu_vector = produced_embeddings [idx].to_vector ();
+    std::vector<VertexID> gpu_vector = produced_embeddings [idx];
     std::unordered_set<VertexID> gpu_vector_set = std::unordered_set<VertexID> (gpu_vector.begin (), gpu_vector.end ());
     gpu_vector = std::vector<VertexID> (gpu_vector_set.begin (), gpu_vector_set.end ());
     std::sort (gpu_vector.begin (), gpu_vector.end ());
@@ -2345,7 +2012,6 @@ int main (int argc, char* argv[])
 #else
   delete[] global_mem_ptr;
 #endif
-  std::cout << "Number of embeddings found "<< input_embeddings.size () << std::endl;
   std::cout << "Time spent in GPU kernel execution " << kernelTotalTime << std::endl;
   std::cout << "Time spent in Streams " << total_stream_time << std::endl;
 }
