@@ -2091,7 +2091,7 @@ int main (int argc, char* argv[])
 
       /***DONE***/
       //TODO: Free device_map_vertex_to_additions
-
+      double cpu_part_t1 = convertTimeValToDouble(getTimeOfDay());
       if (root_part_idx == 0) {
         memcpy (&final_map_vertex_to_additions[hop][0][final_map_vertex_to_additions_iter],
                 partition_map_vertex_to_additions[root_part_idx],
@@ -2099,6 +2099,7 @@ int main (int argc, char* argv[])
         final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size(root_partition);
         per_part_num_neighbors [root_part_idx] = num_neighbors_iter;
       } else if (vertex_with_prev_partition != -1) {
+        //TODO remove the cases of vertex_with_prev_partition
         VertexID common_vertex = vertex_with_prev_partition;
         EdgePos_t common_vertex_new_additions = partition_map_vertex_to_additions[root_part_idx][2*(common_vertex - common_vertex) + 1];
         EdgePos_t common_vertex_start_pos = final_map_vertex_to_additions[hop][0][2*common_vertex];
@@ -2159,6 +2160,7 @@ int main (int argc, char* argv[])
                 partition_additions_sizes_size);
         first_vertex_id = root_partition.first_vertex_id;
       } else if (vertex_with_prev_partition != -1) {
+        //TODO remove the cases of vertex_with_prev_partition
         VertexID common_vertex = vertex_with_prev_partition;
         EdgePos_t common_vertex_new_additions = part_additions_sizes[root_part_idx][2*(common_vertex - common_vertex) + 1];
         first_vertex_id = common_vertex + 1;
@@ -2189,16 +2191,20 @@ int main (int argc, char* argv[])
                 part_additions_sizes[root_part_idx], partition_additions_sizes_size);
         first_vertex_id = root_partition.first_vertex_id;
       }
+      double cpu_part_t2 = convertTimeValToDouble(getTimeOfDay());
+
+      std::cout << "CPU Part " << (cpu_part_t2 - cpu_part_t1) << std::endl;
     }
 
     num_neighbors = num_neighbors * sizeof (VertexID);
     /**************************DONE**********************/
-    
+    double cpu_part_t1 = convertTimeValToDouble(getTimeOfDay());
     neighbors[hop] = (VertexID*) new char[num_neighbors];
     neighbors_sizes[hop] = num_neighbors;
 
     for (int part = 0; part < (int)csr_partitions.size (); part++) {
       //Copy back the neighbors at the correct place
+      //TODO: copy directly to neigbhors array instead of part_neighbors
       for (VertexID v = csr_partitions[part].first_vertex_id; 
         v <= csr_partitions[part].last_vertex_id; v++) {
         VertexID part_v = v - csr_partitions[part].first_vertex_id;
@@ -2207,14 +2213,19 @@ int main (int argc, char* argv[])
         EdgePos_t final_idx = final_map_vertex_to_additions[hop][0][2*v];
         const EdgePos_t final_end = final_idx + final_map_vertex_to_additions[hop][0][2*v + 1];
         std::unordered_set<VertexID> set_neighbors;
+        memcpy (&neighbors[hop][final_idx], &part_neighbors[part][part_start], (part_end-part_start)*sizeof(VertexID));
+#if 0
         for (EdgePos_t idx = part_start; idx < part_end; idx++) {
           if (!(final_idx < final_end)) {
             printf ("final_idx %d final_end %d part_start %d part_end %d v %d\n", final_idx, final_end, v, part_start, part_end);
           }
           assert (final_idx < final_end);
           neighbors[hop][final_idx++] = part_neighbors[part][idx];
-          set_neighbors.insert (part_neighbors[part][idx]);
+// #ifdef REMOVE_DUPLICATES_ON_GPU
+//          set_neighbors.insert (part_neighbors[part][idx]);
+// #endif
         }
+#endif
 // #ifdef REMOVE_DUPLICATES_ON_GPU
         // if (set_neighbors.size () != (part_end - part_start)) {
         //   printf ("v %d set_neighbors.size () %d (part_end - part_start) %d\n",
@@ -2235,6 +2246,10 @@ int main (int argc, char* argv[])
       delete part_additions_sizes[part];
       PinnedMemory::pinned_memory_heap.free( partition_map_vertex_to_additions[part]);
     }
+
+    double cpu_part_t2 = convertTimeValToDouble(getTimeOfDay());
+
+    std::cout << "CPU Part " << (cpu_part_t2 - cpu_part_t1) << std::endl;
 
     if (device_additions_prev_hop != nullptr) {
       CHK_CU (cudaFree (device_additions_prev_hop));
