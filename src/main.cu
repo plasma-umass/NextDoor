@@ -151,53 +151,6 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
   map_orig_embedding_to_additions[2*thread_idx+1] = new_edges;
 }
 
-// __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* void_csr,
-//                                                           int start_vertex, int end_vertex,
-//                                                           unsigned long long int* void_embeddings_additions_iter,
-//                                                           void* void_map_orig_embedding_to_additions_prev_iter,
-//                                                           void* void_map_orig_embedding_to_additions_next_iter,
-//                                                           int* edges_to_prev_iter_additions,
-//                                                           int common_vertex_with_previous_partition,
-//                                                           int common_vertex_with_next_partition)
-// {
-//   CSRPartition* csr = (CSRPartition*)void_csr;
-
-//   int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-//   VertexID vertex = thread_idx + start_vertex;
-//   if (vertex > end_vertex) {
-//     return;
-//   }
-
-//   //VertexID* embedding_storage = (VertexID embedding_storage;
-//   unsigned long long int* embeddings_additions_iter = void_embeddings_additions_iter;
-//   int* map_orig_embedding_to_additions_next_iter = (int*)void_map_orig_embedding_to_additions_next_iter;
-//   int* map_orig_embedding_to_additions_prev_iter = (int*)void_map_orig_embedding_to_additions_prev_iter;
-//   unsigned long long int new_edges = 0;//map_orig_embedding_to_additions_first_iter[2*thread_idx + 1];
-//   // printf ("thread idx %d array_start_idx %ld\n", thread_idx, input_embedding->get_array_start_idx ());
-//   /*Perform a single hop for all vertices in the input embedding*/
-  
-//   int start_edge_idx = csr->get_start_edge_idx (vertex);
-//   const int end_edge_idx = csr->get_end_edge_idx (vertex);
-//   if (end_edge_idx != -1) {
-//     while (start_edge_idx <= end_edge_idx) {
-//       int v = csr->get_edge (start_edge_idx);
-//       if (csr->has_vertex (v) and v != common_vertex_with_previous_partition and v != common_vertex_with_next_partition) {
-//         assert (v-start_vertex >= 0);
-//         new_edges += map_orig_embedding_to_additions_prev_iter [2*(v-start_vertex)+1];
-//       }
-//       else
-//         new_edges += edges_to_prev_iter_additions[start_edge_idx - csr->first_edge_idx];
-
-//       start_edge_idx++;
-//     }
-//   }
-
-//   //printf ("new_edges %ld\n", new_edges);
-//   unsigned long long int additions_start_iter = atomicAdd (embeddings_additions_iter, new_edges);
-//   map_orig_embedding_to_additions_next_iter[2*thread_idx] = additions_start_iter;
-//   map_orig_embedding_to_additions_next_iter[2*thread_idx+1] = new_edges;
-// }
-
 __global__ void get_max_lengths_for_vertices_single_step (CSRPartition* csr,
                                                           VertexID start_vertex, 
                                                           VertexID end_vertex,
@@ -1780,22 +1733,6 @@ int main (int argc, char* argv[])
       CHK_CU (cudaFree (device_additions));
       CHK_CU (cudaFree (device_additions_sizes));
 
-#ifdef REMOVE_DUPLICATES_ON_CPU
-#if 0
-      std::cout << "Remove Duplicates on CPU" << std::endl;
-      double duplicate_t1 = convertTimeValToDouble(getTimeOfDay ());
-      remove_duplicates_in_hop_on_cpu (root_partition, 
-                                       partition_map_vertex_to_additions[root_part_idx],
-                                       part_additions_sizes[root_part_idx], 
-                                       part_neighbors[root_part_idx]);
-      CHK_CU(cudaDeviceSynchronize ());
-      double duplicate_t2 = convertTimeValToDouble(getTimeOfDay ());
-      std::cout << "Time in removing duplicate: " << duplicate_t2 - duplicate_t1 << " secs" << std::endl;
-      //CHK_CU(cudaFree (device_is_duplicate));
-      std::cout << "Duplicates removed" << std::endl;
-#endif
-#endif
-
       /***DONE***/
       //TODO: Free device_map_vertex_to_additions
       double cpu_part_t1 = convertTimeValToDouble(getTimeOfDay());
@@ -1896,7 +1833,7 @@ int main (int argc, char* argv[])
         if (!(part_additions_sizes[part][2*part_v + 1] <= final_map_vertex_to_additions[hop][0][2*v + 1]))
           std::cout << "v " << v << " p " << part_additions_sizes[part][2*part_v + 1] << " f " << final_map_vertex_to_additions[hop][0][2*v + 1] << std::endl;
         assert (part_additions_sizes[part][2*part_v + 1] <= final_map_vertex_to_additions[hop][0][2*v + 1]);
-        
+
         memcpy (&neighbors[hop][final_idx], &part_neighbors[part][part_start], (part_end-part_start)*sizeof(VertexID));
 #if 0
         for (EdgePos_t idx = part_start; idx < part_end; idx++) {
