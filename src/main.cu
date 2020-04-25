@@ -613,6 +613,18 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
       const EdgePos_t start_edge_idx = csr->get_start_edge_idx (_hop_vertex);
       const EdgePos_t end_edge_idx = csr->get_end_edge_idx (_hop_vertex);
 
+#ifdef USE_PARTITION_FOR_SHMEM
+      assert (n_edges <= sizeof(shmem_csr_edges)/sizeof(shmem_csr_edges[0]));
+      for (EdgePos_t i = 0; i < n_edges/blockDim.x + 1; i++) {
+        EdgePos_t pos = i*blockDim.x + threadIdx.x;
+        EdgePos_t edge_pos = start_edge_idx + pos;
+        if (pos < end_edge_idx) {
+          shmem_csr_edges[pos] = csr->get_edge(edge_pos);
+        }
+      }
+
+      __syncthreads();
+#endif
       for (int i = 0; i < last_hop_vertex_roots_remaining/N_WARPS + 1; i++) {
         VertexID root_idx = i*N_WARPS + warpid;
         if (root_idx >= last_hop_vertex_roots_remaining) {
@@ -640,7 +652,32 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
           
           _e = __shfl_sync (FULL_MASK, e, 0, shfl_warp_size);  
           assert (_e != -1);
-          
+
+#ifdef USE_PARTITION_FOR_SHMEM
+          EdgePos_t _start_edge_idx = 0;
+          int iter = 0;
+          while (_start_edge_idx + laneid%shfl_warp_size < n_edges) {
+            VertexID edge = shmem_csr_edges[_start_edge_idx + laneid%shfl_warp_size];
+            EdgePos_t addr = start + _e + iter*shfl_warp_size + laneid%shfl_warp_size;
+            // if (!(addr < num_neighbors)) {
+            //   printf ("v %d start %d addr %d num_neighbors %d\n", root_vertex, start, addr, num_neighbors);
+            // }
+            // assert (addr < num_neighbors);
+            // if (!(addr < start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1])) {
+            //   printf ("addr %d max-end %d v %d\n", addr, start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1], root_vertex);
+            // }
+            // assert (addr < start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1]);
+            // assert (addr >= start);
+            // if (embeddings_additions[addr] != -1) {
+            //   //printf ("embeddings_additions addrs %x\n", &embeddings_additions[0]);
+            //   printf ("not -1 at %d hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
+            // }
+            // assert (embeddings_additions[addr] == -1);
+            embeddings_additions[addr] = edge;
+            _start_edge_idx += shfl_warp_size;
+            iter++;
+          }
+#else
           EdgePos_t _start_edge_idx = start_edge_idx;
           int iter = 0;
           while (_start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
@@ -664,6 +701,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             _start_edge_idx += shfl_warp_size;
             iter++;
           }
+#endif
         }
       }
       __syncthreads ();
