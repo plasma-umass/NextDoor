@@ -136,10 +136,46 @@ public:
 class CSRPartition
 {
 public:
+  class VertexRange 
+  {
+    public:
+      class vertex_iterator 
+      {
+      private:
+        VertexID v;
+
+      public: 
+        vertex_iterator(VertexID _v) : v(_v) {}
+        vertex_iterator operator++() {v++; return *this;}
+        vertex_iterator operator--() {v--; return *this;}
+        VertexID operator*() {return v;}
+
+        bool operator==(const vertex_iterator& rhs) {return v == rhs.v;}
+        bool operator!=(const vertex_iterator& rhs) {return v != rhs.v;}
+      };
+
+    private:
+      VertexID first;
+      VertexID last;
+
+    public:
+      VertexRange(VertexID _first, VertexID _last) : first(_first), last(_last) {}
+
+      vertex_iterator begin() 
+      {
+        return vertex_iterator(first);
+      }
+
+      vertex_iterator end() 
+      {
+        return vertex_iterator(last+1);
+      }
+  };
+
   const int first_vertex_id;
   const int last_vertex_id;
-  const int first_edge_idx;
-  const int last_edge_idx;
+  const EdgePos_t first_edge_idx;
+  const EdgePos_t last_edge_idx;
   const CSR::Vertex *vertices;
   const CSR::Edge *edges;
 
@@ -185,6 +221,10 @@ public:
     return -1;
   }
 
+  VertexRange get_vertex_range() const 
+  {
+    return VertexRange(first_vertex_id, last_vertex_id);
+  }
   __host__ __device__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
   {
     return (get_end_edge_idx (v) != -1) ? (get_end_edge_idx(v) - get_start_edge_idx (v) + 1) : 0;

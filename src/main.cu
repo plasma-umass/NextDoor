@@ -1115,8 +1115,7 @@ size_t cpu_get_max_lengths_for_vertices_single_step (CSRPartition& root_partitio
 {
   size_t embeddings_additions_iter = 0;
 
-  for (VertexID v = root_partition.first_vertex_id; 
-       v <= root_partition.last_vertex_id; v++) {
+  for (VertexID v : root_partition.get_vertex_range()) {
     EdgePos_t new_additions = 0;
     const EdgePos_t start = map_vertex_to_additions_prev_hop[2*v];
     const EdgePos_t end = addition_sizes_prev_hop[2*v+1];
@@ -1559,9 +1558,9 @@ int main (int argc, char* argv[])
         if (hop >= 1) {
           VertexID vertex_for_block_level_exec = -1;
 #if 1
-          for (VertexID src_vertex_id = src_partition.first_vertex_id; 
-             src_vertex_id <= src_partition.last_vertex_id; src_vertex_id++) {
-              
+          //for (VertexID src_vertex_id = src_partition.first_vertex_id; 
+              //src_vertex_id <= src_partition.last_vertex_id; src_vertex_id++) {
+          for (VertexID src_vertex_id : src_partition.get_vertex_range()) {
             if (src_partition.get_n_edges_for_vertex(src_vertex_id) >= N_THREADS) {
               if (vertex_for_block_level_exec == -1) {
                 vertex_for_block_level_exec = src_vertex_id - 1;
@@ -1692,8 +1691,7 @@ int main (int argc, char* argv[])
       VertexID* d_max_temp_storage = nullptr;
       EdgePos_t* d_selected = nullptr;
 
-      for (VertexID v = root_partition.first_vertex_id; 
-        v <= root_partition.last_vertex_id; v++) {
+      for (VertexID v : root_partition.get_vertex_range()) {
         EdgePos_t end = part_additions_sizes[root_part_idx][2*(v-root_partition.first_vertex_id) + 1];
         max_end = max(end, max_end);
       }
@@ -1717,8 +1715,7 @@ int main (int argc, char* argv[])
 
       //TODO: We can use CUDA streams to speed this up, but it will lead to high
       //memory usage.
-      for (VertexID v = root_partition.first_vertex_id; 
-           v <= root_partition.last_vertex_id; v++) {
+      for (VertexID v = root_partition.get_vertex_range()) {
         EdgePos_t start = partition_map_vertex_to_additions[root_part_idx][2*(v-root_partition.first_vertex_id)];
         EdgePos_t end = part_additions_sizes[root_part_idx][2*(v-root_partition.first_vertex_id) + 1];
         if (end < block_level_duplicate_find_max_val) {
@@ -1773,8 +1770,7 @@ int main (int argc, char* argv[])
         cudaMemcpyDeviceToHost));
       
       CHK_CU (cudaFree (device_intermediate_storage));
-      for (VertexID v = root_partition.first_vertex_id; 
-        v <= root_partition.last_vertex_id; v++) {
+      for (VertexID v : root_partition.get_vertex_range()) {
         EdgePos_t end = part_additions_sizes[root_part_idx][2*(v-root_partition.first_vertex_id) + 1];
         if (end >= block_level_duplicate_find_max_val)
           CHK_CU(cudaMemcpy (&part_additions_sizes[root_part_idx][2*(v-root_partition.first_vertex_id) + 1], d_selected + (v-root_partition.first_vertex_id), sizeof (EdgePos_t), cudaMemcpyDeviceToHost));
@@ -1807,8 +1803,7 @@ int main (int argc, char* argv[])
         EdgePos_t common_vertex_new_additions = partition_map_vertex_to_additions[root_part_idx][2*(common_vertex - common_vertex) + 1];
         EdgePos_t common_vertex_start_pos = final_map_vertex_to_additions[hop][0][2*common_vertex];
         
-        for (VertexID v = csr_partitions[root_part_idx - 1].first_vertex_id; 
-             v < csr_partitions[root_part_idx - 1].last_vertex_id; v++) {
+        for (VertexID v : csr_partitions[root_part_idx - 1].get_vertex_range()) {
           if (final_map_vertex_to_additions[hop][0][2*v] > common_vertex_start_pos) {
             final_map_vertex_to_additions[hop][0][2*v] += common_vertex_new_additions;
           }
@@ -1816,8 +1811,7 @@ int main (int argc, char* argv[])
         final_map_vertex_to_additions[hop][0][2*common_vertex + 1] += common_vertex_new_additions;
         EdgePos_t start_pos = 0;
         //TODO: start_pos is sum of all embedding additions so far
-        for (VertexID v = csr_partitions[root_part_idx - 1].first_vertex_id; 
-             v <= csr_partitions[root_part_idx - 1].last_vertex_id; v++) {
+        for (VertexID v : csr_partitions[root_part_idx - 1].get_vertex_range()) {
           EdgePos_t p = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
           if (p > start_pos) {
             start_pos = p;
@@ -1842,8 +1836,7 @@ int main (int argc, char* argv[])
         per_part_num_neighbors [root_part_idx] = num_neighbors_iter;
       } else {
         EdgePos_t start_pos = 0;
-        for (VertexID v = csr_partitions[root_part_idx - 1].first_vertex_id; 
-             v <= csr_partitions[root_part_idx - 1].last_vertex_id; v++) {
+        for (VertexID v : csr_partitions[root_part_idx - 1].get_vertex_range()) {
           EdgePos_t pos = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
           start_pos = max (start_pos, pos);
         }
@@ -1881,8 +1874,7 @@ int main (int argc, char* argv[])
     for (int part = 0; part < (int)csr_partitions.size (); part++) {
       //Copy back the neighbors at the correct place
       //TODO: copy directly to neigbhors array instead of part_neighbors
-      for (VertexID v = csr_partitions[part].first_vertex_id; 
-        v <= csr_partitions[part].last_vertex_id; v++) {
+      for (VertexID v : csr_partitions[part].get_vertex_range()) {
         VertexID part_v = v - csr_partitions[part].first_vertex_id;
         EdgePos_t part_start = partition_map_vertex_to_additions[part][2*part_v];
         const EdgePos_t part_end = part_start + part_additions_sizes[part][2*part_v + 1];
