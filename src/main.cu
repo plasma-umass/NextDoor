@@ -47,7 +47,7 @@ const int N_EDGES = 2160312;
 using namespace utils;
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
-#define USE_PARTITION_FOR_SHMEM
+//#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
@@ -1150,6 +1150,8 @@ int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, Verte
   return -1;
 }
 
+//#define SRC_TO_ROOT_VERTEX_IN_SORTED_ORDER
+
 void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
                                     const CSR* csr,
                                     const VertexID root_part_idx, const int hop, 
@@ -1166,6 +1168,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
   const CSRPartition& root_partition = csr_partitions[root_part_idx];
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   host_src_to_roots.clear ();
+
   //Create per hop vertex data
   for (VertexID v = 0; v < csr->get_n_vertices (); v++) {
     host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
@@ -1177,7 +1180,26 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
   if (common_vertex_with_previous_partition != -1) {
     first_vertex_id++;
   }
+  
+#ifdef SRC_TO_ROOT_VERTEX_IN_SORTED_ORDER
+  std::vector<std::pair<EdgePos_t, VertexID>> vertices_sorted_by_start(root_partition.get_n_vertices());
+  
+  //TODO: Add a vertex and edge iterator in each root partition
+  for (VertexID v = first_vertex_id; 
+       v <= root_partition.last_vertex_id; v++) {
+    EdgePos_t start = final_map_vertex_to_additions[hop-1][0][2*v];
+    vertices_sorted_by_start.push_back(std::make_pair(start, v));
+  }
+
+  //Sort pair based on the first value.
+  std::sort(vertices_sorted_by_start.begin(), vertices_sorted_by_start.end());
+
+  for (auto pair: vertices_sorted_by_start) {
+    VertexID v = std::get<1>(pair);
+#else
   for (VertexID v = first_vertex_id; v <= root_partition.last_vertex_id; v++) {
+#endif
+
     EdgePos_t start = final_map_vertex_to_additions[hop-1][0][2*v];
     EdgePos_t end   = additions_sizes[hop-1][2*v + 1];
     for (EdgePos_t i = 0; i < end; i++) {
@@ -1413,9 +1435,8 @@ int main (int argc, char* argv[])
 
       VertexID* device_edges_to_prev_iter_additions;
       EdgePos_t* device_prev_hop_addition_sizes;
-      const VertexID vertex_with_next_partition = get_common_vertex_with_next_partition (csr_partitions, root_part_idx);
       const VertexID vertex_with_prev_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
-      assert (vertex_with_next_partition == -1 and vertex_with_prev_partition == -1);
+      assert (vertex_with_prev_partition == -1);
 
       //partition_map_vertex_to_additions[root_part_idx] = new EdgePos_t[partition_map_vertex_to_additions_size (root_partition)];
       partition_map_vertex_to_additions[root_part_idx] = (EdgePos_t*)PinnedMemory::pinned_memory_heap.malloc(partition_map_vertex_to_additions_size (root_partition)*sizeof(EdgePos_t));
