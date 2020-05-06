@@ -11,7 +11,7 @@ gpu-gdb: src/main.cu
 	nvcc $< -std=c++11 -arch=compute_61 -O0 -g  -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -o gpu
 
 gpu: src/main.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_memory_alloc.hpp
-	nvcc $< -std=c++11 -arch=compute_61 -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -O3 -o gpu -Xptxas -O3 -Xcompiler -Wall
+	nvcc $< -std=c++11 -arch=compute_61 -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -O3 -g -o gpu -Xptxas -O3 -Xcompiler -Wall
 
 clean:
 	rm -rf cpu gpu *.h.gch *.o src/*.h.gch src/*.o src/*.o
