@@ -114,9 +114,10 @@ public:
       vertices.push_back (vertex);
     }
 
+    //Sort vertices by number of edges
     // for (int i = 0; i < vertices.size (); i++) {
-    //   if (vertices[i].id != i) {
-    //     vertices.insert (i, Vertex (i, 0));
+    //   if (vertices[i].get_id() != i) {
+    //     vertices[i].set_id(i);//vertices.insert (i, Vertex (i, 0));
     //   }
     // }
     // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);

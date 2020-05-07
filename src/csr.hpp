@@ -285,7 +285,14 @@ void csr_from_graph (CSR* csr, Graph& graph)
       edge_iterator++;
     }
 
-    csr->vertices[i].set_end_edge_id (edge_iterator-1);
+    if (vertex.get_edges().size() == 0)
+      csr->vertices[i].set_end_edge_id (-1);
+    else
+      csr->vertices[i].set_end_edge_id (edge_iterator-1);
+
+    // if (i == 45241) {
+    //   printf("start %d end %d\n", csr->vertices[i].get_start_edge_idx(), csr->vertices[i].get_end_edge_idx());
+    // }
   }
 }
 

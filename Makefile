@@ -6,7 +6,7 @@ cpu:
 	g++ src/main.cpp -std=c++11 -O2 -o cpu
 
 gpuO0: src/main.cu
-	nvcc $< -std=c++11 -arch=compute_61 -O0 -g -G -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -I. -o gpu -Xptxas -O0
+	nvcc $< -std=c++11 -arch=compute_61 -O0 -g -G -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -I. -o gpu -Xptxas -O0 -lcurand
 gpu-gdb: src/main.cu
 	nvcc $< -std=c++11 -arch=compute_61 -O0 -g  -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -o gpu
 
