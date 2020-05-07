@@ -8,7 +8,7 @@ cpu:
 gpuO0: src/main.cu
 	nvcc $< -std=c++11 -arch=compute_61 -O0 -g -G -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -I. -o gpu -Xptxas -O0 -lcurand
 gpu-gdb: src/main.cu
-	nvcc $< -std=c++11 -arch=compute_61 -O0 -g  -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -o gpu
+	nvcc $< -std=c++11 -arch=compute_61 -O0 -g  -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -o gpu -lcurand
 
 gpu: src/main.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_memory_alloc.hpp
 	nvcc $< -std=c++11 -arch=compute_61 -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -O3 -g -o gpu -Xptxas -O3 -Xcompiler -Wall -lcurand

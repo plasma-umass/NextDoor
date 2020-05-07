@@ -115,11 +115,6 @@ public:
     }
 
     //Sort vertices by number of edges
-    // for (int i = 0; i < vertices.size (); i++) {
-    //   if (vertices[i].get_id() != i) {
-    //     vertices[i].set_id(i);//vertices.insert (i, Vertex (i, 0));
-    //   }
-    // }
     // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
 
     // std::unordered_map <int, int> previous_id_to_new_ids;
