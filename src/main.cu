@@ -20,6 +20,8 @@
 #include <cub/block/block_scan.cuh>
 #include <cub/device/device_select.cuh>
 #include <cub/cub.cuh>
+#include <curand.h>
+#include <cuda.h>
 
 //citeseer.graph
 // const int N = 3312;
@@ -43,6 +45,10 @@ const int N_EDGES = 2160312;
 #include "csr.hpp"
 #include "utils.hpp"
 #include "pinned_memory_alloc.hpp"
+
+#define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
+  printf("Error at %s:%d\n",__FILE__,__LINE__);\
+  return EXIT_FAILURE;}} while(0)
 
 using namespace utils;
 
@@ -346,7 +352,8 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
               const VertexID common_vertex_with_previous_partition_additions,
               VertexID* thread_to_src,
               VertexID* thread_to_roots,
-              EdgePos_t total_roots
+              EdgePos_t total_roots,
+              float* rand
 
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
@@ -368,21 +375,19 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   start_edge_idx = csr->get_start_edge_idx (hop_vertex);
 
   end_edge_idx = start_edge_idx;
-  EdgePos_t n_edges = 1;
+  EdgePos_t n_edges = csr->get_n_edges_for_vertex(hop_vertex);
 
   EdgePos_t* end = &previous_stage_filled_range[2*(vertex - root_partition->first_vertex_id) + 1];
   if (end_edge_idx != -1) {
     
-    EdgePos_t e = -1;
-    int shfl_warp_size = n_edges_to_warp_size(n_edges, SourceVertexExec_t::BlockLevel);
     *end = 1;
-    EdgePos_t _e = 0;
+    EdgePos_t _e = (EdgePos_t)round(0.5 + n_edges * rand[linear_thread_id]) - 1;
 
     int iter = 0;
     //while (start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) 
     {
-      VertexID edge = csr->get_edge (start_edge_idx);
-      EdgePos_t addr = start + _e;
+      VertexID edge = csr->get_edge (start_edge_idx + _e);
+      EdgePos_t addr = start;
       // if (!(addr < num_neighbors)) {
       //   printf ("v %d start %d addr %d num_neighbors %d\n", vertex, start, addr, num_neighbors);
       // }
@@ -1457,11 +1462,14 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
       per_part_src_to_root_positions[part][2*part_v] = iter;
       per_part_src_to_root_positions[part][2*part_v + 1] = host_src_to_roots[v].size ();
       iter += 2*host_src_to_roots[v].size ();
+
+      // if (hop == 8)
+      //   std::cout <<"Src: " << v << " # of roots " << per_part_src_to_root_positions[part][2*part_v + 1] << std::endl;
     }
   }
 
   double t2 = convertTimeValToDouble(getTimeOfDay ());
-        
+
   std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
 }
 
@@ -1824,8 +1832,6 @@ int main (int argc, char* argv[])
                 EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
                 thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
                 thread_to_roots[linear_thread] = per_part_src_to_roots[part_idx][root_idx];
-                if(thread_to_roots[linear_thread] == 3)
-                  printf("1825: root %d src %d\n", thread_to_roots[linear_thread], src);
                 linear_thread += 1;
               }
             }
@@ -1837,6 +1843,13 @@ int main (int argc, char* argv[])
             CHK_CU(cudaMalloc(&device_thread_to_roots, sum_all_roots*sizeof(VertexID)));
             CHK_CU(cudaMemcpy(device_thread_to_src, thread_to_src, sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
             CHK_CU(cudaMemcpy(device_thread_to_roots, thread_to_roots, sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
+            float* device_rand;
+            cudaMalloc(&device_rand, sum_all_roots*sizeof(float));
+            curandGenerator_t gen;
+            CURAND_CALL(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
+            CURAND_CALL(curandSetPseudoRandomGeneratorSeed(gen, clock()));
+            CURAND_CALL(curandGenerateUniform(gen, device_rand, sum_all_roots));
+
             double t1 = convertTimeValToDouble(getTimeOfDay ());
             
 #ifdef RANDOM_WALK
@@ -1856,7 +1869,8 @@ int main (int argc, char* argv[])
               vertex_with_prev_partition_adds,
               device_thread_to_src,
               device_thread_to_roots,
-              sum_all_roots
+              sum_all_roots,
+              device_rand
     #ifndef NDEBUG
               , device_profile_branch_1,
               device_profile_branch_2
