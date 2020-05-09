@@ -27,8 +27,8 @@
 // const int N = 3312;
 // const int N_EDGES = 9074;
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 //rmat.graph
 // const int N = 1024;
 // const int N_EDGES = 29381;
@@ -45,8 +45,8 @@
 //const int N = 1632803;
 //const int N_EDGES = 30480021;
 //soc-LiveJournal1
-const int N = 4847571;
-const int N_EDGES = 68556521;
+//const int N = 4847571;
+//const int N_EDGES = 68556521;
 
 #include "csr.hpp"
 #include "utils.hpp"
@@ -61,10 +61,10 @@ using namespace utils;
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
-//#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 #define RANDOM_WALK
 
-//#define GRAPH_PARTITION_SIZE (50*1024*1024) //24 KB is the size of each partition of graph
+#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
 //#define CHECK_RESULT
 
@@ -298,9 +298,10 @@ __global__ void __launch_bounds__(N_THREADS) run_hop_parallel_single_step_device
   //previous_stage_filled_range[idx] = start;
 }
 
-__device__ __host__ inline EdgePos_t vertex_sample_set_start_pos_fixed_size (VertexID vertex) 
+__device__ __host__ inline EdgePos_t vertex_sample_set_start_pos_fixed_size (const CSRPartition* root_partition, VertexID vertex) 
 {
-  return vertex;
+  assert (root_partition->has_vertex(vertex));
+  return vertex-root_partition->first_vertex_id;
 }
 
 #define USE_PARTITION_FOR_SHMEM_1
@@ -370,7 +371,7 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
   start_edge_idx = csr->get_start_edge_idx (hop_vertex);
 #endif
   VertexID vertex = thread_to_roots[global_thread_id];
-  EdgePos_t start = vertex_sample_set_start_pos_fixed_size(vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  
+  EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  
   //assert (map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)] == vertex);
 
 #ifdef USE_PARTITION_FOR_SHMEM_1
@@ -409,7 +410,8 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
               VertexID* thread_to_src,
               VertexID* thread_to_roots,
               EdgePos_t total_roots,
-              float* rand
+              float* rand,
+              EdgePos_t linear_threads_executed
 
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
@@ -423,22 +425,24 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   if (linear_thread_id >= total_roots) 
     return;
 
+  hop_vertex = thread_to_src[linear_thread_id];
   VertexID vertex = thread_to_roots[linear_thread_id];
-  EdgePos_t start = vertex_sample_set_start_pos_fixed_size(vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  
+  EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  
   //assert (map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)] == vertex);
   EdgePos_t start_edge_idx;
   start_edge_idx = csr->get_start_edge_idx (hop_vertex);
   EdgePos_t n_edges = csr->get_n_edges_for_vertex(hop_vertex);
-
+  if (hop == 1 && vertex == 3369)
+    printf ("hop_vertex for 3369 %d n_edges %d\n", hop_vertex, n_edges);
   if (n_edges > 0) {
-    previous_stage_filled_range[linear_thread_id] = 1;
-    EdgePos_t _e = (EdgePos_t)round(0.5 + n_edges * rand[linear_thread_id]) - 1;
+    previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
+    EdgePos_t _e = n_edges - 1;//(EdgePos_t)round(0.5 + n_edges * rand[linear_thread_id]) - 1;
     
     {
       VertexID edge = csr->get_edge (start_edge_idx + _e);
       EdgePos_t addr = start;
 
-      embeddings_additions[linear_thread_id] = edge;
+      embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
     }
   }
 }
@@ -638,13 +642,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
         EdgePos_t start_edge_idx;
         EdgePos_t end_edge_idx;
         start_edge_idx = csr->get_start_edge_idx (hop_vertex);
-#ifdef RANDOM_WALK
-        end_edge_idx = start_edge_idx;
-        EdgePos_t n_edges = 1;
-#else
         end_edge_idx = csr->get_end_edge_idx (hop_vertex);
         EdgePos_t n_edges = csr->get_n_edges_for_vertex(hop_vertex);
-#endif
         __syncwarp (warp_hop_mask);
 
         EdgePos_t* end = &previous_stage_filled_range[2*(vertex - root_partition->first_vertex_id) + 1];
@@ -653,17 +652,14 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
           
           EdgePos_t e = -1;
           int shfl_warp_size = n_edges_to_warp_size(n_edges, SourceVertexExec_t::BlockLevel);
-#ifdef RANDOM_WALK
-          *end = 1;
-          EdgePos_t _e = 0;
-#else
+
           if (laneid%shfl_warp_size == 0) {
             e = utils::atomicAdd (end, n_edges);
           }
           EdgePos_t _e;
           
           _e = __shfl_sync (warp_hop_mask, e, 0, shfl_warp_size);  
-#endif
+
           assert (_e != -1);
 #ifdef USE_PARTITION_FOR_SHMEM
           if (_curr_vertex_id >= hop_vertices_in_shared_mem_size) {
@@ -736,11 +732,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
       const int warpid = threadIdx.x/shfl_warp_size;
 
       const EdgePos_t start_edge_idx = csr->get_start_edge_idx (_hop_vertex);
-#ifdef RANDOM_WALK
-      const EdgePos_t end_edge_idx = start_edge_idx;
-#else
       const EdgePos_t end_edge_idx = csr->get_end_edge_idx (_hop_vertex);
-#endif
 
 #ifdef USE_PARTITION_FOR_SHMEM
       assert (n_edges <= sizeof(shmem_csr_edges)/sizeof(shmem_csr_edges[0]));
@@ -1259,7 +1251,7 @@ size_t cpu_get_max_lengths_for_vertices_single_step (int hop, CSRPartition& root
 #ifdef RANDOM_WALK
     new_additions += 1;
     
-    map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id)] = vertex_sample_set_start_pos_fixed_size(v);
+    map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id)] = vertex_sample_set_start_pos_fixed_size(&root_partition, v);
     map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id) + 1] = 1;
 #else
     const EdgePos_t start = map_vertex_to_additions_prev_hop[2*v];
@@ -1566,10 +1558,7 @@ int main (int argc, char* argv[])
 
 
 #ifdef RANDOM_WALK
-    EdgePos_t* root_to_linear_thread = new EdgePos_t[csr->get_n_vertices()]; //Make it per part
-    for (int i = 0; i < csr->get_n_vertices(); i++) {
-      root_to_linear_thread[i] = -1;
-    }
+    EdgePos_t** root_to_linear_thread = new EdgePos_t*[csr_partitions.size()];
 #endif
     /********************Get the output additions lengths*******************/
     for (int root_part_idx = 0; root_part_idx < (int)csr_partitions.size (); root_part_idx++) {
@@ -1687,7 +1676,13 @@ int main (int argc, char* argv[])
       }
       
       const EdgePos_t vertex_with_prev_partition_adds = additions_sizes[hop][2*vertex_with_prev_partition + 1];
-
+#ifdef RANDOM_WALK
+      EdgePos_t linear_threads_executed = 0;
+      root_to_linear_thread[root_part_idx] = new EdgePos_t[root_partition.get_n_vertices()];
+      for (VertexID v = 0; v < root_partition.get_n_vertices(); v++) {
+        root_to_linear_thread[root_part_idx][v] = -1;
+      }
+#endif
       for (auto part_idx : src_partitions) {
         VertexID* device_src_to_roots;
         EdgePos_t* device_src_to_root_positions;
@@ -1753,95 +1748,105 @@ int main (int argc, char* argv[])
           vertex_for_block_level_exec = src_partition.last_vertex_id;
           std::cout << "vertex_for_block_level_exec " << vertex_for_block_level_exec << std::endl;
           if (vertex_for_block_level_exec != -1) {
+#ifdef RANDOM_WALK            
             EdgePos_t sum_all_roots = 0;
             int non_zero_src = 0;
-            for (int src = 0; src < src_partition.get_n_vertices(); src++) {
+            for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
               sum_all_roots += per_part_src_to_roots_positions[part_idx][2*src + 1];
             }
-            std::vector<std::pair<EdgePos_t, VertexID>> src_and_num_roots;
-            for (int src = 0; src < src_partition.get_n_vertices(); src++) {
-              if (per_part_src_to_roots_positions[part_idx][2*src + 1] != 0) 
-                src_and_num_roots.push_back(std::make_pair(per_part_src_to_roots_positions[part_idx][2*src + 1], src));
-            }
-
-            std::sort(src_and_num_roots.begin(), src_and_num_roots.end());
-            VertexID* thread_to_src = new VertexID[sum_all_roots];
-            VertexID* thread_to_roots = new VertexID[sum_all_roots];
             
-            int shfl_warp_size = 1;
-            int linear_thread = 0;
-            VertexID sorted_src_idx_for_grid_level_exec = -1;
-            EdgePos_t* src_to_last_linear_thread = new EdgePos_t[src_partition.get_n_vertices()];
-            EdgePos_t* src_to_first_linear_thread = new EdgePos_t[src_partition.get_n_vertices()];
-            const EdgePos_t THRESHOLD = 2048;
-            int src_num_roots_idx;
-            for (src_num_roots_idx = 0; src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
-              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[src_num_roots_idx];
-              VertexID src = std::get<1>(src_num_root);
-              EdgePos_t num_roots = std::get<0> (src_num_root);
-              if (sorted_src_idx_for_grid_level_exec == -1 and num_roots >= THRESHOLD) {
-                sorted_src_idx_for_grid_level_exec = src_num_roots_idx;
-                break;
-              }
-
-              src_to_first_linear_thread[src + src_partition.first_vertex_id] = linear_thread;
-
-              for (int _idx = 0; _idx < num_roots; _idx++) {
-                EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
-                thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
-                VertexID root = per_part_src_to_roots[part_idx][root_idx];
-                thread_to_roots[linear_thread] = root;
-                root_to_linear_thread[root] = linear_thread;
-                
-                linear_thread += 1;
-              }
-              src_to_last_linear_thread[src + src_partition.first_vertex_id] = linear_thread-1;
-
-              assert (sorted_src_idx_for_grid_level_exec == -1 || (sorted_src_idx_for_grid_level_exec != -1 and num_roots >= THRESHOLD));
-            }
-
-            int device_level_num_threads = 0;
-            int device_level_start_linear_thread_id = linear_thread;
-            int* device_level_thread_to_linear_thread = new int[sum_all_roots];
-
-            for (;src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
-              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[src_num_roots_idx];
-              VertexID src = std::get<1>(src_num_root);
-              EdgePos_t num_roots = std::get<0> (src_num_root);
-              
-              if (device_level_num_threads%N_THREADS != 0) {
-                while (device_level_num_threads%N_THREADS != 0) {
-                  device_level_thread_to_linear_thread[device_level_num_threads++] = -1;
-                }
-              }
-
-              src_to_first_linear_thread[src + src_partition.first_vertex_id] = linear_thread;
-
-              for (int _idx = 0; _idx < num_roots; _idx++) {
-                EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
-                thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
-                VertexID root = per_part_src_to_roots[part_idx][root_idx];
-                thread_to_roots[linear_thread] = root;
-                root_to_linear_thread[root] = linear_thread;
-                device_level_thread_to_linear_thread[device_level_num_threads] = linear_thread;
-                device_level_num_threads++;
-                linear_thread += 1;
-              }
-              src_to_last_linear_thread[src + src_partition.first_vertex_id] = linear_thread-1;
-
-              assert (num_roots >= THRESHOLD);
-            }
-
             VertexID* device_thread_to_src;
             VertexID* device_thread_to_roots;
             VertexID* device_device_level_thread_to_linear_thread;
             std::cout << "sum_all_roots " << sum_all_roots << std::endl;
             CHK_CU(cudaMalloc(&device_thread_to_src, sum_all_roots*sizeof(VertexID)));
             CHK_CU(cudaMalloc(&device_thread_to_roots, sum_all_roots*sizeof(VertexID)));
-            CHK_CU(cudaMemcpy(device_thread_to_src, thread_to_src, sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
-            CHK_CU(cudaMemcpy(device_thread_to_roots, thread_to_roots, sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
-            CHK_CU(cudaMalloc(&device_device_level_thread_to_linear_thread, sum_all_roots*sizeof(VertexID)));
-            CHK_CU(cudaMemcpy(device_device_level_thread_to_linear_thread, device_level_thread_to_linear_thread, sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
+
+            std::vector<std::pair<EdgePos_t, VertexID>> src_and_num_roots;
+            for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
+              if (per_part_src_to_roots_positions[part_idx][2*src + 1] != 0) 
+                src_and_num_roots.push_back(std::make_pair(per_part_src_to_roots_positions[part_idx][2*src + 1], src));
+            }
+
+            EdgePos_t* device_level_thread_to_linear_thread = new EdgePos_t[sum_all_roots*2];
+
+            std::sort(src_and_num_roots.begin(), src_and_num_roots.end());
+            std::vector<VertexID> thread_to_src = std::vector<VertexID>(sum_all_roots);
+            std::vector<VertexID> thread_to_roots = std::vector<VertexID>(sum_all_roots);
+            
+            int shfl_warp_size = 1;
+            EdgePos_t linear_thread = 0;
+            VertexID sorted_src_idx_for_grid_level_exec = -1;
+            std::vector<EdgePos_t> src_to_last_linear_thread = std::vector<EdgePos_t>(src_partition.get_n_vertices());
+            std::vector<EdgePos_t> src_to_first_linear_thread = std::vector<EdgePos_t>(src_partition.get_n_vertices());
+            const EdgePos_t THRESHOLD = 2048;
+            VertexID src_num_roots_idx;
+            
+            for (src_num_roots_idx = 0; src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
+              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[src_num_roots_idx];
+              VertexID src = std::get<1>(src_num_root);
+              EdgePos_t num_roots = std::get<0> (src_num_root);
+              if (sorted_src_idx_for_grid_level_exec == -1 and num_roots >= THRESHOLD) {
+                // sorted_src_idx_for_grid_level_exec = src_num_roots_idx;
+                // break;
+              }
+
+              src_to_first_linear_thread[src] = linear_thread;
+
+              for (int _idx = 0; _idx < num_roots; _idx++) {
+                EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
+                thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
+                VertexID root = per_part_src_to_roots[part_idx][root_idx];
+                thread_to_roots[linear_thread] = root;
+                root_to_linear_thread[root_part_idx][root-root_partition.first_vertex_id] = linear_thread+linear_threads_executed;
+                if (root == 3369) {
+                  printf ("linear_thread for 3369 %d root_part_idx %d\n", linear_thread, root_part_idx);
+                }
+                
+                linear_thread += 1;
+              }
+              src_to_last_linear_thread[src] = linear_thread-1;
+
+              assert (sorted_src_idx_for_grid_level_exec == -1 || (sorted_src_idx_for_grid_level_exec != -1 and num_roots >= THRESHOLD));
+            }
+
+            EdgePos_t device_level_num_threads = 0;
+            EdgePos_t device_level_start_linear_thread_id = linear_thread;
+            //TODO: correct this
+
+            // for (;src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
+            //   std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[src_num_roots_idx];
+            //   VertexID src = std::get<1>(src_num_root);
+            //   EdgePos_t num_roots = std::get<0> (src_num_root);
+              
+            //   if (device_level_num_threads%N_THREADS != 0) {
+            //     while (device_level_num_threads%N_THREADS != 0) {
+            //       device_level_thread_to_linear_thread[device_level_num_threads++] = -1;
+            //     }
+            //   }
+
+            //   src_to_first_linear_thread[src] = linear_thread;
+
+            //   for (int _idx = 0; _idx < num_roots; _idx++) {
+            //     EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
+            //     thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
+            //     VertexID root = per_part_src_to_roots[part_idx][root_idx];
+            //     thread_to_roots[linear_thread] = root;
+            //     root_to_linear_thread[root_part_idx][root-root_partition.first_vertex_id] = linear_thread;
+            //     device_level_thread_to_linear_thread[device_level_num_threads] = linear_thread;
+            //     device_level_num_threads++;
+            //     linear_thread += 1;
+            //   }
+            //   src_to_last_linear_thread[src] = linear_thread-1;
+
+            //   assert (num_roots >= THRESHOLD);
+            // }
+
+            
+            CHK_CU(cudaMemcpy(device_thread_to_src, &thread_to_src[0], sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
+            CHK_CU(cudaMemcpy(device_thread_to_roots, &thread_to_roots[0], sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
+            CHK_CU(cudaMalloc(&device_device_level_thread_to_linear_thread, sum_all_roots*2*sizeof(EdgePos_t)));
+            CHK_CU(cudaMemcpy(device_device_level_thread_to_linear_thread, device_level_thread_to_linear_thread, sum_all_roots*2*sizeof(EdgePos_t), cudaMemcpyHostToDevice));
 
             float* device_rand;
             cudaMalloc(&device_rand, sum_all_roots*sizeof(float));
@@ -1849,18 +1854,11 @@ int main (int argc, char* argv[])
             CURAND_CALL(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
             CURAND_CALL(curandSetPseudoRandomGeneratorSeed(gen, clock()));
             CURAND_CALL(curandGenerateUniform(gen, device_rand, sum_all_roots));
-            cudaStream_t* streams = new cudaStream_t[src_and_num_roots.size()];
-            for (VertexID src_idx = sorted_src_idx_for_grid_level_exec; 
-                 src_idx < src_and_num_roots.size(); src_idx++) {
-              cudaStreamCreate(&streams[src_idx]);
-            }
-            cudaStreamCreate(&streams[0]);
             double t1 = convertTimeValToDouble(getTimeOfDay ());
             
-#ifdef RANDOM_WALK            
             //for (VertexID src_idx = sorted_src_idx_for_grid_level_exec; 
                  //src_idx < src_and_num_roots.size(); src_idx++) 
-              {
+            if (sorted_src_idx_for_grid_level_exec != -1) {
               VertexID _src = std::get<1> (src_and_num_roots[sorted_src_idx_for_grid_level_exec]);
               EdgePos_t num_roots = linear_thread - per_part_src_to_roots_positions[part_idx][2*_src + 1];
               EdgePos_t start_linear_id = src_to_first_linear_thread[sorted_src_idx_for_grid_level_exec];
@@ -1893,10 +1891,12 @@ int main (int argc, char* argv[])
     #endif
             );
             }
-            ;
+            if (sorted_src_idx_for_grid_level_exec == -1)
+              sorted_src_idx_for_grid_level_exec = src_and_num_roots.size();
+            //TODO: stop using src_to_last_linear_thread. just use two variables for it.
             EdgePos_t block_level_roots = src_to_last_linear_thread[std::get<1>(src_and_num_roots[sorted_src_idx_for_grid_level_exec-1])]+1;
             int N_BLOCKS = (block_level_roots%N_THREADS == 0) ? block_level_roots/N_THREADS:block_level_roots/N_THREADS+1;
-            run_hop_parallel_single_step_block_level_fixed_size<<<N_BLOCKS, N_THREADS,0,streams[0]>>> (N_HOPS, hop, device_csr,  
+            run_hop_parallel_single_step_block_level_fixed_size<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
               device_root_partition,
               vertex_for_block_level_exec,
               device_additions,
@@ -1912,7 +1912,8 @@ int main (int argc, char* argv[])
               device_thread_to_src,
               device_thread_to_roots,
               block_level_roots,
-              device_rand
+              device_rand,
+              linear_threads_executed
     #ifndef NDEBUG
               , device_profile_branch_1,
               device_profile_branch_2
@@ -1942,11 +1943,7 @@ int main (int argc, char* argv[])
             CHK_CU (cudaDeviceSynchronize ());
             double t2 = convertTimeValToDouble(getTimeOfDay ());
 #ifdef RANDOM_WALK
-            for (VertexID src_idx = sorted_src_idx_for_grid_level_exec; 
-              src_idx < src_and_num_roots.size(); src_idx++) {
-              cudaStreamDestroy(streams[src_idx]);
-            }
-            cudaStreamDestroy(streams[0]);
+            linear_threads_executed += linear_thread;
             rand_walk_time += (t2-t1);
 #endif
             std::cout<<"Block Level time " << (t2-t1) <<" secs" << std::endl;
@@ -2188,8 +2185,14 @@ int main (int argc, char* argv[])
       if (root_part_idx == 0) {
 #ifdef RANDOM_WALK
         for (VertexID v : root_partition.get_vertex_range()) {
-          EdgePos_t idx = (hop > 0) ? root_to_linear_thread[v] : 2*v+1;
-          additions_sizes[hop][2*v+1] = part_additions_sizes[root_part_idx][idx];
+          EdgePos_t idx = (hop > 0) ? root_to_linear_thread[0][v] : 2*v+1;
+          if (hop == 1 and v == 3369)
+              std::cout << v << ": " << part_additions_sizes[root_part_idx][idx] << ":" << root_to_linear_thread[0][v] << std::endl;
+          if (idx == -1)
+            additions_sizes[hop][2*v+1] = 0;
+          else {
+            additions_sizes[hop][2*v+1] = part_additions_sizes[root_part_idx][idx];
+          }
         }
 #else
         memcpy (&additions_sizes[hop][0], part_additions_sizes[root_part_idx], 
@@ -2200,8 +2203,14 @@ int main (int argc, char* argv[])
         first_vertex_id = root_partition.first_vertex_id;
 #ifdef RANDOM_WALK
         for (VertexID v : root_partition.get_vertex_range()) {
-          EdgePos_t idx = (hop > 0) ? root_to_linear_thread[v - root_partition.first_vertex_id] : 2*(v - root_partition.first_vertex_id) +1;
-          additions_sizes[hop][2*v+1] = part_additions_sizes[root_part_idx][idx];
+          EdgePos_t idx = (hop > 0) ? root_to_linear_thread[root_part_idx][v - root_partition.first_vertex_id] : 2*(v - root_partition.first_vertex_id) +1;
+          if (idx == -1)
+            additions_sizes[hop][2*v+1] = 0;
+          else {
+            additions_sizes[hop][2*v+1] = part_additions_sizes[root_part_idx][idx];
+          }
+          // if (hop == 1)
+          //   std::cout << v << ": " << part_additions_sizes[root_part_idx][idx] << std::endl;
         }
 #else
         memcpy (&additions_sizes[hop][2*root_partition.first_vertex_id],
@@ -2227,7 +2236,7 @@ int main (int argc, char* argv[])
         VertexID part_v = v - csr_partitions[part].first_vertex_id;
         EdgePos_t part_start = partition_map_vertex_to_additions[part][2*part_v];
 #ifdef RANDOM_WALK
-        const EdgePos_t part_end = part_start + ((hop == 0) ? part_additions_sizes[part][2*part_v + 1] : part_additions_sizes[part][root_to_linear_thread[part_v]]);
+        const EdgePos_t part_end = part_start + ((hop == 0) ? part_additions_sizes[part][2*part_v + 1] : part_additions_sizes[part][root_to_linear_thread[part][part_v]]);
 #else
         const EdgePos_t part_end = part_start + part_additions_sizes[part][2*part_v + 1];
 #endif
@@ -2236,7 +2245,7 @@ int main (int argc, char* argv[])
         std::unordered_set<VertexID> set_neighbors;
 #ifdef RANDOM_WALK
         {
-          EdgePos_t idx = ((hop == 0) ? 2*part_v + 1 : root_to_linear_thread[part_v]);
+          EdgePos_t idx = ((hop == 0) ? 2*part_v + 1 : root_to_linear_thread[part][part_v]);
           if (!(part_additions_sizes[part][idx] <= final_map_vertex_to_additions[hop][0][2*part_v + 1]))
             std::cout << "v " << v << " p " << part_additions_sizes[part][idx] << " f " << final_map_vertex_to_additions[hop][0][2*part_v + 1] << std::endl;
           assert (part_additions_sizes[part][idx] <= final_map_vertex_to_additions[hop][0][2*part_v + 1]);
@@ -2251,7 +2260,7 @@ int main (int argc, char* argv[])
           memcpy (&neighbors[hop][final_idx], &part_neighbors[part][part_start], (part_end-part_start)*sizeof(VertexID));
         } else {
           if (part_end > part_start) {
-            EdgePos_t idx = root_to_linear_thread[part_start];
+            EdgePos_t idx = root_to_linear_thread[part][part_start];
             if (idx != -1) {
               if (part_neighbors[part][idx] == -1) {
                 std::cout << "v " << v << " part_end " << part_end << " part_start " << part_start << std::endl;
@@ -2322,14 +2331,15 @@ int main (int argc, char* argv[])
   }
 
   std::cout << "Getting embeddings from GPU" << std::endl;
-  EdgePos_t total_neighbors[N_HOPS] = {0};
+  EdgePos_t per_hop_total_neighbors[N_HOPS] = {0};
+  EdgePos_t total_neighbors = 0;
   std::vector <std::vector<VertexID>> produced_embeddings(csr->get_n_vertices (), std::vector<VertexID>());
   for (VertexID vertex = 0; vertex < csr->get_n_vertices (); vertex++) {
     EdgePos_t produced_embedding_size = 0;
     for (int hop = 0; hop < N_HOPS; hop++) {
       int n_additions = additions_sizes[hop][2*vertex + 1];
       produced_embedding_size += n_additions;
-      total_neighbors[hop] += n_additions;
+      per_hop_total_neighbors[hop] += n_additions;
     }
     //std::cout << " input_embedding_idx " << input_embedding_idx << std::endl;
     EdgePos_t copied = 0;
@@ -2349,12 +2359,16 @@ int main (int argc, char* argv[])
     //produced_embeddings.push_back (embedding);
   }
 
+  for (int hop = 0; hop < N_HOPS; hop++) {
+    total_neighbors += per_hop_total_neighbors[hop];
+  }
+
   #ifdef RANDOM_WALK
     std::cout<<"rand_walk_time " << rand_walk_time << " secs "<<std::endl;
   #endif
   std::cout << "GPU Time: " << gpu_time << " secs" << std::endl;
   std::cout << "End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
-  std::cout << "Total 2-hop neighbors " << total_neighbors[0]+total_neighbors[1]+total_neighbors[2]+total_neighbors[3]+total_neighbors[4]+total_neighbors[5]+total_neighbors[6]+total_neighbors[7]+total_neighbors[8]+total_neighbors[9] << std::endl;
+  std::cout << "Total " << N_HOPS << "-hop neighbors " << total_neighbors << std::endl;
 
 #ifdef CHECK_RESULT
   std::cout << "Generating CPU Embeddings:" << std::endl;
