@@ -68,7 +68,7 @@ using namespace utils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-#define RANDOM_WALK
+//#define RANDOM_WALK
 
 //#define GRAPH_PARTITION_SIZE (100*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
@@ -1322,36 +1322,33 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   host_src_to_roots.clear ();
 
+  host_src_to_roots = std::vector<std::vector<std::pair <VertexID, int>>>(csr->get_n_vertices ());
   //Create per hop vertex data
-  for (VertexID v = 0; v < csr->get_n_vertices (); v++) {
-    host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
-  }
-  VertexID common_vertex_with_previous_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
+  // for (VertexID v = 0; v < csr->get_n_vertices (); v++) {
+  //   host_src_to_roots.push_back (std::vector<std::pair <VertexID, int> > ());
+  // }
   VertexID first_vertex_id = root_partition.first_vertex_id;
-  //Do not count a common root vertex with prev partition twice.
-  //Always assign the common root vertex to the prev partition.
-  if (common_vertex_with_previous_partition != -1) {
-    first_vertex_id++;
-  }
+  std::vector<std::list<VertexID>>  host_src_to_roots_2 = std::vector<std::list<VertexID>>
+  (csr->get_n_vertices ());
+  double _t1 = convertTimeValToDouble(getTimeOfDay());
+// #ifdef SRC_TO_ROOT_VERTEX_IN_SORTED_ORDER
+//   std::vector<std::pair<EdgePos_t, VertexID>> vertices_sorted_by_start(root_partition.get_n_vertices());
   
-#ifdef SRC_TO_ROOT_VERTEX_IN_SORTED_ORDER
-  std::vector<std::pair<EdgePos_t, VertexID>> vertices_sorted_by_start(root_partition.get_n_vertices());
-  
-  //TODO: Add a vertex and edge iterator in each root partition
-  for (VertexID v = first_vertex_id; 
-       v <= root_partition.last_vertex_id; v++) {
-    EdgePos_t start = final_map_vertex_to_additions[hop-1][0][2*v];
-    vertices_sorted_by_start.push_back(std::make_pair(start, v));
-  }
+//   //TODO: Add a vertex and edge iterator in each root partition
+//   for (VertexID v = first_vertex_id; 
+//        v <= root_partition.last_vertex_id; v++) {
+//     EdgePos_t start = final_map_vertex_to_additions[hop-1][0][2*v];
+//     vertices_sorted_by_start.push_back(std::make_pair(start, v));
+//   }
 
-  //Sort pair based on the first value.
-  std::sort(vertices_sorted_by_start.begin(), vertices_sorted_by_start.end());
+//   //Sort pair based on the first value.
+//   std::sort(vertices_sorted_by_start.begin(), vertices_sorted_by_start.end());
 
-  for (auto pair: vertices_sorted_by_start) {
-    VertexID v = std::get<1>(pair);
-#else
+//   for (auto pair: vertices_sorted_by_start) {
+//     VertexID v = std::get<1>(pair);
+// #else
   for (VertexID v = first_vertex_id; v <= root_partition.last_vertex_id; v++) {
-#endif
+// #endif
 
     EdgePos_t start = final_map_vertex_to_additions[hop-1][0][2*v];
     EdgePos_t end   = additions_sizes[hop-1][2*v + 1];
@@ -1359,6 +1356,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
     for (EdgePos_t i = 0; i < end; i++) {
       EdgePos_t src = neighbors[hop-1][start + i];
       int part = get_partition_idx_of_vertex (csr_partitions, src);
+      //TODO: Create a bitvector instead a set of source partitions?
       src_partitions.insert (part);
       assert (start + i < neighbors_sizes[hop-1]/sizeof(VertexID));
       assert (src >= 0 && src < N);
@@ -1367,6 +1365,8 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
     }
   }
 
+  double _t2 = convertTimeValToDouble(getTimeOfDay());
+  std::cout << "Core Time " << (_t2 - _t1) << " secs" << std::endl;
   per_part_src_to_roots = std::vector<VertexID*> (csr_partitions.size (), nullptr);
   per_part_src_to_root_positions = std::vector<EdgePos_t*> (csr_partitions.size (), nullptr);
   per_part_src_to_roots_size = std::vector<EdgePos_t> (csr_partitions.size(), 0);
@@ -1521,7 +1521,7 @@ int main (int argc, char* argv[])
   csr_partitions.push_back (full_partition);
 #endif
 
-  const int N_HOPS = 10;
+  const int N_HOPS = 2;
   
   //Graph on GPU
   CSRPartition* device_csr;
