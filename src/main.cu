@@ -68,7 +68,7 @@ using namespace utils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-//#define RANDOM_WALK
+#define RANDOM_WALK
 
 //#define GRAPH_PARTITION_SIZE (100*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
@@ -324,8 +324,6 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               VertexID* source_vertex_idx,
-              const VertexID common_vertex_with_previous_partition,
-              const VertexID common_vertex_with_previous_partition_additions,
               VertexID* thread_to_src,
               VertexID* thread_to_roots,
               VertexID* device_level_thread_to_linear_thread,
@@ -349,9 +347,6 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
   EdgePos_t start_edge_idx;
 #endif
 
-
-  int laneid = threadIdx.x%warpSize;
-  int warpid = threadIdx.x/warpSize;
   int device_level_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
   int linear_thread_id = device_level_thread_to_linear_thread[device_level_thread_id];
   int global_thread_id = linear_thread_id;
@@ -393,12 +388,62 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
     
     {
       VertexID edge = csr->get_edge (start_edge_idx + _e);
-      EdgePos_t addr = start;
 
-      embeddings_additions[linear_threads_executed+global_thread_id] = edge;
+      embeddings_additions[linear_threads_executed+global_thread_id] = edge; 
     }
   }
 }
+
+// __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (int N_HOPS, int hop, 
+//               CSRPartition* csr,
+//               CSRPartition* root_partition,
+//               VertexID last_src_vertex,
+//               VertexID* embeddings_additions, 
+//               EdgePos_t num_neighbors,
+//               VertexID* embeddings_additions_prev_hop,
+//               EdgePos_t* map_orig_embedding_to_additions,
+//               EdgePos_t* previous_stage_filled_range,
+//               VertexID* hop_vertex_to_roots,
+//               EdgePos_t* map_vertex_to_hop_vertex_data,
+//               VertexID* source_vertex_idx,
+//               const VertexID common_vertex_with_previous_partition,
+//               const VertexID common_vertex_with_previous_partition_additions,
+//               VertexID* thread_to_src,
+//               VertexID* thread_to_roots,
+//               EdgePos_t total_roots,
+//               float* rand,
+//               EdgePos_t linear_threads_executed
+
+// #ifndef NDEBUG
+//               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
+// #endif
+// )
+// {
+//   int laneid = threadIdx.x%warpSize;
+//   int warpid = threadIdx.x/warpSize;
+//   int linear_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+//   VertexID vertex = root_partition->first_vertex_id + linear_thread_id;
+//   if (linear_thread_id >= total_roots) 
+//     return;
+
+  
+//   EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, vertex);
+//   EdgePos_t start_edge_idx;
+//   start_edge_idx = csr->get_start_edge_idx (vertex);
+//   EdgePos_t n_edges = csr->get_n_edges_for_vertex(vertex);
+  
+//   if (n_edges > 0) {
+//     previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
+//     EdgePos_t _e = (EdgePos_t)round(0.5 + n_edges * rand[linear_thread_id]) - 1;
+    
+//     {
+//       VertexID edge = csr->get_edge (start_edge_idx + _e);
+//       EdgePos_t addr = start;
+
+//       embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
+//     }
+//   }
+// }
 
 __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS, int hop, 
               CSRPartition* csr,
@@ -412,8 +457,6 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               VertexID* source_vertex_idx,
-              const VertexID common_vertex_with_previous_partition,
-              const VertexID common_vertex_with_previous_partition_additions,
               VertexID* thread_to_src,
               VertexID* thread_to_roots,
               EdgePos_t total_roots,
@@ -425,8 +468,6 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
 #endif
 )
 {
-  int laneid = threadIdx.x%warpSize;
-  int warpid = threadIdx.x/warpSize;
   int linear_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
   VertexID hop_vertex;
   if (linear_thread_id >= total_roots) 
@@ -446,7 +487,6 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
     
     {
       VertexID edge = csr->get_edge (start_edge_idx + _e);
-      EdgePos_t addr = start;
 
       embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
     }
@@ -489,7 +529,6 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
 #endif 
 
   int laneid = threadIdx.x%warpSize;
-  int warpid = threadIdx.x/warpSize;
   assert (last_src_vertex <= csr->last_vertex_id);
   assert (csr->first_vertex_id <= last_src_vertex);
 
@@ -1597,10 +1636,8 @@ int main (int argc, char* argv[])
       int MAX_LENGTHS_N_THREADS = 128;
       int N_BLOCKS = (root_partition.get_n_vertices ()%MAX_LENGTHS_N_THREADS == 0) ? root_partition.get_n_vertices ()/128 : root_partition.get_n_vertices ()/MAX_LENGTHS_N_THREADS + 1;
 
-      VertexID* device_edges_to_prev_iter_additions;
       EdgePos_t* device_prev_hop_addition_sizes;
-      const VertexID vertex_with_prev_partition = get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
-      assert (vertex_with_prev_partition == -1);
+      get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
 
       //partition_map_vertex_to_additions[root_part_idx] = new EdgePos_t[partition_map_vertex_to_additions_size (root_partition)];
       partition_map_vertex_to_additions[root_part_idx] = (EdgePos_t*)PinnedMemory::pinned_memory_heap.malloc(partition_map_vertex_to_additions_size (root_partition)*sizeof(EdgePos_t));
@@ -1691,8 +1728,8 @@ int main (int argc, char* argv[])
       } else {
         src_partitions.insert (root_part_idx);
       }
-      
-      const EdgePos_t vertex_with_prev_partition_adds = additions_sizes[hop][2*vertex_with_prev_partition + 1];
+      VertexID vertex_with_prev_partition = -1;
+      const EdgePos_t vertex_with_prev_partition_adds = -1;
 #ifdef RANDOM_WALK
       EdgePos_t linear_threads_executed = 0;
       root_to_linear_thread[root_part_idx] = new EdgePos_t[root_partition.get_n_vertices()];
@@ -1767,7 +1804,6 @@ int main (int argc, char* argv[])
           if (vertex_for_block_level_exec != -1) {
 #ifdef RANDOM_WALK            
             EdgePos_t sum_all_roots = 0;
-            int non_zero_src = 0;
             int roots_distribution[6] = {0};
             for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
               EdgePos_t num_roots = per_part_src_to_roots_positions[part_idx][2*src + 1];
@@ -1806,7 +1842,6 @@ int main (int argc, char* argv[])
             std::vector<VertexID> thread_to_src = std::vector<VertexID>(sum_all_roots);
             std::vector<VertexID> thread_to_roots = std::vector<VertexID>(sum_all_roots);
             
-            int shfl_warp_size = 1;
             EdgePos_t linear_thread = 0;
             VertexID sorted_src_idx_for_grid_level_exec = -1;
             std::vector<EdgePos_t> src_to_last_linear_thread = std::vector<EdgePos_t>(src_partition.get_n_vertices());
@@ -1840,7 +1875,6 @@ int main (int argc, char* argv[])
             }
 
             EdgePos_t device_level_num_threads = 0;
-            EdgePos_t device_level_start_linear_thread_id = linear_thread;
             //TODO: correct this
 
             for (;src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
@@ -1912,8 +1946,6 @@ int main (int argc, char* argv[])
                                                                     device_src_to_roots,
                                                                     device_src_to_root_positions,
                                                                     source_vertex_idx,
-                                                                    vertex_with_prev_partition,
-                                                                    vertex_with_prev_partition_adds,
                                                                     device_thread_to_src,
                                                                     device_thread_to_roots,
                                                                     device_device_level_thread_to_linear_thread,
@@ -1945,8 +1977,6 @@ int main (int argc, char* argv[])
               device_src_to_roots,
               device_src_to_root_positions,
               source_vertex_idx,
-              vertex_with_prev_partition,
-              vertex_with_prev_partition_adds,
               device_thread_to_src,
               device_thread_to_roots,
               block_level_roots,
@@ -2219,7 +2249,7 @@ int main (int argc, char* argv[])
         final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size(root_partition);
       }
 
-      VertexID first_vertex_id;
+      VertexID first_vertex_id = root_partition.first_vertex_id;
       if (root_part_idx == 0) {
 #ifdef RANDOM_WALK
         for (VertexID v : root_partition.get_vertex_range()) {
