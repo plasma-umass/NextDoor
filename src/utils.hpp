@@ -154,6 +154,38 @@ namespace utils {
   }
 
   #define CHK_CU(x) assert (utils::is_cuda_error (x) == false);
+
+#if 0
+  void bfs (CSR* csr) 
+  {
+    std::queue <VertexID> bfs_queue;
+    bool* seen = new bool [csr->get_n_vertices ()];
+    memset (seen, 0, csr->get_n_vertices ());
+
+    for (VertexID v = 0; v < csr->get_n_vertices (); v++) {
+      if (seen[v] == true) 
+        continue;
+        
+      bfs_queue.push (v);
+
+      while (!bfs_queue.empty ()) {
+        VertexID  v = bfs_queue.front ();
+        bfs_queue.pop ();
+        EdgePos_t s = csr->get_start_edge_idx (v);
+        const EdgePos_t e = csr->get_end_edge_idx (v);
+
+        while (s <= e) {
+          EdgePos_t u = csr->get_edges ()[s];
+          if (seen [u] == false) {
+            bfs_queue.push (u);
+            seen[u] = true;
+          }
+          s++;
+        }
+      }
+    }
+  }
+#endif
 }
 
 #define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
@@ -162,7 +194,7 @@ namespace utils {
 
 namespace GPUUtils {
   typedef uint32_t ShMemEdgePos_t;
-  
+
   enum SourceVertexExec_t
   {
     BlockLevel,

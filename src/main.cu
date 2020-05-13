@@ -81,12 +81,12 @@ using namespace GPUUtils;
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
-#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+//#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 //#define RANDOM_WALK
 
-#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
+//#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-#define CHECK_RESULT
+//#define CHECK_RESULT
 
 const int N_THREADS = 256;
 
@@ -921,59 +921,6 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
   std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
 }
 
-void remove_duplicates_in_hop_on_cpu(CSRPartition& root_partition, 
-                                     EdgePos_t* partition_map_vertex_to_additions, 
-                                     EdgePos_t* part_additions_sizes, VertexID* part_additions)
-{
-  for (VertexID v = root_partition.first_vertex_id; 
-       v < root_partition.last_vertex_id; v++) {
-    const EdgePos_t start = partition_map_vertex_to_additions[2*v];
-    const EdgePos_t end = part_additions_sizes[2*v + 1];
-
-    std::unordered_set<VertexID> distinct;
-    for (EdgePos_t idx = start; idx < start + end; idx++) {
-      distinct.insert(part_additions[idx]);
-    }
-
-    part_additions_sizes[2*v + 1] = distinct.size ();
-
-    EdgePos_t idx = start;
-    for (auto elem : distinct) {
-      part_additions[idx++] = elem;
-    }
-  }
-}
-
-void bfs (CSR* csr) 
-{
-  std::queue <VertexID> bfs_queue;
-  bool* seen = new bool [csr->get_n_vertices ()];
-  memset (seen, 0, csr->get_n_vertices ());
-
-  for (VertexID v = 0; v < csr->get_n_vertices (); v++) {
-    if (seen[v] == true) 
-      continue;
-      
-    bfs_queue.push (v);
-
-    while (!bfs_queue.empty ()) {
-      VertexID  v = bfs_queue.front ();
-      bfs_queue.pop ();
-      EdgePos_t s = csr->get_start_edge_idx (v);
-      const EdgePos_t e = csr->get_end_edge_idx (v);
-
-      while (s <= e) {
-        EdgePos_t u = csr->get_edges ()[s];
-        if (seen [u] == false) {
-          bfs_queue.push (u);
-          seen[u] = true;
-        }
-        s++;
-      }
-    }
-  }
-}
-
 double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                  CSRPartition& src_partition, CSRPartition& root_partition,
                  int& linear_threads_executed,
@@ -1162,13 +1109,6 @@ int main (int argc, char* argv[])
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
   std::cout << "csr.n_vertices " << csr->get_n_vertices () << " N " << N << std::endl;
-  {
-    double_t t1 = convertTimeValToDouble(getTimeOfDay ());
-    bfs (csr);
-    double_t t2 = convertTimeValToDouble(getTimeOfDay ());
-
-    std::cout << "Time spent in BFS " << (t2- t1) << " secs"<< std::endl;
-  }
 
   std::cout << "Pinned Memory Allocated" << std::endl;
 
