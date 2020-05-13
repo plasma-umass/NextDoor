@@ -36,6 +36,7 @@
 //[] Use vectors instead of dynamic arrays and new.
 //[] Convert these vectors to a new array type that does not do initialization of data.
 //[] Use MKL or cuSPARSE to do the matrix transpose.
+//[] A configuration that specifies all the parameters.
 
 //Supported:
 //citeseer.graph
@@ -84,8 +85,6 @@ using namespace GPUUtils;
 //#define GRAPH_PARTITION_SIZE (50*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
 //#define CHECK_RESULT
-
-typedef uint8_t SharedMemElem;
 
 const int N_THREADS = 256;
 
