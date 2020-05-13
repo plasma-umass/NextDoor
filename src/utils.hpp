@@ -156,6 +156,24 @@ namespace utils {
   #define CHK_CU(x) assert (utils::is_cuda_error (x) == false);
 }
 
+#define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
+  printf("Error at %s:%d\n",__FILE__,__LINE__);\
+  abort();}} while(0)
+  
+namespace GPUUtils {
+  float* gen_rand_on_gpu(size_t n_rands)
+  {
+    float* device_rand;
+    cudaMalloc(&device_rand, n_rands*sizeof(float));
+    curandGenerator_t gen;
+    CURAND_CALL(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
+    CURAND_CALL(curandSetPseudoRandomGeneratorSeed(gen, clock()));
+    CURAND_CALL(curandGenerateUniform(gen, device_rand, n_rands));
+
+    return device_rand;
+  }
+}
+
 namespace LoadBalancing {
   enum LoadBalancingThreshold{
     GridLevel = 32,

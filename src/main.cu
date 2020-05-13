@@ -58,10 +58,6 @@ const int N_EDGES = 68556521;
 #include "utils.hpp"
 #include "pinned_memory_alloc.hpp"
 
-#define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
-  printf("Error at %s:%d\n",__FILE__,__LINE__);\
-  abort();}} while(0)
-
 using namespace utils;
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
@@ -372,56 +368,33 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
   }
 }
 
-// __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (int N_HOPS, int hop, 
-//               CSRPartition* csr,
-//               CSRPartition* root_partition,
-//               VertexID last_src_vertex,
-//               VertexID* embeddings_additions, 
-//               EdgePos_t num_neighbors,
-//               VertexID* embeddings_additions_prev_hop,
-//               EdgePos_t* map_orig_embedding_to_additions,
-//               EdgePos_t* previous_stage_filled_range,
-//               VertexID* hop_vertex_to_roots,
-//               EdgePos_t* map_vertex_to_hop_vertex_data,
-//               VertexID* source_vertex_idx,
-//               const VertexID common_vertex_with_previous_partition,
-//               const VertexID common_vertex_with_previous_partition_additions,
-//               VertexID* thread_to_src,
-//               VertexID* thread_to_roots,
-//               EdgePos_t total_roots,
-//               float* rand,
-//               EdgePos_t linear_threads_executed
+__global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (int N_HOPS, int hop, 
+              CSRPartition* csr,
+              CSRPartition* root_partition,
+              VertexID* embeddings_additions, 
+              EdgePos_t num_neighbors,
+              EdgePos_t* previous_stage_filled_range,
+              VertexID* thread_to_src,
+              VertexID* thread_to_roots,
+              EdgePos_t total_roots,
+              float* rand)
+{
+  VertexID vertex = blockIdx.x*blockDim.x + threadIdx.x;
+  if (vertex >= total_roots) 
+    return;
 
-// #ifndef NDEBUG
-//               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
-// #endif
-// )
-// {
-//   int laneid = threadIdx.x%warpSize;
-//   int warpid = threadIdx.x/warpSize;
-//   int linear_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-//   VertexID vertex = root_partition->first_vertex_id + linear_thread_id;
-//   if (linear_thread_id >= total_roots) 
-//     return;
-
+  EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, vertex);
+  EdgePos_t start_edge_idx;
+  start_edge_idx = csr->get_start_edge_idx (vertex);
+  EdgePos_t n_edges = csr->get_n_edges_for_vertex(vertex);
   
-//   EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, vertex);
-//   EdgePos_t start_edge_idx;
-//   start_edge_idx = csr->get_start_edge_idx (vertex);
-//   EdgePos_t n_edges = csr->get_n_edges_for_vertex(vertex);
-  
-//   if (n_edges > 0) {
-//     previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
-//     EdgePos_t _e = (EdgePos_t)round(0.5 + n_edges * rand[linear_thread_id]) - 1;
-    
-//     {
-//       VertexID edge = csr->get_edge (start_edge_idx + _e);
-//       EdgePos_t addr = start;
-
-//       embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
-//     }
-//   }
-// }
+  if (n_edges > 0) {
+    previous_stage_filled_range[vertex] = 1;
+    EdgePos_t _e = (EdgePos_t)round(0.5 + n_edges * rand[vertex]) - 1;    
+    VertexID edge = csr->get_edge (start_edge_idx + _e);
+    embeddings_additions[vertex] = edge;
+  }
+}
 
 __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS, int hop, 
               CSRPartition* csr,
@@ -1559,12 +1532,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                     sizeof_vector(grid_level_thread_to_linear_thread_map),
                     cudaMemcpyHostToDevice));
 
-  float* device_rand;
-  cudaMalloc(&device_rand, sum_all_roots*sizeof(float));
-  curandGenerator_t gen;
-  CURAND_CALL(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
-  CURAND_CALL(curandSetPseudoRandomGeneratorSeed(gen, clock()));
-  CURAND_CALL(curandGenerateUniform(gen, device_rand, sum_all_roots));
+  float* device_rand = GPUUtils::gen_rand_on_gpu(sum_all_roots);
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   
   //for (VertexID src_idx = src_idx_for_grid_level_exec; 
@@ -1609,6 +1577,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
   double t2 = convertTimeValToDouble(getTimeOfDay ());
 
+  cudaFree(device_rand);
   linear_threads_executed += linear_thread;
 
   return (t2-t1);
@@ -1956,6 +1925,17 @@ int main (int argc, char* argv[])
         }
 
         if (hop == 0) {
+#if 0
+          int N_BLOCKS = thread_block_size(src_partition.get_n_vertices(), N_THREADS);
+          float* rand = GPUUtils::gen_rand_on_gpu(src_partition.get_n_vertices());
+          run_hop_parallel_single_step_block_level_fixed_size_first_step<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, 
+            device_csr, device_root_partition, device_additions, per_part_num_neighbors[root_part_idx],
+            device_map_vertex_to_additions[hop][root_part_idx], device_src_to_roots,
+            device_src_to_root_positions, src_partition.get_n_vertices(),
+            rand);
+          );
+          cudaFree(rand);
+#else
           int N_BLOCKS = src_partition.get_n_vertices ();
           run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
             device_root_partition,
@@ -1977,6 +1957,7 @@ int main (int argc, char* argv[])
           );
 
           CHK_CU(cudaGetLastError());
+#endif
         }
 
         CHK_CU (cudaDeviceSynchronize ());
@@ -2191,8 +2172,6 @@ int main (int argc, char* argv[])
 #ifdef RANDOM_WALK
         for (VertexID v : root_partition.get_vertex_range()) {
           EdgePos_t idx = (hop > 0) ? root_to_linear_thread[0][v] : 2*v+1;
-          if (hop == 1 and v == 3369)
-              std::cout << v << ": " << part_additions_sizes[root_part_idx][idx] << ":" << root_to_linear_thread[0][v] << std::endl;
           if (idx == -1)
             additions_sizes[hop][2*v+1] = 0;
           else {
@@ -2214,8 +2193,6 @@ int main (int argc, char* argv[])
           else {
             additions_sizes[hop][2*v+1] = part_additions_sizes[root_part_idx][idx];
           }
-          // if (hop == 1)
-          //   std::cout << v << ": " << part_additions_sizes[root_part_idx][idx] << std::endl;
         }
 #else
         memcpy (&additions_sizes[hop][2*root_partition.first_vertex_id],
