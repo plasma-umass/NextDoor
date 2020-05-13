@@ -93,6 +93,58 @@ namespace utils {
     if (val%divisor == 0) return val;
     return (val/divisor + 1)*divisor;
   }
+
+  template<class T1, class T2, class T3>
+  inline void set_till_next_multiple(T1& val, const T2 divisor, T3* mem, 
+                                     const T3 init_val)
+  {
+    while (val%divisor != 0)
+      mem[val++] = -1;
+  }
+
+  template<class T>
+  class RangeIterator
+  {
+    public:
+      class iterator 
+      {
+      private:
+         T it;
+
+      public: 
+        iterator(T _it) : it(_it) {}
+        iterator operator++() {it++; return *this;}
+        iterator operator--() {it--; return *this;}
+        T operator*() {return it;}
+
+        bool operator==(const iterator& rhs) {return it == rhs.it;}
+        bool operator!=(const iterator& rhs) {return it != rhs.it;}
+      };
+
+    private:
+      T first;
+      T last;
+
+    public:
+      RangeIterator(T _first, T _last) : first(_first), last(_last) {}
+
+      iterator begin() const
+      {
+        return iterator(first);
+      }
+
+      iterator end() const
+      {
+        return iterator(last+1);
+      }
+  };
+
+  template<class T>
+  size_t sizeof_vector(const T& vec)
+  {
+    return vec.size()*sizeof(vec[0]);
+  }
+
   #define CHK_CU(x) assert (utils::is_cuda_error (x) == false);
 }
 
@@ -134,17 +186,17 @@ namespace LoadBalancing {
     for (VertexID src : src_range) {
       EdgePos_t num_roots = src_num_roots[2*src + 1];
       if (is_grid_level_assignment(num_roots)) {
-        num_grid_threads+=num_roots;
+        num_grid_threads += num_roots;
         num_grid_threads = utils::next_multiple(num_grid_threads, 
                                                 GridLevelTBSize);
       } else if (is_block_level_assignment(num_roots)) {
-        num_block_threads+=num_roots;
-        num_block_threads = utils::next_multiple(num_block_threads, 
-                                                 BlockLevelTBSize);
+        num_block_threads += num_roots;
+        // num_block_threads = utils::next_multiple(num_block_threads, 
+        //                                          BlockLevelTBSize);
       } else if (is_subwarp_level_assignment(num_roots)) {
-        num_subwarp_threads+=num_roots;
-        num_subwarp_threads = utils::next_multiple(num_subwarp_threads, 
-                                                   SubWarpLevelTBSize);
+        num_subwarp_threads += num_roots;
+        // num_subwarp_threads = utils::next_multiple(num_subwarp_threads, 
+        //                                            SubWarpLevelTBSize);
       }
     }
   }

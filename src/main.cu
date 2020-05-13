@@ -326,7 +326,7 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
               VertexID* source_vertex_idx,
               VertexID* thread_to_src,
               VertexID* thread_to_roots,
-              VertexID* device_level_thread_to_linear_thread,
+              VertexID* grid_level_thread_to_linear_thread_map,
               EdgePos_t total_roots,
               EdgePos_t start_linear_id,
               EdgePos_t src_num_roots,
@@ -348,7 +348,7 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
 #endif
 
   int device_level_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-  int linear_thread_id = device_level_thread_to_linear_thread[device_level_thread_id];
+  int linear_thread_id = grid_level_thread_to_linear_thread_map[device_level_thread_id];
   int global_thread_id = linear_thread_id;
 #ifdef USE_PARTITION_FOR_SHMEM_1
   if (threadIdx.x == 0 && linear_thread_id < src_num_roots) {
@@ -1809,17 +1809,16 @@ int main (int argc, char* argv[])
               sum_all_roots += num_roots;
             }
             
-            EdgePos_t num_grid_threads, _, __;
+            EdgePos_t num_grid_threads, num_block_threads, num_subwarp_threads;
             LoadBalancing::num_gpu_threads(src_partition.iterate_num_vertices(),
                                            per_part_src_to_roots_positions[part_idx],
-                                           num_grid_threads, _, __);
+                                           num_grid_threads, num_block_threads, 
+                                           num_subwarp_threads);
 
             VertexID* device_thread_to_src_map;
             VertexID* device_thread_to_roots_map;
-            VertexID* device_device_level_thread_to_linear_thread;
+            VertexID* device_grid_level_thread_to_linear_thread;
             std::cout << "sum_all_roots " << sum_all_roots << std::endl;
-            CHK_CU(cudaMalloc(&device_thread_to_src_map, sum_all_roots*sizeof(VertexID)));
-            CHK_CU(cudaMalloc(&device_thread_to_roots_map, sum_all_roots*sizeof(VertexID)));
 
             std::vector<std::pair<EdgePos_t, VertexID>> src_and_num_roots;
             for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
@@ -1827,80 +1826,71 @@ int main (int argc, char* argv[])
                 src_and_num_roots.push_back(std::make_pair(per_part_src_to_roots_positions[part_idx][2*src + 1], src));
             }
 
-            std::vector<EdgePos_t> device_level_thread_to_linear_thread = std::vector<EdgePos_t>(num_grid_threads);
+            std::vector<EdgePos_t> grid_level_thread_to_linear_thread_map = std::vector<EdgePos_t>(num_grid_threads);
 
             std::sort(src_and_num_roots.begin(), src_and_num_roots.end());
             std::vector<VertexID> thread_to_src = std::vector<VertexID>(sum_all_roots);
             std::vector<VertexID> thread_to_roots = std::vector<VertexID>(sum_all_roots);
             
             EdgePos_t linear_thread = 0;
-            VertexID sorted_src_idx_for_grid_level_exec = -1;
-            std::vector<EdgePos_t> src_to_last_linear_thread = std::vector<EdgePos_t>(src_partition.get_n_vertices());
-            std::vector<EdgePos_t> src_to_first_linear_thread = std::vector<EdgePos_t>(src_partition.get_n_vertices());
-            //TODO: We can create different THRESHOLD levels.
-            VertexID src_num_roots_idx;
+            VertexID pair_src_num_roots_idx;
+            EdgePos_t grid_level_thread_iter = 0;
+            EdgePos_t grid_level_start_linear_th_id = linear_thread;
             
-            for (src_num_roots_idx = 0; src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
-              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[src_num_roots_idx];
+            for (pair_src_num_roots_idx = 0; 
+                 pair_src_num_roots_idx < src_and_num_roots.size(); 
+                 pair_src_num_roots_idx++) {
+              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[pair_src_num_roots_idx];
               VertexID src = std::get<1>(src_num_root);
               EdgePos_t num_roots = std::get<0> (src_num_root);
-              if (sorted_src_idx_for_grid_level_exec == -1 and LoadBalancing::is_grid_level_assignment(num_roots)) {
-                sorted_src_idx_for_grid_level_exec = src_num_roots_idx;
+              if (LoadBalancing::is_grid_level_assignment(num_roots)) {
                 break;
               }
 
-              src_to_first_linear_thread[src] = linear_thread;
-
               for (int _idx = 0; _idx < num_roots; _idx++) {
                 EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
                 thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
                 VertexID root = per_part_src_to_roots[part_idx][root_idx];
                 thread_to_roots[linear_thread] = root;
-                root_to_linear_thread[root_part_idx][root-root_partition.first_vertex_id] = linear_thread+linear_threads_executed;
+                root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
                 linear_thread += 1;
               }
-              src_to_last_linear_thread[src] = linear_thread-1;
             }
 
-            EdgePos_t device_level_num_threads = 0;
-            //TODO: correct this
-
-            for (;src_num_roots_idx < src_and_num_roots.size(); src_num_roots_idx++) {
-              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[src_num_roots_idx];
+            for (;pair_src_num_roots_idx < src_and_num_roots.size(); 
+                 pair_src_num_roots_idx++) {
+              std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[pair_src_num_roots_idx];
               VertexID src = std::get<1>(src_num_root);
               EdgePos_t num_roots = std::get<0> (src_num_root);
               
-              if (device_level_num_threads%LoadBalancing::LoadBalancingThreshold::GridLevel != 0) {
-                while (device_level_num_threads%LoadBalancing::LoadBalancingThreshold::GridLevel != 0) {
-                  device_level_thread_to_linear_thread[device_level_num_threads++] = -1;
-                }
-              }
-
-              src_to_first_linear_thread[src] = linear_thread;
-
-              for (int _idx = 0; _idx < num_roots; _idx++) {
+              for (int _idx = 0; _idx < num_roots; _idx++,grid_level_thread_iter++,linear_thread++) {
                 EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
                 thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
                 VertexID root = per_part_src_to_roots[part_idx][root_idx];
                 thread_to_roots[linear_thread] = root;
-                root_to_linear_thread[root_part_idx][root-root_partition.first_vertex_id] = linear_thread+linear_threads_executed;
-                device_level_thread_to_linear_thread[device_level_num_threads] = linear_thread;
-                device_level_num_threads++;
-                linear_thread += 1;
+                root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
+                grid_level_thread_to_linear_thread_map[grid_level_thread_iter] = linear_thread;
               }
-              src_to_last_linear_thread[src] = linear_thread-1;
 
-              if (device_level_num_threads%LoadBalancing::LoadBalancingThreshold::GridLevel != 0) {
-                while (device_level_num_threads%LoadBalancing::LoadBalancingThreshold::GridLevel != 0) {
-                  device_level_thread_to_linear_thread[device_level_num_threads++] = -1;
-                }
-              }
+              set_till_next_multiple(grid_level_thread_iter, 
+                                      LoadBalancing::LoadBalancingThreshold::GridLevel, 
+                                      grid_level_thread_to_linear_thread_map.data(), -1);
             }
 
-            CHK_CU(cudaMemcpy(device_thread_to_src_map, &thread_to_src[0], sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
-            CHK_CU(cudaMemcpy(device_thread_to_roots_map, &thread_to_roots[0], sum_all_roots*sizeof(VertexID), cudaMemcpyHostToDevice));
-            CHK_CU(cudaMalloc(&device_device_level_thread_to_linear_thread, sum_all_roots*2*sizeof(EdgePos_t)));
-            CHK_CU(cudaMemcpy(device_device_level_thread_to_linear_thread, device_level_thread_to_linear_thread.data(), sum_all_roots*2*sizeof(EdgePos_t), cudaMemcpyHostToDevice));
+            CHK_CU(cudaMalloc(&device_thread_to_src_map, 
+                              sizeof_vector(thread_to_src)));
+            CHK_CU(cudaMalloc(&device_thread_to_roots_map, 
+                              sizeof_vector(thread_to_roots)));
+            CHK_CU(cudaMemcpy(device_thread_to_src_map, thread_to_src.data(), 
+                              sizeof_vector(thread_to_src), cudaMemcpyHostToDevice));
+            CHK_CU(cudaMemcpy(device_thread_to_roots_map, thread_to_roots.data(), 
+                              sizeof_vector(thread_to_roots), cudaMemcpyHostToDevice));
+            CHK_CU(cudaMalloc(&device_grid_level_thread_to_linear_thread,
+                              sizeof_vector(grid_level_thread_to_linear_thread_map)));
+            CHK_CU(cudaMemcpy(device_grid_level_thread_to_linear_thread, 
+                              grid_level_thread_to_linear_thread_map.data(),
+                              sizeof_vector(grid_level_thread_to_linear_thread_map),
+                              cudaMemcpyHostToDevice));
 
             float* device_rand;
             cudaMalloc(&device_rand, sum_all_roots*sizeof(float));
@@ -1910,16 +1900,14 @@ int main (int argc, char* argv[])
             CURAND_CALL(curandGenerateUniform(gen, device_rand, sum_all_roots));
             double t1 = convertTimeValToDouble(getTimeOfDay ());
             
-            //for (VertexID src_idx = sorted_src_idx_for_grid_level_exec; 
+            //for (VertexID src_idx = src_idx_for_grid_level_exec; 
                  //src_idx < src_and_num_roots.size(); src_idx++) 
-            if (sorted_src_idx_for_grid_level_exec != -1) {
-              VertexID _src = std::get<1> (src_and_num_roots[sorted_src_idx_for_grid_level_exec]);
-              EdgePos_t num_roots = device_level_num_threads;
-              std::cout << "device_level_num_threads " << device_level_num_threads << std::endl;
+            if (grid_level_thread_iter > 0) {
+              EdgePos_t num_roots = grid_level_thread_iter;
+              std::cout << "grid_level_thread_iter " << grid_level_thread_iter << std::endl;
               //std::cout << "diff " << (linear_thread - per_part_src_to_roots_positions[part_idx][2*_src + 1]) << std::endl;
-              EdgePos_t start_linear_id = src_to_first_linear_thread[sorted_src_idx_for_grid_level_exec];
               int num_threads = min(LoadBalancing::LoadBalancingThreshold::GridLevel, N_THREADS);
-              assert (LoadBalancing::LoadBalancingThreshold::GridLevel%num_threads == 0);
+              assert(LoadBalancing::LoadBalancingThreshold::GridLevel%num_threads == 0);
               int N_BLOCKS = (num_roots%num_threads == 0) ? num_roots/num_threads:num_roots/num_threads+1;
               run_hop_parallel_single_step_device_level_fixed_size<<<N_BLOCKS,num_threads>>> (N_HOPS, hop, device_csr,
                                                                     device_root_partition,
@@ -1934,9 +1922,9 @@ int main (int argc, char* argv[])
                                                                     source_vertex_idx,
                                                                     device_thread_to_src_map,
                                                                     device_thread_to_roots_map,
-                                                                    device_device_level_thread_to_linear_thread,
+                                                                    device_grid_level_thread_to_linear_thread,
                 linear_thread,
-                start_linear_id,
+                grid_level_start_linear_th_id,
                 num_roots,
                 device_rand,
                 linear_threads_executed
@@ -1946,33 +1934,31 @@ int main (int argc, char* argv[])
     #endif
             );
             }
-            if (sorted_src_idx_for_grid_level_exec == -1)
-              sorted_src_idx_for_grid_level_exec = src_and_num_roots.size();
-            //TODO: stop using src_to_last_linear_thread. just use two variables for it.
-            EdgePos_t block_level_roots = src_to_last_linear_thread[std::get<1>(src_and_num_roots[sorted_src_idx_for_grid_level_exec-1])]+1;
-            std::cout << "block_level_roots " << block_level_roots << std::endl;
-            int N_BLOCKS = (block_level_roots%N_THREADS == 0) ? block_level_roots/N_THREADS:block_level_roots/N_THREADS+1;
-            run_hop_parallel_single_step_block_level_fixed_size<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
-              device_root_partition,
-              vertex_for_block_level_exec,
-              device_additions,
-              per_part_num_neighbors[root_part_idx],
-              device_additions_prev_hop,
-              device_map_vertex_to_additions[hop][root_part_idx],
-              device_additions_sizes,
-              device_src_to_roots,
-              device_src_to_root_positions,
-              source_vertex_idx,
-              device_thread_to_src_map,
-              device_thread_to_roots_map,
-              block_level_roots,
-              device_rand,
-              linear_threads_executed
-    #ifndef NDEBUG
-              , device_profile_branch_1,
-              device_profile_branch_2
-    #endif
-            );
+            if (num_block_threads + num_subwarp_threads > 0) {
+              EdgePos_t block_level_roots = num_block_threads + num_subwarp_threads;
+              int N_BLOCKS = (block_level_roots%N_THREADS == 0) ? block_level_roots/N_THREADS:block_level_roots/N_THREADS+1;
+              run_hop_parallel_single_step_block_level_fixed_size<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
+                device_root_partition,
+                vertex_for_block_level_exec,
+                device_additions,
+                per_part_num_neighbors[root_part_idx],
+                device_additions_prev_hop,
+                device_map_vertex_to_additions[hop][root_part_idx],
+                device_additions_sizes,
+                device_src_to_roots,
+                device_src_to_root_positions,
+                source_vertex_idx,
+                device_thread_to_src_map,
+                device_thread_to_roots_map,
+                block_level_roots,
+                device_rand,
+                linear_threads_executed
+      #ifndef NDEBUG
+                , device_profile_branch_1,
+                device_profile_branch_2
+      #endif
+              );
+            }
 #else
             int N_BLOCKS = vertex_for_block_level_exec - src_partition.first_vertex_id + 1;
             run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  

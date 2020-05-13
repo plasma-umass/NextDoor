@@ -266,6 +266,11 @@ public:
     return v >= first_vertex_id && v <= last_vertex_id;
   }
 
+  VertexID get_vertex_idx(VertexID v) const
+  {
+    assert (has_vertex (v));
+    return v - first_vertex_id;
+  }
   // static struct HasVertex {
   //   bool operator () (CSRPartition& partition, const VertexID& v) const {
   //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);
