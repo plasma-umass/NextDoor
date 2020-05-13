@@ -39,8 +39,8 @@ public:
 
 typedef VertexID Edge;
 
-  CSR::Vertex vertices[N];
-  CSR::Edge edges[N_EDGES];
+  CSR::Vertex* vertices;
+  CSR::Edge* edges;
   int n_vertices;
   EdgePos_t n_edges;
 
@@ -49,13 +49,9 @@ public:
   {
     n_vertices = _n_vertices;
     n_edges = _n_edges;
-  }
-
-  __host__ __device__
-  CSR ()
-  {
-    n_vertices = N;
-    n_edges = N_EDGES;
+    //TODO: Can we allocate it in pinned memory?
+    edges = new CSR::Edge[n_edges];
+    vertices = new CSR::Vertex[n_vertices];
   }
 
   void print (std::ostream& os) const 

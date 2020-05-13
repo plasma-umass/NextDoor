@@ -118,10 +118,10 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
     }
   }
 
-  if (!(sum_partition_edges == N_EDGES)) {
-    std::cout << __LINE__ <<": "<<sum_partition_edges  << " " << N_EDGES << std::endl;
+  if (!(sum_partition_edges == csr->get_n_edges())) {
+    std::cout << __LINE__ <<": "<<sum_partition_edges  << " " << csr->get_n_edges() << std::endl;
   }
-  assert (sum_partition_edges == N_EDGES);
+  assert (sum_partition_edges == csr->get_n_edges());
 
   VertexID sum_vertices = 0;
   for (int p = 0; p < (int)csr_partitions.size (); p++) {
@@ -132,7 +132,7 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
     }
   }
 
-  assert (sum_vertices == N);
+  assert (sum_vertices == csr->get_n_vertices());
 
   EdgePos_t equal_edges = 0;
 
@@ -168,6 +168,6 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
     }
   }
 
-  assert (equal_edges == N_EDGES);  
+  assert (equal_edges == csr->get_n_edges());  
   /********Checking DONE*******/
 }

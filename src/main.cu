@@ -24,7 +24,6 @@
 #include <cuda.h>
 
 //TODO-List:
-//[] Remove N and N_EDGES. Get N and N_EDGES as constants.
 //[] Divide main() function in several small functions.
 //[] A CPU Check Result implementation based on the API. That
 //   should atleast check that all jth-hops in the sample set are
@@ -45,8 +44,8 @@
 // const int N = 3312;
 // const int N_EDGES = 9074;
 //micro.graph
-const int N = 100000;
-const int N_EDGES = 2160312;
+//const int N = 100000;
+//const int N_EDGES = 2160312;
 //rmat.graph
 // const int N = 1024;
 // const int N_EDGES = 29381;
@@ -874,7 +873,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
       //TODO: Create a bitvector instead a set of source partitions?
       src_partitions.insert (part);
       assert (start + i < neighbors_sizes[hop-1]/sizeof(VertexID));
-      assert (src >= 0 && src < N);
+      assert (src >= 0 && src < csr->get_n_vertices());
       assert (csr_partitions[root_part_idx].get_n_edges_for_vertex(v) > 0);
       host_src_to_roots[src].push_back (std::make_pair (v, start + i));
     }
@@ -1105,10 +1104,10 @@ int main (int argc, char* argv[])
   std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
   std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
 
-  CSR* csr = new CSR(N, N_EDGES);
+  CSR* csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
   std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
-  std::cout << "csr.n_vertices " << csr->get_n_vertices () << " N " << N << std::endl;
+  std::cout << "csr.n_vertices " << csr->get_n_vertices () << std::endl;
 
   std::cout << "Pinned Memory Allocated" << std::endl;
 

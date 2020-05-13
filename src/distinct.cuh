@@ -43,7 +43,9 @@ __global__ void remove_duplicates_in_hop_per_block (int N_HOPS, int hop,
   assert (end <= per_iter_items);
 
   /*Sort Neighbors*/
-  BlockLoadT(temp_storage.load).Load(&embeddings_additions[start], thread_items, end, N+1);
+  assert(false);
+  //TODO: Why is N here? Can we set it to root_paration->get_n_vertices()+1?
+  //BlockLoadT(temp_storage.load).Load(&embeddings_additions[start], thread_items, end, N+1);
   
   __syncthreads ();
   
@@ -70,7 +72,8 @@ __global__ void remove_duplicates_in_hop_per_block (int N_HOPS, int hop,
   __syncthreads ();
 
   /*Do Prefix sum*/
-  BlockLoadT(temp_storage.load).Load(is_equal, thread_items, end, N+1);
+  //TODO: Why is N here? Can we set it to root_paration->get_n_vertices()+1?
+  //BlockLoadT(temp_storage.load).Load(is_equal, thread_items, end, N+1);
   __syncthreads ();
 
   BlockScanT(temp_storage.scan).ExclusiveSum(thread_items, thread_items);
