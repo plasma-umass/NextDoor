@@ -94,6 +94,14 @@ namespace utils {
     return (val/divisor + 1)*divisor;
   }
 
+  template<class T>
+  inline T thread_block_size(const T total, const T tb_size)
+  {
+    if (total%tb_size == 0)
+      return total/tb_size;
+    return total/tb_size +1;
+  }
+
   template<class T1, class T2, class T3>
   inline void set_till_next_multiple(T1& val, const T2 divisor, T3* mem, 
                                      const T3 init_val)
