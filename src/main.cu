@@ -123,13 +123,6 @@ __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
   #endif
 }
 
-__device__ int src_vertex_to_part_vertex_idx (CSRPartition* csr, int src) 
-{
-  return src - csr->first_vertex_id;
-}
-
-typedef uint32_t ShMemEdgePos_t;
-
 __global__ void __launch_bounds__(N_THREADS) run_hop_parallel_single_step_device_level (int N_HOPS, int hop, 
               CSRPartition* csr,
               CSRPartition* root_partition,
@@ -155,7 +148,7 @@ __global__ void __launch_bounds__(N_THREADS) run_hop_parallel_single_step_device
   int laneid = threadIdx.x%warpSize;
   
   VertexID hop_vertex = source_vertex;
-  VertexID part_vertex_id = src_vertex_to_part_vertex_idx (csr, hop_vertex);
+  VertexID part_vertex_id = csr->get_vertex_idx(hop_vertex);
   EdgePos_t hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
   const EdgePos_t hop_vertex_end_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
   int N_WARPS = blockDim.x/warpSize;
@@ -448,7 +441,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
         EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
         const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
         const EdgePos_t n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
-        VertexID root_vertices = map_vertex_to_hop_vertex_data[2*src_vertex_to_part_vertex_idx(csr, vertices[n_vertex_load]) + 1];
+        VertexID root_vertices = map_vertex_to_hop_vertex_data[2*csr->get_vertex_idx(vertices[n_vertex_load]) + 1];
 #ifdef USE_PARTITION_FOR_SHMEM
         if (hop_vertices_in_shared_mem_size < MAX_HOP_VERTICES_IN_SH_MEM &&
             n_edges != 0 && n_edges + edges_in_shared_mem < MAX_EDGES && 
@@ -546,7 +539,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
     int participating_threads = 0;
 
     if (_curr_vertex_id != -1 && root_vertex_idx != -1 && vertices[_curr_vertex_id] <= last_src_vertex) {
-      VertexID part_vertex_id = src_vertex_to_part_vertex_idx (csr, vertices[_curr_vertex_id]);
+      VertexID part_vertex_id = csr->get_vertex_idx(vertices[_curr_vertex_id]);
       hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
       EdgePos_t hop_vertex_end_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
       assert (hop_vertex_start_idx + 2*root_vertex_idx < hop_vertex_start_idx + 2*hop_vertex_end_idx);
@@ -648,7 +641,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
     __syncwarp ();
     
     if (last_hop_vertex_id != -1 && last_hop_vertex_roots_remaining != -1) {
-      VertexID part_vertex_id = src_vertex_to_part_vertex_idx(csr, vertices[last_hop_vertex_id]);
+      VertexID part_vertex_id = csr->get_vertex_idx(vertices[last_hop_vertex_id]);
       VertexID hop_vertex_start_idx = map_vertex_to_hop_vertex_data[2*part_vertex_id];
       //VertexID n_root_vertices = map_vertex_to_hop_vertex_data[2*part_vertex_id + 1];
       

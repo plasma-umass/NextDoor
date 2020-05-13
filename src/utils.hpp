@@ -161,6 +161,8 @@ namespace utils {
   abort();}} while(0)
 
 namespace GPUUtils {
+  typedef uint32_t ShMemEdgePos_t;
+  
   enum SourceVertexExec_t
   {
     BlockLevel,
@@ -168,7 +170,7 @@ namespace GPUUtils {
   };
 
   const uint FULL_MASK = 0xffffffff;
-  
+
   __device__ inline int get_warp_mask_and_participating_threads (int condition, int& participating_threads, int& first_active_thread)
   {
     uint warp_mask = __ballot_sync(FULL_MASK, condition);

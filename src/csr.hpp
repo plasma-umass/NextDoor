@@ -266,6 +266,7 @@ public:
     return v >= first_vertex_id && v <= last_vertex_id;
   }
 
+  __host__ __device__
   VertexID get_vertex_idx(VertexID v) const
   {
     assert (has_vertex (v));
