@@ -245,7 +245,7 @@ public:
   __host__ __device__
   const CSR::Vertex* get_vertices () const 
   {
-    return vertices;
+    return vertices; 
   }
 
   __host__ __device__

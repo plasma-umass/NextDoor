@@ -159,8 +159,60 @@ namespace utils {
 #define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
   printf("Error at %s:%d\n",__FILE__,__LINE__);\
   abort();}} while(0)
-  
+
 namespace GPUUtils {
+  enum SourceVertexExec_t
+  {
+    BlockLevel,
+    DeviceLevel
+  };
+
+  const uint FULL_MASK = 0xffffffff;
+  
+  __device__ inline int get_warp_mask_and_participating_threads (int condition, int& participating_threads, int& first_active_thread)
+  {
+    uint warp_mask = __ballot_sync(FULL_MASK, condition);
+    first_active_thread = -1;
+    participating_threads = 0;
+    int qq = 0;
+    while (qq < 32) {
+      if ((warp_mask & (1U << qq)) == (1U << qq)) {
+        if (first_active_thread == -1) {
+          first_active_thread = qq;
+        }
+        participating_threads++;
+      }
+      qq++;
+    }
+
+    return warp_mask;
+  }
+
+  __device__ int n_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
+  {
+    //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
+    //Best is 4.
+  #ifdef RANDOM_WALK
+    return 1;
+  #else
+    if (src_vertex_exec == SourceVertexExec_t::BlockLevel) {
+      //TODO: setting this to 4,8,or 16 gives error.
+      if (n_edges < 4) 
+        return 2;
+      if (n_edges < 8)
+        return 4;
+      if (n_edges < 16)
+        return 8;
+      if (n_edges < 32)
+        return 16;
+      else
+        return 32;
+    } else {
+      return warpSize;
+    }
+  #endif
+  }
+
   float* gen_rand_on_gpu(size_t n_rands)
   {
     float* device_rand;

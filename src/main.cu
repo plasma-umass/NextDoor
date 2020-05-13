@@ -28,8 +28,8 @@
 // const int N = 3312;
 // const int N_EDGES = 9074;
 //micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
+const int N = 100000;
+const int N_EDGES = 2160312;
 //rmat.graph
 // const int N = 1024;
 // const int N_EDGES = 29381;
@@ -46,8 +46,8 @@
 // const int N = 1632803;
 // const int N_EDGES = 30480021;
 //soc-LiveJournal1
-const int N = 4847571;
-const int N_EDGES = 68556521;
+// const int N = 4847571;
+// const int N_EDGES = 68556521;
 
 //Not supportred:
 //com-orkut.ungraph
@@ -59,16 +59,17 @@ const int N_EDGES = 68556521;
 #include "pinned_memory_alloc.hpp"
 
 using namespace utils;
+using namespace GPUUtils;
 
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-#define RANDOM_WALK
+//#define RANDOM_WALK
 
-//#define GRAPH_PARTITION_SIZE (100*1024*1024) //24 KB is the size of each partition of graph
+//#define GRAPH_PARTITION_SIZE (50*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
 typedef uint8_t SharedMemElem;
 
@@ -81,59 +82,6 @@ const int N_THREADS = 256;
 #endif
 
 #define WARP_HOP
-
-const uint FULL_MASK = 0xffffffff;
-
-__device__ inline int get_warp_mask_and_participating_threads (int condition, int& participating_threads, int& first_active_thread)
-{
-  uint warp_mask = __ballot_sync(FULL_MASK, condition);
-  first_active_thread = -1;
-  participating_threads = 0;
-  int qq = 0;
-  while (qq < 32) {
-    if ((warp_mask & (1U << qq)) == (1U << qq)) {
-      if (first_active_thread == -1) {
-        first_active_thread = qq;
-      }
-      participating_threads++;
-    }
-    qq++;
-  }
-
-  return warp_mask;
-}
-
-enum SourceVertexExec_t
-{
-  BlockLevel,
-  DeviceLevel
-};
-
-
-__device__ int n_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
-{
-  //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
-  //Best is 4.
-#ifdef RANDOM_WALK
-  return 1;
-#else
-  if (src_vertex_exec == SourceVertexExec_t::BlockLevel) {
-    //TODO: setting this to 4,8,or 16 gives error.
-    if (n_edges < 4) 
-      return 2;
-    if (n_edges < 8)
-      return 4;
-    if (n_edges < 16)
-      return 8;
-    if (n_edges < 32)
-      return 16;
-    else
-      return 32;
-  } else {
-    return warpSize;
-  }
-#endif
-}
 
 __global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
                                                          VertexID start_vertex, 
@@ -785,20 +733,20 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
           while (_start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
             VertexID edge = csr->get_edge(_start_edge_idx + laneid%shfl_warp_size);
             EdgePos_t addr = start + _e + iter*shfl_warp_size + laneid%shfl_warp_size;
-            // if (!(addr < num_neighbors)) {
-            //   printf ("v %d start %d addr %d num_neighbors %d\n", root_vertex, start, addr, num_neighbors);
-            // }
-            // assert (addr < num_neighbors);
-            // if (!(addr < start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1])) {
-            //   printf ("addr %d max-end %d v %d\n", addr, start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1], root_vertex);
-            // }
-            // assert (addr < start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1]);
-            // assert (addr >= start);
-            // if (embeddings_additions[addr] != -1) {
-            //   //printf ("embeddings_additions addrs %x\n", &embeddings_additions[0]);
-            //   printf ("not -1 at %d hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
-            // }
-            // assert (embeddings_additions[addr] == -1);
+            if (!(addr < num_neighbors)) {
+              printf ("v %d start %d addr %d num_neighbors %d\n", root_vertex, start, addr, num_neighbors);
+            }
+            assert (addr < num_neighbors);
+            if (!(addr < start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1])) {
+              printf ("addr %d max-end %d v %d\n", addr, start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1], root_vertex);
+            }
+            assert (addr < start + map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id) + 1]);
+            assert (addr >= start);
+            if (embeddings_additions[addr] != -1) {
+              //printf ("embeddings_additions addrs %x\n", &embeddings_additions[0]);
+              printf ("not -1 at %d hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
+            }
+            assert (embeddings_additions[addr] == -1);
             embeddings_additions[addr] = edge;
             _start_edge_idx += shfl_warp_size;
             iter++;
@@ -1514,7 +1462,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
     set_till_next_multiple(grid_level_thread_iter, 
                            LoadBalancing::LoadBalancingThreshold::GridLevel, 
-                           grid_level_thread_to_linear_thread_map.data(), -1);
+                           grid_level_thread_to_linear_thread_map.data(), (EdgePos_t)-1);
   }
 
   CHK_CU(cudaMalloc(&device_thread_to_src_map, 
@@ -1541,7 +1489,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
     EdgePos_t num_roots = grid_level_thread_iter;
     int num_threads = min(LoadBalancing::LoadBalancingThreshold::GridLevel, N_THREADS);
     assert(LoadBalancing::LoadBalancingThreshold::GridLevel%num_threads == 0);
-    int N_BLOCKS = thread_block_size(num_roots, num_threads);
+    int N_BLOCKS = thread_block_size(num_roots, (EdgePos_t)num_threads);
     run_hop_parallel_single_step_device_level_fixed_size<<<N_BLOCKS,num_threads>>> (N_HOPS, hop, device_src_csr,
                                                           device_root_partition,
                                                           device_additions,
@@ -1559,7 +1507,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
   }
   if (num_block_threads + num_subwarp_threads > 0) {
     EdgePos_t block_level_roots = num_block_threads + num_subwarp_threads;
-    int N_BLOCKS = thread_block_size(block_level_roots, N_THREADS);
+    int N_BLOCKS = thread_block_size(block_level_roots, (EdgePos_t)N_THREADS);
     run_hop_parallel_single_step_block_level_fixed_size<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_src_csr,  
       device_root_partition,
       device_additions,
@@ -1645,7 +1593,7 @@ int main (int argc, char* argv[])
   csr_partitions.push_back (full_partition);
 #endif
 
-  const int N_HOPS = 10;
+  const int N_HOPS = 2;
   
   //Graph on GPU
   CSRPartition* device_csr;
@@ -1767,7 +1715,7 @@ int main (int argc, char* argv[])
 
       num_neighbors += num_neighbors_iter;
       per_part_num_neighbors [root_part_idx] = num_neighbors_iter;
-
+      std::cout << __LINE__ <<": per_part_num_neighbors [root_part_idx] = " << per_part_num_neighbors [root_part_idx] << " " << num_neighbors_iter << " " << root_part_idx << std::endl;
       CHK_CU (cudaFree ((void*)device_vertex_array));
       CHK_CU (cudaFree ((void*)device_edge_array));
       CHK_CU (cudaFree ((void*)device_root_partition));
@@ -1794,6 +1742,7 @@ int main (int argc, char* argv[])
       CHK_CU (cudaMemset (device_additions_sizes, 0, 
                           partition_additions_sizes_size));
       CHK_CU (cudaMalloc (&device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID)));
+      
 #ifndef NDEBUG
       VertexID *temp_array = new VertexID[per_part_num_neighbors[root_part_idx]];
       for (VertexID i = 0; i < per_part_num_neighbors[root_part_idx]; i++)
@@ -1900,6 +1849,7 @@ int main (int argc, char* argv[])
         rand_walk_time += t;
 
 #else
+            std::cout << "per_part_num_neighbors[root_part_idx] " << per_part_num_neighbors[root_part_idx] << std::endl;
             int N_BLOCKS = vertex_for_block_level_exec - src_partition.first_vertex_id + 1;
             run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
               device_root_partition,
@@ -2295,6 +2245,7 @@ int main (int argc, char* argv[])
     if (device_additions_prev_hop != nullptr) {
       CHK_CU (cudaFree (device_additions_prev_hop));
     }
+    //TODO: Remove this 
     CHK_CU (cudaMalloc (&device_additions_prev_hop, neighbors_sizes[hop]));
     CHK_CU (cudaMemcpy (device_additions_prev_hop, neighbors[hop], 
                         neighbors_sizes[hop], cudaMemcpyHostToDevice));
