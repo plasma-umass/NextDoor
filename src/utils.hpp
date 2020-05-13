@@ -11,6 +11,7 @@
 #define __UTILS_HPP__
 
 namespace utils {
+
   __device__
   EdgePos_t atomicAdd (EdgePos_t* ptr, const EdgePos_t val)
   {
@@ -65,6 +66,88 @@ namespace utils {
     return false;
   }
 
+  void get_num_roots_distribution(int* roots_distribution, int* ranges, int num_ranges,
+                                  EdgePos_t* src_num_roots, VertexRange src_range)
+  {
+    for (VertexID src : src_range) {
+      EdgePos_t num_roots = src_num_roots[2*src + 1];
+      if (num_roots <= ranges[0]) {
+      } else {
+        for (int i = 1; i < num_ranges - 1; i++) {
+          if (num_roots >= ranges[i-1] and num_roots < ranges[i]) {
+            roots_distribution[i] += num_roots;
+            break;
+          }
+        }
+        
+        if (num_roots >= ranges[num_ranges]) {
+          roots_distribution[num_ranges] += num_roots;
+        }
+      }
+    }
+  }
+
+  template<class T1, class T2>
+  inline T1 next_multiple(const T1 val, const T2 divisor)
+  {
+    if (val%divisor == 0) return val;
+    return (val/divisor + 1)*divisor;
+  }
   #define CHK_CU(x) assert (utils::is_cuda_error (x) == false);
 }
+
+namespace LoadBalancing {
+  enum LoadBalancingThreshold{
+    GridLevel = 32,
+    BlockLevel = 0,
+    SubWarpLevel = 0,
+  };
+
+  enum LoadBalancingTBSizes {
+    GridLevelTBSize = 32,
+    BlockLevelTBSize = 32,
+    SubWarpLevelTBSize = 32,
+  };
+
+  bool is_grid_level_assignment(const EdgePos_t num_roots) 
+  {
+    return num_roots >= LoadBalancingThreshold::GridLevel;
+  }
+
+  bool is_block_level_assignment(const EdgePos_t num_roots) 
+  {
+    return num_roots < LoadBalancingThreshold::GridLevel and num_roots >= LoadBalancingThreshold::BlockLevel;
+  }
+
+  bool is_subwarp_level_assignment(const EdgePos_t num_roots) 
+  {
+    return num_roots < LoadBalancingThreshold::SubWarpLevel;
+  }
+
+  void num_gpu_threads(const VertexRange src_range, const EdgePos_t* src_num_roots, 
+                       EdgePos_t& num_grid_threads, EdgePos_t& num_block_threads, 
+                       EdgePos_t& num_subwarp_threads)
+  {
+    num_grid_threads = 0;
+    num_block_threads = 0;
+    num_subwarp_threads = 0;
+    for (VertexID src : src_range) {
+      EdgePos_t num_roots = src_num_roots[2*src + 1];
+      if (is_grid_level_assignment(num_roots)) {
+        num_grid_threads+=num_roots;
+        num_grid_threads = utils::next_multiple(num_grid_threads, 
+                                                GridLevelTBSize);
+      } else if (is_block_level_assignment(num_roots)) {
+        num_block_threads+=num_roots;
+        num_block_threads = utils::next_multiple(num_block_threads, 
+                                                 BlockLevelTBSize);
+      } else if (is_subwarp_level_assignment(num_roots)) {
+        num_subwarp_threads+=num_roots;
+        num_subwarp_threads = utils::next_multiple(num_subwarp_threads, 
+                                                   SubWarpLevelTBSize);
+      }
+    }
+  }
+};
+
 #endif
