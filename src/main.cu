@@ -35,8 +35,6 @@
 //[] Convert these vectors to a new array type that does not do initialization of data.
 //[] Use MKL or cuSPARSE to do the matrix transpose or sorting
 //[] A configuration that specifies all the parameters.
-//[] Remove get_max_lengths_for_vertices_first_iter and do it on CPU.
-//[]
 
 //Supported:
 //citeseer.graph
