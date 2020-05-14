@@ -288,6 +288,8 @@ namespace LoadBalancing {
     SubWarpLevelTBSize = 32,
   };
 
+  const bool EnableLoadBalancing = false;
+
   bool is_grid_level_assignment(const EdgePos_t num_roots) 
   {
     return num_roots >= LoadBalancingThreshold::GridLevel;

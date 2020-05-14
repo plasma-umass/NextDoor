@@ -30,7 +30,7 @@
 //   a neighbor of all (j-1)th-hops.
 //[] Add NextDoor API's functions.
 //[] Divide the code in several include files that can be included in the API.
-//[] In GPU Kernels, do refacoring and move them to other places.
+//[] In GPU Kernels, do refactoring and move them to other places.
 //[] Use vectors instead of dynamic arrays and new.
 //[] Convert these vectors to a new array type that does not do initialization of data.
 //[] Use MKL or cuSPARSE to do the matrix transpose or sorting
@@ -56,11 +56,11 @@
 //const int N = 107614;
 //const int N_EDGES = 13652253;
 //soc-pokec-relationships
-// const int N = 1632803;
-// const int N_EDGES = 30480021;
+//const int N = 1632803;
+//const int N_EDGES = 30480021;
 //soc-LiveJournal1
-// const int N = 4847571;
-// const int N_EDGES = 68556521;
+//const int N = 4847571;
+//const int N_EDGES = 68556521;
 
 //Not supportred:
 //com-orkut.ungraph
@@ -82,9 +82,10 @@ using namespace GPUUtils;
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
-const int N_THREADS = 256;
+//For mico, 512 works best
+const int N_THREADS = 512;
 
 #define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 1
@@ -337,6 +338,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
     root_vertex_idx = thread_idx_to_load[2*threadIdx.x + 1];
 
 #ifdef USE_PARTITION_FOR_SHMEM
+    int warpid = threadIdx.x/32;
     for (int __hop = 0; __hop < hop_vertices_in_shared_mem_size/(blockDim.x/warpSize) + 1; __hop++) {
       int hop = __hop * (blockDim.x/warpSize) + warpid;
       if (hop >= hop_vertices_in_shared_mem_size) {
@@ -908,24 +910,26 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
     }
   }
 
-  for (;pair_src_num_roots_idx < src_and_num_roots.size(); 
-       pair_src_num_roots_idx++) {
-    std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[pair_src_num_roots_idx];
-    VertexID src = std::get<1>(src_num_root);
-    EdgePos_t num_roots = std::get<0> (src_num_root);
-    
-    for (int _idx = 0; _idx < num_roots; _idx++,grid_level_thread_iter++,linear_thread++) {
-      EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
-      thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
-      VertexID root = per_part_src_to_roots[part_idx][root_idx];
-      thread_to_roots[linear_thread] = root;
-      root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
-      grid_level_thread_to_linear_thread_map[grid_level_thread_iter] = linear_thread;
-    }
+  if (LoadBalancing::EnableLoadBalancing) {
+    for (;pair_src_num_roots_idx < src_and_num_roots.size(); 
+        pair_src_num_roots_idx++) {
+      std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[pair_src_num_roots_idx];
+      VertexID src = std::get<1>(src_num_root);
+      EdgePos_t num_roots = std::get<0> (src_num_root);
+      
+      for (int _idx = 0; _idx < num_roots; _idx++,grid_level_thread_iter++,linear_thread++) {
+        EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
+        thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
+        VertexID root = per_part_src_to_roots[part_idx][root_idx];
+        thread_to_roots[linear_thread] = root;
+        root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
+        grid_level_thread_to_linear_thread_map[grid_level_thread_iter] = linear_thread;
+      }
 
-    set_till_next_multiple(grid_level_thread_iter, 
-                           LoadBalancing::LoadBalancingThreshold::GridLevel, 
-                           grid_level_thread_to_linear_thread_map.data(), (EdgePos_t)-1);
+      set_till_next_multiple(grid_level_thread_iter, 
+                            LoadBalancing::LoadBalancingThreshold::GridLevel, 
+                            grid_level_thread_to_linear_thread_map.data(), (EdgePos_t)-1);
+    }
   }
 
   CHK_CU(cudaMalloc(&device_thread_to_src_map, 
@@ -989,6 +993,9 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
   double t2 = convertTimeValToDouble(getTimeOfDay ());
 
   cudaFree(device_rand);
+  CHK_CU(cudaFree(device_thread_to_src_map));
+  CHK_CU(cudaFree(device_thread_to_roots_map));
+  CHK_CU(cudaFree(device_grid_level_thread_to_linear_thread));
   linear_threads_executed += linear_thread;
 
   return (t2-t1);
@@ -1250,40 +1257,39 @@ int main (int argc, char* argv[])
 
         if (hop >= 1) {
           VertexID vertex_for_block_level_exec = -1;
-#if 0
-          //for (VertexID src_vertex_id = src_partition.first_vertex_id; 
-              //src_vertex_id <= src_partition.last_vertex_id; src_vertex_id++) {
-          for (VertexID src_vertex_id : src_partition.get_vertex_range()) {
-            if (src_partition.get_n_edges_for_vertex(src_vertex_id) >= N_THREADS) {
-              if (vertex_for_block_level_exec == -1) {
-                vertex_for_block_level_exec = src_vertex_id - 1;
+          if (LoadBalancing::EnableLoadBalancing) {
+            for (VertexID src_vertex_id : src_partition.get_vertex_range()) {
+              if (src_partition.get_n_edges_for_vertex(src_vertex_id) >= N_THREADS) {
+                if (vertex_for_block_level_exec == -1) {
+                  vertex_for_block_level_exec = src_vertex_id - 1;
+                }
+                int N_BLOCKS = src_partition.get_n_edges_for_vertex(src_vertex_id)/N_THREADS + 1;
+
+                run_hop_parallel_single_step_device_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
+                                                                      device_root_partition,
+                                                                      device_additions,
+                                                                      per_part_num_neighbors[root_part_idx],
+                                                                      device_additions_prev_hop,
+                                                                      device_map_vertex_to_additions[hop][root_part_idx],
+                                                                      device_additions_sizes,
+                                                                      device_src_to_roots,
+                                                                      device_src_to_root_positions,
+                                                                      src_vertex_id,
+                                                                      vertex_with_prev_partition,
+                                                                      vertex_with_prev_partition_adds,
+      #ifndef NDEBUG
+                                                                      device_profile_branch_1,
+                                                                      device_profile_branch_2
+      #endif
+                                                                    );
+
+                CHK_CU(cudaGetLastError());
               }
-              int N_BLOCKS = src_partition.get_n_edges_for_vertex(src_vertex_id)/N_THREADS + 1;
-
-              run_hop_parallel_single_step_device_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
-                                                                    device_root_partition,
-                                                                    device_additions,
-                                                                    per_part_num_neighbors[root_part_idx],
-                                                                    device_additions_prev_hop,
-                                                                    device_map_vertex_to_additions[hop][root_part_idx],
-                                                                    device_additions_sizes,
-                                                                    device_src_to_roots,
-                                                                    device_src_to_root_positions,
-                                                                    src_vertex_id,
-                                                                    vertex_with_prev_partition,
-                                                                    vertex_with_prev_partition_adds,
-    #ifndef NDEBUG
-                                                                    device_profile_branch_1,
-                                                                    device_profile_branch_2
-    #endif
-                                                                  );
-
-              CHK_CU(cudaGetLastError());
+            //CHK_CU (cudaDeviceSynchronize ());
             }
-          //CHK_CU (cudaDeviceSynchronize ());
+          } else {
+            vertex_for_block_level_exec = src_partition.last_vertex_id;
           }
-#endif
-          vertex_for_block_level_exec = src_partition.last_vertex_id;
           std::cout << "vertex_for_block_level_exec " << vertex_for_block_level_exec << std::endl;
           if (vertex_for_block_level_exec != -1) {
 #ifdef RANDOM_WALK
