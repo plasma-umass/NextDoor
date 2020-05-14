@@ -222,6 +222,21 @@ namespace GPUUtils {
     return warp_mask;
   }
 
+  void copy_partition_to_gpu (CSRPartition& part, CSRPartition*& device_csr, CSR::Vertex*& device_vertex_array, CSR::Edge*& device_edge_array)
+  {
+    CHK_CU (cudaMalloc (&device_csr, sizeof(CSRPartition)));
+    CHK_CU (cudaMalloc (&device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
+    CHK_CU (cudaMalloc (&device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
+    CHK_CU (cudaMemcpy (device_vertex_array, part.vertices, sizeof (CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
+    CHK_CU (cudaMemcpy (device_edge_array, part.edges, sizeof (CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
+
+    CSRPartition device_csr_partition_value = CSRPartition (part.first_vertex_id,
+                                                            part.last_vertex_id, 
+                                                            part.first_edge_idx, part.last_edge_idx, 
+                                                            device_vertex_array, device_edge_array);
+    CHK_CU (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
+  }
+
   __device__ int n_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
   {
     //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.

@@ -34,7 +34,7 @@
 //[] In GPU Kernels, do refacoring and move them to other places.
 //[] Use vectors instead of dynamic arrays and new.
 //[] Convert these vectors to a new array type that does not do initialization of data.
-//[] Use MKL or cuSPARSE to do the matrix transpose.
+//[] Use MKL or cuSPARSE to do the matrix transpose or sorting
 //[] A configuration that specifies all the parameters.
 //[] Remove get_max_lengths_for_vertices_first_iter and do it on CPU.
 //[]
@@ -96,46 +96,6 @@ const int N_THREADS = 256;
 #endif
 
 #define WARP_HOP
-
-__global__ void get_max_lengths_for_vertices_first_iter (CSRPartition* void_csr,
-                                                         VertexID start_vertex, 
-                                                         VertexID end_vertex,
-                                                         unsigned long long int* embeddings_additions_iter,
-                                                         EdgePos_t* map_orig_embedding_to_additions)
-{
-  CSRPartition* csr = (CSRPartition*)void_csr;
-
-  int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  VertexID vertex = thread_idx + start_vertex;
-  if (vertex > end_vertex) {
-    return;
-  }
-
-  unsigned long long int new_edges = 0;
-
-  /*Perform a single hop for all vertices in the input embedding*/
-  const EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertex);
-  const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertex);
-
-#ifdef RANDOM_WALK
-    new_edges = 1;
-    unsigned long long int additions_start_iter = atomicAdd (embeddings_additions_iter, new_edges);
-    map_orig_embedding_to_additions[2*thread_idx] = thread_idx;
-    map_orig_embedding_to_additions[2*thread_idx+1] = new_edges;
-#else
-  if (end_edge_idx != -1) {
-    EdgePos_t e = (end_edge_idx - start_edge_idx) + 1;
-    if (e < 0) {
-      printf ("v %d s %d e %d\n", vertex, start_edge_idx, end_edge_idx);
-    }
-    assert (e >= 0);
-    new_edges += e;  
-  }
-  unsigned long long int additions_start_iter = atomicAdd (embeddings_additions_iter, new_edges);
-  map_orig_embedding_to_additions[2*thread_idx] = additions_start_iter;
-  map_orig_embedding_to_additions[2*thread_idx+1] = new_edges;
-  #endif
-}
 
 __global__ void __launch_bounds__(N_THREADS) run_hop_parallel_single_step_device_level (int N_HOPS, int hop, 
               CSRPartition* csr,
@@ -728,45 +688,6 @@ std::vector <std::unordered_set <VertexID>> n_hop_cpu_distinct (CSR* csr, const 
   return hops;
 }
 
-void copy_partition_to_gpu (CSRPartition& partition, CSRPartition*& device_csr, CSR::Vertex*& device_vertex_array, CSR::Edge*& device_edge_array)
-{
-  CHK_CU (cudaMalloc (&device_csr, sizeof(CSRPartition)));
-  CHK_CU (cudaMalloc (&device_vertex_array, sizeof(CSR::Vertex)*partition.get_n_vertices ()));
-  CHK_CU (cudaMalloc (&device_edge_array, sizeof(CSR::Edge)*partition.get_n_edges ()));
-  CHK_CU (cudaMemcpy (device_vertex_array, partition.vertices, sizeof (CSR::Vertex)*partition.get_n_vertices (), cudaMemcpyHostToDevice));
-  CHK_CU (cudaMemcpy (device_edge_array, partition.edges, sizeof (CSR::Edge)*partition.get_n_edges (), cudaMemcpyHostToDevice));
-
-  CSRPartition device_csr_partition_value = CSRPartition (partition.first_vertex_id, partition.last_vertex_id, 
-                                                          partition.first_edge_idx, partition.last_edge_idx, 
-                                                          device_vertex_array, device_edge_array);
-  CHK_CU (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
-}
-
-VertexID get_common_vertex_with_previous_partition (std::vector<CSRPartition> csr_partitions, int partition_idx)
-{
-  if (partition_idx <= 0)
-    return -1;
-
-  if (csr_partitions[partition_idx].first_vertex_id == csr_partitions[partition_idx - 1].last_vertex_id) {
-    return csr_partitions[partition_idx].first_vertex_id;
-  }
-
-  return -1;
-}
-
-
-VertexID get_common_vertex_with_next_partition (std::vector<CSRPartition> csr_partitions, int partition_idx)
-{
-  if (partition_idx >= (int)csr_partitions.size () - 1)
-    return -1;
-
-  if (csr_partitions[partition_idx].last_vertex_id == csr_partitions[partition_idx + 1].first_vertex_id) {
-    return csr_partitions[partition_idx].last_vertex_id;
-  }
-
-  return -1;
-}
-
 #include "graph_partitioner.cuh"
 
 size_t cpu_get_max_lengths_for_vertices_single_step (int hop, CSRPartition& root_partition, CSR* csr,
@@ -785,11 +706,16 @@ size_t cpu_get_max_lengths_for_vertices_single_step (int hop, CSRPartition& root
     map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id)] = vertex_sample_set_start_pos_fixed_size(&root_partition, v);
     map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id) + 1] = 1;
 #else
-    const EdgePos_t start = map_vertex_to_additions_prev_hop[2*v];
-    const EdgePos_t end = addition_sizes_prev_hop[2*v+1];
-    for (int idx = start; idx < start + end; idx++) {
-      VertexID addition = additions_prev_hop[idx];
-      new_additions += csr->n_edges_for_vertex (addition);
+
+    if (hop == 0) {
+      new_additions += csr->n_edges_for_vertex(v);
+    } else {
+      const EdgePos_t start = map_vertex_to_additions_prev_hop[2*v];
+      const EdgePos_t end = addition_sizes_prev_hop[2*v+1];
+      for (int idx = start; idx < start + end; idx++) {
+        VertexID addition = additions_prev_hop[idx];
+        new_additions += csr->n_edges_for_vertex (addition);
+      }
     }
 
     map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id)] = embeddings_additions_iter;
@@ -1201,24 +1127,23 @@ int main (int argc, char* argv[])
       int N_BLOCKS = (root_partition.get_n_vertices ()%MAX_LENGTHS_N_THREADS == 0) ? root_partition.get_n_vertices ()/128 : root_partition.get_n_vertices ()/MAX_LENGTHS_N_THREADS + 1;
 
       EdgePos_t* device_prev_hop_addition_sizes;
-      get_common_vertex_with_previous_partition (csr_partitions, root_part_idx);
 
       //partition_map_vertex_to_additions[root_part_idx] = new EdgePos_t[partition_map_vertex_to_additions_size (root_partition)];
       partition_map_vertex_to_additions[root_part_idx] = (EdgePos_t*)PinnedMemory::pinned_memory_heap.malloc(partition_map_vertex_to_additions_size (root_partition)*sizeof(EdgePos_t));
       double t1 = convertTimeValToDouble(getTimeOfDay ());
 
       if (hop == 0) {
-        //TODO: No need to invoke on GPU.
-        get_max_lengths_for_vertices_first_iter <<<N_BLOCKS, MAX_LENGTHS_N_THREADS>>> (device_root_partition, 
-                                                                           root_partition.first_vertex_id, 
-                                                                           root_partition.last_vertex_id,
-                                                                           device_max_neighbors_iter,
-                                                                           device_map_vertex_to_additions[hop][root_part_idx]);
+        num_neighbors_iter = cpu_get_max_lengths_for_vertices_single_step (hop, root_partition, csr,
+          nullptr, nullptr, nullptr,
+          partition_map_vertex_to_additions[root_part_idx]);
       } else {
-        num_neighbors_iter = cpu_get_max_lengths_for_vertices_single_step (hop, root_partition, csr,final_map_vertex_to_additions[hop-1][0], additions_sizes[hop-1], neighbors[hop-1], partition_map_vertex_to_additions[root_part_idx]);        
+        num_neighbors_iter = cpu_get_max_lengths_for_vertices_single_step (hop, root_partition, csr,
+        final_map_vertex_to_additions[hop-1][0], 
+        additions_sizes[hop-1], 
+        neighbors[hop-1], 
+        partition_map_vertex_to_additions[root_part_idx]);   
       }
 
-      CHK_CU (cudaDeviceSynchronize ());
       double t2 = convertTimeValToDouble(getTimeOfDay ());
 
       if (hop > 0) {
@@ -1226,22 +1151,17 @@ int main (int argc, char* argv[])
         //CHK_CU (cudaFree (device_prev_hop_addition_sizes));
       }
 
-      if (hop > 0) {
-        CHK_CU (cudaMemcpy (device_map_vertex_to_additions[hop][root_part_idx],
-          partition_map_vertex_to_additions[root_part_idx], 
-          partition_map_vertex_to_additions_size (root_partition)*sizeof (EdgePos_t), 
-          cudaMemcpyHostToDevice));
-      }
+      
+      CHK_CU (cudaMemcpy (device_map_vertex_to_additions[hop][root_part_idx],
+        partition_map_vertex_to_additions[root_part_idx], 
+        partition_map_vertex_to_additions_size (root_partition)*sizeof (EdgePos_t), 
+        cudaMemcpyHostToDevice));
+      
   
       //gpu_time += t2 - t1;
   
       std::cout << "Cuda Kernel Done " << std::endl;
       is_cuda_error (cudaGetLastError ());
-      if (hop == 0) {
-        CHK_CU (cudaMemcpy (&num_neighbors_iter, device_max_neighbors_iter, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-      } else {
-       // num_neighbors_iter = ;
-      }
       std::cout << "New " << hop << "-Hop Neighbors " << num_neighbors_iter << std::endl;
 
       num_neighbors += num_neighbors_iter;
@@ -1473,7 +1393,7 @@ int main (int argc, char* argv[])
         partition_additions_sizes_size, 
         cudaMemcpyDeviceToHost));
       
-      if (hop == 0) {
+      if (false && hop == 0) {
         partition_map_vertex_to_additions[root_part_idx] = (EdgePos_t*)PinnedMemory::pinned_memory_heap.malloc(
         sizeof(EdgePos_t)*partition_map_vertex_to_additions_size (root_partition));
         CHK_CU (cudaMemcpy (partition_map_vertex_to_additions[root_part_idx], 
