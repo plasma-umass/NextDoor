@@ -85,7 +85,7 @@ using namespace GPUUtils;
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
 const int N_THREADS = 256;
 
@@ -573,6 +573,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
           while (_start_edge_idx + laneid%shfl_warp_size <= end_edge_idx) {
             VertexID edge = csr->get_edge(_start_edge_idx + laneid%shfl_warp_size);
             EdgePos_t addr = start + _e + iter*shfl_warp_size + laneid%shfl_warp_size;
+#ifndef NDEBUG
             if (!(addr < num_neighbors)) {
               printf ("v %d start %d addr %d num_neighbors %d\n", root_vertex, start, addr, num_neighbors);
             }
@@ -587,6 +588,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
               printf ("not -1 at %d hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
             }
             assert (embeddings_additions[addr] == -1);
+#endif
             embeddings_additions[addr] = edge;
             _start_edge_idx += shfl_warp_size;
             iter++;

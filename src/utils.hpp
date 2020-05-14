@@ -153,7 +153,7 @@ namespace utils {
     return vec.size()*sizeof(vec[0]);
   }
 
-  #define CHK_CU(x) assert (utils::is_cuda_error (x) == false);
+  #define CHK_CU(x) if (utils::is_cuda_error (x) == true) {abort();}
 
 #if 0
   void bfs (CSR* csr) 

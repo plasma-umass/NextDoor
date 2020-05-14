@@ -13,7 +13,7 @@ gpu-gdb: src/main.cu
 gpu: src/main.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_memory_alloc.hpp
 	nvcc --default-stream per-thread $< -std=c++11 -arch=compute_61 -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -O3 -g -o gpu -Xptxas -O3 -Xcompiler -Wall -lcurand
 gpuRelease: src/main.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_memory_alloc.hpp
-	nvcc $< -std=c++11 -arch=compute_61 -code=sm_61 -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -O3 -o gpu -Xptxas -O3 -Xcompiler -Wall -DNDEBUG
+	nvcc $< -std=c++11 -arch=compute_61 -code=sm_61 -I./Heap-Layers -I/mnt/homes/abhinav/cub-1.8.0 -O3 -o gpu -Xptxas -O3 -Xcompiler -Wall -DNDEBUG -lcurand
 
 clean:
 	rm -rf cpu gpu *.h.gch *.o src/*.h.gch src/*.o src/*.o
