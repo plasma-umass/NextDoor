@@ -30,7 +30,6 @@
 //   a neighbor of all (j-1)th-hops.
 //[] Add NextDoor API's functions.
 //[] Divide the code in several include files that can be included in the API.
-//[] Run code with NDEBUG defined.
 //[] In GPU Kernels, do refacoring and move them to other places.
 //[] Use vectors instead of dynamic arrays and new.
 //[] Convert these vectors to a new array type that does not do initialization of data.
@@ -85,7 +84,7 @@ using namespace GPUUtils;
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-#define CHECK_RESULT
+//#define CHECK_RESULT
 
 const int N_THREADS = 256;
 
@@ -1435,7 +1434,7 @@ int main (int argc, char* argv[])
 
       //TODO: We can use CUDA streams to speed this up, but it will lead to high
       //memory usage.
-      for (VertexID v = root_partition.get_vertex_range()) {
+      for (VertexID v : root_partition.get_vertex_range()) {
         EdgePos_t start = partition_map_vertex_to_additions[root_part_idx][2*(v-root_partition.first_vertex_id)];
         EdgePos_t end = part_additions_sizes[root_part_idx][2*(v-root_partition.first_vertex_id) + 1];
         if (end < block_level_duplicate_find_max_val) {
@@ -1658,32 +1657,6 @@ int main (int argc, char* argv[])
 #else
         memcpy (&neighbors[hop][final_idx], &part_neighbors[part][part_start], (part_end-part_start)*sizeof(VertexID));
 #endif
-#if 0
-        for (EdgePos_t idx = part_start; idx < part_end; idx++) {
-          if (!(final_idx < final_end)) {
-            printf ("final_idx %d final_end %d part_start %d part_end %d v %d\n", final_idx, final_end, v, part_start, part_end);
-          }
-          assert (final_idx < final_end);
-          neighbors[hop][final_idx++] = part_neighbors[part][idx];
-// #ifdef REMOVE_DUPLICATES_ON_GPU
-//          set_neighbors.insert (part_neighbors[part][idx]);
-// #endif
-        }
-#endif
-// #ifdef REMOVE_DUPLICATES_ON_GPU
-        // if (set_neighbors.size () != (part_end - part_start)) {
-        //   printf ("v %d set_neighbors.size () %d (part_end - part_start) %d\n",
-        //           v, set_neighbors.size (), (part_end - part_start));
-        //   printf ("set_neighbors is:\n");
-        //   print_container(set_neighbors);
-        //   printf ("part_neighbors is:\n");
-        //   for (int idx = part_start; idx < part_end; idx++) {
-        //     printf ("%d, ", part_neighbors[part][idx]);
-        //   }
-        //   printf ("\n");
-        // }
-        // assert (set_neighbors.size () == (part_end - part_start));
-// #endif
       }
 
       delete part_neighbors[part];
