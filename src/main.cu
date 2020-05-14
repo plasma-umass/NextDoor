@@ -230,8 +230,6 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               VertexID* source_vertex_idx,
-              const VertexID common_vertex_with_previous_partition,
-              const VertexID common_vertex_with_previous_partition_additions,
               char* device_src_vertices_for_device_level
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
@@ -1342,8 +1340,6 @@ int main (int argc, char* argv[])
               device_src_to_roots,
               device_src_to_root_positions,
               source_vertex_idx,
-              vertex_with_prev_partition,
-              vertex_with_prev_partition_adds,
               device_src_vertices_for_device_level
     #ifndef NDEBUG
               , device_profile_branch_1,
@@ -1361,8 +1357,12 @@ int main (int argc, char* argv[])
             // }
 
             // CHK_CU(cudaStreamDestroy(streams[0]));
+
             delete streams;
           }
+
+          delete src_vertices_for_device_level;
+          CHK_CU(cudaFree(device_src_vertices_for_device_level));
         }
 
         if (hop == 0) {
@@ -1389,8 +1389,6 @@ int main (int argc, char* argv[])
             device_src_to_roots,
             device_src_to_root_positions,
             source_vertex_idx,
-            vertex_with_prev_partition,
-            vertex_with_prev_partition_adds,
             nullptr
   #ifndef NDEBUG
             , device_profile_branch_1,
