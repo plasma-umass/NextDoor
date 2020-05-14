@@ -82,7 +82,7 @@ using namespace GPUUtils;
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-#define CHECK_RESULT
+//#define CHECK_RESULT
 
 //For mico, 512 works best
 const int N_THREADS = 512;
@@ -1254,8 +1254,9 @@ int main (int argc, char* argv[])
 
         double t1 = convertTimeValToDouble(getTimeOfDay ());
         std::cout << "hop " << hop << std::endl;
-
+        
         if (hop >= 1) {
+          cudaStream_t* streams = new cudaStream_t[src_partition.get_n_vertices()];
           VertexID vertex_for_block_level_exec = -1;
           if (LoadBalancing::EnableLoadBalancing) {
             for (VertexID src_vertex_id : src_partition.get_vertex_range()) {
@@ -1263,9 +1264,10 @@ int main (int argc, char* argv[])
                 if (vertex_for_block_level_exec == -1) {
                   vertex_for_block_level_exec = src_vertex_id - 1;
                 }
+                cudaStreamCreate(&streams[src_partition.get_vertex_idx(src_vertex_id)]);
                 int N_BLOCKS = src_partition.get_n_edges_for_vertex(src_vertex_id)/N_THREADS + 1;
 
-                run_hop_parallel_single_step_device_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
+                run_hop_parallel_single_step_device_level <<<N_BLOCKS, N_THREADS,0,streams[src_vertex_id]>>> (N_HOPS, hop, device_csr,  
                                                                       device_root_partition,
                                                                       device_additions,
                                                                       per_part_num_neighbors[root_part_idx],
@@ -1305,9 +1307,10 @@ int main (int argc, char* argv[])
         rand_walk_time += t;
 
 #else
+            cudaStreamCreate(&streams[0]);
             std::cout << "per_part_num_neighbors[root_part_idx] " << per_part_num_neighbors[root_part_idx] << std::endl;
             int N_BLOCKS = vertex_for_block_level_exec - src_partition.first_vertex_id + 1;
-            run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
+            run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS, 0, streams[0]>>> (N_HOPS, hop, device_csr,  
               device_root_partition,
               vertex_for_block_level_exec,
               device_additions,
@@ -1327,6 +1330,16 @@ int main (int argc, char* argv[])
             );
             CHK_CU (cudaDeviceSynchronize ());
 #endif
+          }
+
+          if (LoadBalancing::EnableLoadBalancing) {
+            //TODO: Destroy the streams
+            // for (VertexID v = vertex_for_block_level_exec; v <= src_partition.last_vertex_id; v++) {
+            //   CHK_CU(cudaStreamDestroy(streams[src_partition.get_vertex_idx(v)]));
+            // }
+
+            // CHK_CU(cudaStreamDestroy(streams[0]));
+            delete streams;
           }
         }
 
