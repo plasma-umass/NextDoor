@@ -25,10 +25,6 @@
 
 //TODO-List:
 //[] Divide main() function in several small functions.
-//[] A CPU Check Result implementation based on the API. That
-//   should atleast check that all jth-hops in the sample set are
-//   a neighbor of all (j-1)th-hops.
-//[] Add NextDoor API's functions.
 //[] Divide the code in several include files that can be included in the API.
 //[] In GPU Kernels, do refactoring and move them to other places.
 //[] Use vectors instead of dynamic arrays and new.
@@ -102,14 +98,15 @@ const bool has_random = true;
 __host__ __device__ int size() {return 2;}
 
 __host__ __device__ 
-int sampleSize(int k) {return ALL_NEIGHBORS;}//((k == 0) ? 25 : 10);}
+int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
 
-__host__ __device__ 
+__device__ 
 VertexID next(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
-              const EdgePos_t neighbrId)
+              const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
 {
-  return src_edges[neighbrId];
+  EdgePos_t id = (EdgePos_t)round(0.5 + rand_num_gen->rand_float(root, neighbrId)*num_edges) - 1;
+  return src_edges[id];
 }
 
 __host__ __device__ 
@@ -135,7 +132,7 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               const VertexID source_vertex,
-              RandNumGen* rand_num_gen
+              const RandNumGen* rand_num_gen
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -221,10 +218,12 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
 
 #ifdef USE_PARTITION_FOR_SHMEM
     VertexID edge = next(hop, hop_vertex, root_vertex, &shmem_csr_edges[0], 
-                         n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size));
+                         n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
+                         rand_num_gen);
 #else
     VertexID edge = next(hop, hop_vertex, root_vertex, csr->get_edges(source_vertex), 
-                         n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size));
+                         n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
+                         rand_num_gen);
 #endif
     EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
   #ifndef NDEBUG
@@ -501,7 +500,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             EdgePos_t new_neighbor_idx = (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size);
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
-                                 n_edges, new_neighbor_idx);
+                                 n_edges, new_neighbor_idx,
+                                 rand_num_gen);
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
   #ifndef NDEBUG
             if (!(addr < num_neighbors)) {
@@ -595,11 +595,13 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
 #ifdef USE_PARTITION_FOR_SHMEM
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  shmem_csr_edges, 
-                                 n_edges, new_neighbor_idx);
+                                 n_edges, new_neighbor_idx,
+                                 rand_num_gen);
 #else
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
-                                 n_edges, new_neighbor_idx);
+                                 n_edges, new_neighbor_idx,
+                                 rand_num_gen);
 #endif
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
 #ifndef NDEBUG
@@ -1265,7 +1267,7 @@ int main (int argc, char* argv[])
       if (has_random and sampleSize(hop) != ALL_NEIGHBORS) {
         rand_num_gen = new RandNumGen(sampleSize(hop), root_partition.get_n_vertices());
         rand_num_gen->gen_random_nums();
-        //device_rand_num_gen = rand_num_gen->to_device();
+        device_rand_num_gen = rand_num_gen->to_device();
       }
       for (auto part_idx : src_partitions) {
         VertexID* device_src_to_roots;
