@@ -70,6 +70,7 @@
 #include "csr.hpp"
 #include "utils.hpp"
 #include "pinned_memory_alloc.hpp"
+#include "sampler.cuh"
 
 using namespace utils;
 using namespace GPUUtils;
@@ -85,10 +86,10 @@ using namespace GPUUtils;
 #define CHECK_RESULT
 
 //For mico, 512 works best
-const int N_THREADS = 256;
+const int N_THREADS = 512;
 
 #define MAX_LOAD_PER_TB (N_THREADS)
-#define MAX_VERTICES_PER_TB 10
+#define MAX_VERTICES_PER_TB 1
 #if MAX_VERTICES_PER_TB < 1
   #error "MAX_VERTICES_PER_TB should be greater than or equal to 1"
 #endif
@@ -96,11 +97,12 @@ const int N_THREADS = 256;
 #define WARP_HOP
 
 const int ALL_NEIGHBORS = -1;
+const bool has_random = true;
 
 __host__ __device__ int size() {return 2;}
 
 __host__ __device__ 
-int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
+int sampleSize(int k) {return ALL_NEIGHBORS;}//((k == 0) ? 25 : 10);}
 
 __host__ __device__ 
 VertexID next(int k, const VertexID src, const VertexID root, 
@@ -132,7 +134,8 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
               EdgePos_t* previous_stage_filled_range,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
-              const VertexID source_vertex
+              const VertexID source_vertex,
+              RandNumGen* rand_num_gen
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -259,7 +262,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               VertexID* source_vertex_idx,
-              char* device_src_vertices_for_device_level
+              char* device_src_vertices_for_device_level,
+              RandNumGen* rand_num_gen
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -742,7 +746,7 @@ size_t cpu_get_max_lengths_for_vertices_single_step (int hop, CSRPartition& root
       for (int idx = start; idx < start + end; idx++) {
         VertexID addition = additions_prev_hop[idx];
         EdgePos_t _new_additions;
-        _new_additions = (sampleSize(hop) == ALL_NEIGHBORS) ? csr->n_edges_for_vertex(addition) : sampleSize(hop);
+        _new_additions = new_neighbors_size(hop, csr->n_edges_for_vertex(addition)); 
         new_additions += _new_additions;
       }
     }
@@ -1184,7 +1188,6 @@ int main (int argc, char* argv[])
         //CHK_CU (cudaFree (device_edges_to_prev_iter_additions));
         //CHK_CU (cudaFree (device_prev_hop_addition_sizes));
       }
-
       
       CHK_CU (cudaMemcpy (device_map_vertex_to_additions[hop][root_part_idx],
         partition_map_vertex_to_additions[root_part_idx], 
@@ -1256,6 +1259,14 @@ int main (int argc, char* argv[])
         root_to_linear_thread[root_part_idx][v] = -1;
       }
 #endif
+
+      RandNumGen* rand_num_gen = nullptr;
+      RandNumGen* device_rand_num_gen = nullptr;
+      if (has_random and sampleSize(hop) != ALL_NEIGHBORS) {
+        rand_num_gen = new RandNumGen(sampleSize(hop), root_partition.get_n_vertices());
+        rand_num_gen->gen_random_nums();
+        //device_rand_num_gen = rand_num_gen->to_device();
+      }
       for (auto part_idx : src_partitions) {
         VertexID* device_src_to_roots;
         EdgePos_t* device_src_to_root_positions;
@@ -1305,8 +1316,12 @@ int main (int argc, char* argv[])
                 //int N_BLOCKS = src_partition.get_n_edges_for_vertex(src_vertex_id)/N_THREADS + 1;
                 const EdgePos_t num_edges = src_partition.get_n_edges_for_vertex(src_vertex_id);
                 int N_BLOCKS = thread_block_size(num_roots*num_edges_to_warp_size(new_neighbors_size(hop, num_edges),SourceVertexExec_t::DeviceLevel), (EdgePos_t)N_THREADS);
+#ifdef USE_PARTITION_FOR_SHMEM
                 size_t sh_mem = sizeof(VertexID)*num_edges;
                 assert (sh_mem < 48*1024-sizeof(EdgePos_t));
+#else
+                size_t sh_mem =  0;
+#endif
                 run_hop_parallel_single_step_device_level <<<N_BLOCKS, N_THREADS,sh_mem,streams[src_vertex_id]>>> (N_HOPS, hop, device_csr,  
                                                                       device_root_partition,
                                                                       device_additions,
@@ -1316,7 +1331,8 @@ int main (int argc, char* argv[])
                                                                       device_additions_sizes,
                                                                       device_src_to_roots,
                                                                       device_src_to_root_positions,
-                                                                      src_vertex_id
+                                                                      src_vertex_id,
+                                                                      device_rand_num_gen
       #ifndef NDEBUG
                                                                       , device_profile_branch_1,
                                                                       device_profile_branch_2
@@ -1358,7 +1374,8 @@ int main (int argc, char* argv[])
               device_src_to_roots,
               device_src_to_root_positions,
               source_vertex_idx,
-              device_src_vertices_for_device_level
+              device_src_vertices_for_device_level,
+              device_rand_num_gen
     #ifndef NDEBUG
               , device_profile_branch_1,
               device_profile_branch_2
@@ -1407,7 +1424,8 @@ int main (int argc, char* argv[])
             device_src_to_roots,
             device_src_to_root_positions,
             source_vertex_idx,
-            nullptr
+            nullptr,
+            device_rand_num_gen
   #ifndef NDEBUG
             , device_profile_branch_1,
             device_profile_branch_2
@@ -1445,6 +1463,8 @@ int main (int argc, char* argv[])
       std::cout << "profile_branch_2 " << profile_branch_2 << std::endl;
   #endif
 
+      if (rand_num_gen != nullptr)
+        delete rand_num_gen;
       part_additions_sizes[root_part_idx] = new EdgePos_t[partition_additions_sizes_size];
       CHK_CU (cudaMemcpy (part_additions_sizes[root_part_idx], device_additions_sizes, 
         partition_additions_sizes_size, 
