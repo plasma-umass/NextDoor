@@ -236,8 +236,8 @@ namespace GPUUtils {
                                                             device_vertex_array, device_edge_array);
     CHK_CU (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
   }
-
-  __device__ int n_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
+  
+  __host__ __device__ int num_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
   {
     //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
     //Best is 4.
@@ -257,7 +257,7 @@ namespace GPUUtils {
       else
         return 32;
     } else {
-      return warpSize;
+      return 32;
     }
   #endif
   }

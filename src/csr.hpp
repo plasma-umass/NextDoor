@@ -4,7 +4,43 @@
 #define __CSR_HPP__
 
 typedef int32_t VertexID;
-typedef int32_t EdgePos_t;
+typedef int64_t EdgePos_t;
+
+class VertexRange 
+{
+  public:
+    class vertex_iterator 
+    {
+    private:
+      VertexID v;
+
+    public: 
+      vertex_iterator(VertexID _v) : v(_v) {}
+      vertex_iterator operator++() {v++; return *this;}
+      vertex_iterator operator--() {v--; return *this;}
+      VertexID operator*() {return v;}
+
+      bool operator==(const vertex_iterator& rhs) {return v == rhs.v;}
+      bool operator!=(const vertex_iterator& rhs) {return v != rhs.v;}
+    };
+
+  private:
+    VertexID first;
+    VertexID last;
+
+  public:
+    VertexRange(VertexID _first, VertexID _last) : first(_first), last(_last) {}
+
+    vertex_iterator begin() const
+    {
+      return vertex_iterator(first);
+    }
+
+    vertex_iterator end() const
+    {
+      return vertex_iterator(last+1);
+    }
+};
 
 class CSR
 {
@@ -127,42 +163,11 @@ public:
 
   __host__ __device__
   int get_n_edges () const  {return n_edges;}
-};
 
-class VertexRange 
-{
-  public:
-    class vertex_iterator 
-    {
-    private:
-      VertexID v;
-
-    public: 
-      vertex_iterator(VertexID _v) : v(_v) {}
-      vertex_iterator operator++() {v++; return *this;}
-      vertex_iterator operator--() {v--; return *this;}
-      VertexID operator*() {return v;}
-
-      bool operator==(const vertex_iterator& rhs) {return v == rhs.v;}
-      bool operator!=(const vertex_iterator& rhs) {return v != rhs.v;}
-    };
-
-  private:
-    VertexID first;
-    VertexID last;
-
-  public:
-    VertexRange(VertexID _first, VertexID _last) : first(_first), last(_last) {}
-
-    vertex_iterator begin() const
-    {
-      return vertex_iterator(first);
-    }
-
-    vertex_iterator end() const
-    {
-      return vertex_iterator(last+1);
-    }
+  VertexRange iterate_vertices() const 
+  {
+    return VertexRange(0, get_n_vertices()-1);
+  }
 };
 
 class CSRPartition
@@ -236,6 +241,12 @@ public:
   const CSR::Edge* get_edges () const 
   {
     return edges;
+  }
+
+  __host__ __device__
+  const CSR::Edge* get_edges (VertexID v) const 
+  {
+    return &edges[get_start_edge_idx(v)];
   }
 
   __host__ __device__
