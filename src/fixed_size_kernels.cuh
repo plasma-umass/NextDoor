@@ -61,7 +61,7 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
   if (n_edges > 0) {
     previous_stage_filled_range[linear_threads_executed+global_thread_id] = 1;
     VertexID edge = next(hop, hop_vertex, root_vertex, csr->get_edges(hop_vertex), 
-    n_edges, (EdgePos_t)1, rand_num_gen);
+    n_edges, (EdgePos_t)0, rand_num_gen);
     embeddings_additions[linear_threads_executed+global_thread_id] = edge;
   }
 }
@@ -89,7 +89,7 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (
   if (n_edges > 0) {
     previous_stage_filled_range[root_vertex] = 1;
     VertexID edge = next(hop, root_vertex, root_vertex, csr->get_edges(root_vertex), 
-    n_edges, (EdgePos_t)1, rand_num_gen);
+    n_edges, (EdgePos_t)0, rand_num_gen);
     embeddings_additions[root_vertex] = edge;
   }
 }
@@ -122,7 +122,7 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   if (n_edges > 0) {
     previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
     VertexID edge = next(hop, hop_vertex, root_vertex, csr->get_edges(hop_vertex), 
-    n_edges, (EdgePos_t)1, rand_num_gen);
+    n_edges, (EdgePos_t)0, rand_num_gen);
     embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
   }
 }

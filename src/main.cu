@@ -79,10 +79,10 @@ using namespace GPUUtils;
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-#define CHECK_RESULT
+//#define CHECK_RESULT
 
 //For mico, 512 works best
-const int N_THREADS = 512;
+const int N_THREADS = 256;
 
 #define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 1
@@ -95,7 +95,7 @@ const int N_THREADS = 512;
 const int ALL_NEIGHBORS = -1;
 const bool has_random = true;
 
-__host__ __device__ int size() {return 2;}
+__host__ __device__ int size() {return 10;}
 
 //GraphSage
 // __host__ __device__ 
@@ -113,12 +113,20 @@ __host__ __device__ int size() {return 2;}
 __host__ __device__ 
 int sampleSize(int k) {return 1;}
 
-__device__ 
+__device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
 {
-  EdgePos_t id = (EdgePos_t)round(0.5 + rand_num_gen->rand_float(root, neighbrId)*num_edges) - 1;
+  //TODO: make random float access based on linear thread id for coalesced memory accesses?
+  //int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+  float ff = 0.5 + rand_num_gen->rand_float(root, neighbrId)*num_edges;
+  EdgePos_t id = (EdgePos_t)round(ff) - 1;
+#ifndef NDEBUG
+  if (!(0 <= id && id < num_edges))
+    printf ("src %d root %d num_edges %d id %d ff %f\n", src, root, num_edges, id, ff);
+  assert(0 <= id && id < num_edges);
+#endif
   return src_edges[id];
 }
 
@@ -938,6 +946,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
   EdgePos_t grid_level_thread_iter = 0;
   EdgePos_t grid_level_start_linear_th_id = linear_thread;
   
+  //TODO: After sorting you can find grid_level_assignment using binary search
   for (pair_src_num_roots_idx = 0; 
        pair_src_num_roots_idx < src_and_num_roots.size(); 
        pair_src_num_roots_idx++) {
@@ -947,6 +956,9 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
     if (LoadBalancing::is_grid_level_assignment(num_roots)) {
       break;
     }
+
+    if (src_partition.get_n_edges_for_vertex(src) == 0)
+      continue;
 
     for (int _idx = 0; _idx < num_roots; _idx++) {
       EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
@@ -965,10 +977,15 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       VertexID src = std::get<1>(src_num_root);
       EdgePos_t num_roots = std::get<0> (src_num_root);
       
+      if (src_partition.get_n_edges_for_vertex(src) == 0)
+        continue;
+
       for (int _idx = 0; _idx < num_roots; _idx++,grid_level_thread_iter++,linear_thread++) {
         EdgePos_t root_idx = per_part_src_to_roots_positions[part_idx][2*src] + 2*_idx;
         thread_to_src[linear_thread] = src + src_partition.first_vertex_id;
         VertexID root = per_part_src_to_roots[part_idx][root_idx];
+        if (root == 124124)
+          printf("%d: source for 124124 source %d\n", __LINE__, src);
         thread_to_roots[linear_thread] = root;
         root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
         grid_level_thread_to_linear_thread_map[grid_level_thread_iter] = linear_thread;
@@ -1104,7 +1121,7 @@ int main (int argc, char* argv[])
   csr_partitions.push_back (full_partition);
 #endif
 
-  const int N_HOPS = 2;
+  const int N_HOPS = size();
   
   //Graph on GPU
   CSRPartition* device_csr;
@@ -1740,7 +1757,7 @@ int main (int argc, char* argv[])
             EdgePos_t idx = root_to_linear_thread[part][part_start];
             if (idx != -1) {
               if (part_neighbors[part][idx] == -1) {
-                std::cout << "v " << v << " part_end " << part_end << " part_start " << part_start << std::endl;
+                std::cout << "v " << v << " part_end " << part_end << " part_start " << part_start << " idx " << idx << std::endl;
               }
               assert (part_neighbors[part][idx] != -1);
               neighbors[hop][final_idx] = part_neighbors[part][idx];
