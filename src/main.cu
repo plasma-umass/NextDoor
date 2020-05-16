@@ -120,13 +120,7 @@ VertexID next(int k, const VertexID src, const VertexID root,
 {
   //TODO: make random float access based on linear thread id for coalesced memory accesses?
   //int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-  float ff = 0.5 + rand_num_gen->rand_float(root, neighbrId)*num_edges;
-  EdgePos_t id = (EdgePos_t)round(ff) - 1;
-#ifndef NDEBUG
-  if (!(0 <= id && id < num_edges))
-    printf ("src %d root %d num_edges %d id %d ff %f\n", src, root, num_edges, id, ff);
-  assert(0 <= id && id < num_edges);
-#endif
+  EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
   return src_edges[id];
 }
 
