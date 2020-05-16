@@ -75,7 +75,7 @@ using namespace GPUUtils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-//#define RANDOM_WALK
+#define RANDOM_WALK
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
@@ -97,8 +97,21 @@ const bool has_random = true;
 
 __host__ __device__ int size() {return 2;}
 
+//GraphSage
+// __host__ __device__ 
+// int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
+//
+// __device__ 
+// VertexID next(int k, const VertexID src, const VertexID root, 
+//               const CSR::Edge* src_edges, const EdgePos_t num_edges,
+//               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
+// {
+//   EdgePos_t id = (EdgePos_t)round(0.5 + rand_num_gen->rand_float(root, neighbrId)*num_edges) - 1;
+//   return src_edges[id];
+// }
+
 __host__ __device__ 
-int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
+int sampleSize(int k) {return 1;}
 
 __device__ 
 VertexID next(int k, const VertexID src, const VertexID root, 
@@ -889,7 +902,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                  std::vector<VertexID*>& per_part_src_to_roots,
                  std::vector<EdgePos_t>& per_part_num_neighbors,
                  CSRPartition* device_src_csr, CSRPartition* device_root_partition,
-                 VertexID* device_additions, EdgePos_t* device_additions_sizes)
+                 VertexID* device_additions, EdgePos_t* device_additions_sizes,
+                 const RandNumGen* device_rand_num_gen)
 {
   EdgePos_t sum_all_roots = 0;
   for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
@@ -1002,8 +1016,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       linear_thread,
       grid_level_start_linear_th_id,
       num_roots,
-      device_rand,
-      linear_threads_executed
+      linear_threads_executed,
+      device_rand_num_gen
   );
   }
   if (num_block_threads + num_subwarp_threads > 0) {
@@ -1017,8 +1031,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       device_thread_to_src_map,
       device_thread_to_roots_map,
       block_level_roots,
-      device_rand,
-      linear_threads_executed
+      linear_threads_executed,
+      device_rand_num_gen
     );
   }
 
@@ -1357,7 +1371,8 @@ int main (int argc, char* argv[])
                       per_part_src_to_roots,
                       per_part_num_neighbors,
                       device_csr, device_root_partition,
-                      device_additions, device_additions_sizes);
+                      device_additions, device_additions_sizes,
+                      device_rand_num_gen);
         std::cout<<"Block Level time " << t <<" secs" << std::endl;
         rand_walk_time += t;
 
