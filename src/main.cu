@@ -31,6 +31,7 @@
 //[] Convert these vectors to a new array type that does not do initialization of data.
 //[] Use MKL or cuSPARSE to do the matrix transpose or sorting
 //[] A configuration that specifies all the parameters.
+//[] Use Templates for cleaner code of Sampler
 
 //Supported:
 //citeseer.graph
@@ -67,6 +68,7 @@
 #include "utils.hpp"
 #include "pinned_memory_alloc.hpp"
 #include "sampler.cuh"
+#include "rand_num_gen.cuh"
 
 using namespace utils;
 using namespace GPUUtils;
@@ -75,7 +77,7 @@ using namespace GPUUtils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-#define RANDOM_WALK
+//#define RANDOM_WALK
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
@@ -93,36 +95,62 @@ const int N_THREADS = 256;
 #define WARP_HOP
 
 const int ALL_NEIGHBORS = -1;
-const bool has_random = true;
 
-__host__ __device__ int size() {return 10;}
+//GraphSage 2-hop sampling
+// const bool has_random = true;
+// __host__ __device__ int size() {return 2;}
 
-//GraphSage
 // __host__ __device__ 
 // int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
-//
+
 // __device__ 
 // VertexID next(int k, const VertexID src, const VertexID root, 
 //               const CSR::Edge* src_edges, const EdgePos_t num_edges,
-//               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
+//               const EdgePos_t neighbrId, 
+//               const RandNumGen* rand_num_gen)
 // {
-//   EdgePos_t id = (EdgePos_t)round(0.5 + rand_num_gen->rand_float(root, neighbrId)*num_edges) - 1;
+//   EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
 //   return src_edges[id];
 // }
+
+//Node2Vec
+const bool has_random = true;
+
+// __device__ static const float Node2Vec::p = 2.0;
+// __device__ static const float Node2Vec::q = 0.5;
+
+__host__ __device__ int size() {return 10;}
 
 __host__ __device__ 
 int sampleSize(int k) {return 1;}
 
-__device__ inline
+__device__ 
 VertexID next(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
-              const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
+              const EdgePos_t neighbrId,
+              const RandNumGen* rand_num_gen,
+              const Sampler& sampler)
 {
-  //TODO: make random float access based on linear thread id for coalesced memory accesses?
-  //int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+  const Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
   EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
   return src_edges[id];
 }
+
+//Uniform Random Walk
+// __host__ __device__ int size() {return 10;}
+// __host__ __device__ 
+// int sampleSize(int k) {return 1;}
+
+// __device__ inline
+// VertexID next(int k, const VertexID src, const VertexID root, 
+//               const CSR::Edge* src_edges, const EdgePos_t num_edges,
+//               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
+// {
+//   //TODO: make random float access based on linear thread id for coalesced memory accesses?
+//   //int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+//   EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
+//   return src_edges[id];
+// }
 
 __host__ __device__ 
 bool distinct(VertexID root) {return false;}
@@ -147,7 +175,8 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               const VertexID source_vertex,
-              const RandNumGen* rand_num_gen
+              const RandNumGen* rand_num_gen,
+              Sampler* samplers
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -234,11 +263,11 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
 #ifdef USE_PARTITION_FOR_SHMEM
     VertexID edge = next(hop, hop_vertex, root_vertex, &shmem_csr_edges[0], 
                          n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
-                         rand_num_gen);
+                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)]);
 #else
     VertexID edge = next(hop, hop_vertex, root_vertex, csr->get_edges(source_vertex), 
                          n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
-                         rand_num_gen);
+                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)]);
 #endif
     EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
   #ifndef NDEBUG
@@ -277,7 +306,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               VertexID* source_vertex_idx,
               char* device_src_vertices_for_device_level,
-              RandNumGen* rand_num_gen
+              RandNumGen* rand_num_gen,
+              Sampler* samplers
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -516,7 +546,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
                                  n_edges, new_neighbor_idx,
-                                 rand_num_gen);
+                                 rand_num_gen, 
+                                 samplers[root_partition->get_vertex_idx(root_vertex)]);
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
   #ifndef NDEBUG
             if (!(addr < num_neighbors)) {
@@ -611,12 +642,14 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  shmem_csr_edges, 
                                  n_edges, new_neighbor_idx,
-                                 rand_num_gen);
+                                 rand_num_gen,
+                                 samplers[root_partition->get_vertex_idx(root_vertex)]);
 #else
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
                                  n_edges, new_neighbor_idx,
-                                 rand_num_gen);
+                                 rand_num_gen,
+                                 samplers[root_partition->get_vertex_idx(root_vertex)]);
 #endif
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
 #ifndef NDEBUG
@@ -905,7 +938,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                  std::vector<EdgePos_t>& per_part_num_neighbors,
                  CSRPartition* device_src_csr, CSRPartition* device_root_partition,
                  VertexID* device_additions, EdgePos_t* device_additions_sizes,
-                 const RandNumGen* device_rand_num_gen)
+                 const RandNumGen* device_rand_num_gen,
+                 Sampler* device_samplers)
 {
   EdgePos_t sum_all_roots = 0;
   for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
@@ -1028,7 +1062,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       grid_level_start_linear_th_id,
       num_roots,
       linear_threads_executed,
-      device_rand_num_gen
+      device_rand_num_gen,
+      device_samplers
   );
   }
   if (num_block_threads + num_subwarp_threads > 0) {
@@ -1043,7 +1078,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       device_thread_to_roots_map,
       block_level_roots,
       linear_threads_executed,
-      device_rand_num_gen
+      device_rand_num_gen,
+      device_samplers
     );
   }
 
@@ -1106,6 +1142,7 @@ int main (int argc, char* argv[])
 
   double_t kernelTotalTime = 0.0;
   std::vector<CSRPartition> csr_partitions;
+  Sampler* samplers = new Node2VecSampler[csr->get_n_vertices()]; //TODO: Allocate for correct sampler
 
 #ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM 
   create_csr_partitions (csr, csr_partitions, GRAPH_PARTITION_SIZE - sizeof (CSRPartition));
@@ -1176,8 +1213,12 @@ int main (int argc, char* argv[])
       unsigned long long num_neighbors_iter = 0;
       CSRPartition& root_partition = csr_partitions[root_part_idx];
       CSRPartition* device_root_partition;
+      Sampler* device_samplers;
 
       copy_partition_to_gpu (root_partition, device_root_partition, device_vertex_array, device_edge_array);
+      Sampler* root_samplers = (Sampler*)(((char*)samplers) + samplers[0].size()*root_partition.first_vertex_id);
+      copy_sampler_to_gpu (root_samplers, 
+                           root_partition.get_n_vertices(), device_samplers);
 
       num_neighbors_iter = 0;
       
@@ -1359,7 +1400,8 @@ int main (int argc, char* argv[])
                                                                       device_src_to_roots,
                                                                       device_src_to_root_positions,
                                                                       src_vertex_id,
-                                                                      device_rand_num_gen
+                                                                      device_rand_num_gen,
+                                                                      device_samplers
       #ifndef NDEBUG
                                                                       , device_profile_branch_1,
                                                                       device_profile_branch_2
@@ -1383,7 +1425,8 @@ int main (int argc, char* argv[])
                       per_part_num_neighbors,
                       device_csr, device_root_partition,
                       device_additions, device_additions_sizes,
-                      device_rand_num_gen);
+                      device_rand_num_gen,
+                      device_samplers);
         std::cout<<"Block Level time " << t <<" secs" << std::endl;
         rand_walk_time += t;
 
@@ -1403,7 +1446,8 @@ int main (int argc, char* argv[])
               device_src_to_root_positions,
               source_vertex_idx,
               device_src_vertices_for_device_level,
-              device_rand_num_gen
+              device_rand_num_gen,
+              device_samplers
     #ifndef NDEBUG
               , device_profile_branch_1,
               device_profile_branch_2
@@ -1453,7 +1497,8 @@ int main (int argc, char* argv[])
             device_src_to_root_positions,
             source_vertex_idx,
             nullptr,
-            device_rand_num_gen
+            device_rand_num_gen,
+            device_samplers
   #ifndef NDEBUG
             , device_profile_branch_1,
             device_profile_branch_2
@@ -1709,6 +1754,7 @@ int main (int argc, char* argv[])
       double cpu_part_t2 = convertTimeValToDouble(getTimeOfDay());
 
       std::cout << "CPU Part " << (cpu_part_t2 - cpu_part_t1) << std::endl;
+      copy_back_sampler_from_gpu (root_samplers, root_partition.get_n_vertices(), device_samplers);
     }
 
     num_neighbors = num_neighbors * sizeof (VertexID);

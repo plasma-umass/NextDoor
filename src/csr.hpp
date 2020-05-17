@@ -4,7 +4,7 @@
 #define __CSR_HPP__
 
 typedef int32_t VertexID;
-typedef int32_t EdgePos_t;
+typedef int64_t EdgePos_t;
 
 class VertexRange 
 {
