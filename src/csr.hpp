@@ -4,7 +4,7 @@
 #define __CSR_HPP__
 
 typedef int32_t VertexID;
-typedef int64_t EdgePos_t;
+typedef int32_t EdgePos_t;
 
 class VertexRange 
 {
@@ -271,6 +271,37 @@ public:
   bool has_vertex (int v) const 
   {
     return v >= first_vertex_id && v <= last_vertex_id;
+  }
+
+  __host__ __device__
+  bool has_edge (VertexID src, VertexID dst) const 
+  {
+    for (EdgePos_t i = get_start_edge_idx(src); i <= get_end_edge_idx(src); i++) {
+      if (get_edge(i) == dst) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  __host__ __device__
+  bool has_edge_logn (VertexID src, VertexID dst) const 
+  {
+    EdgePos_t l = get_start_edge_idx(src);
+    EdgePos_t r = get_end_edge_idx(src);
+    
+    while (l <= r) {
+      EdgePos_t m = l + (r-l)/2;
+      if (get_edge(m) == dst)
+        return true;
+      
+      if (get_edge(m) < dst)
+        l = m + 1;
+      else
+        r = m - 1;
+    }
+    return false;
   }
 
   __host__ __device__

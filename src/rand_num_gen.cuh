@@ -68,7 +68,7 @@ public:
 
   __device__ 
   inline float rand_float(const VertexID vertex, const int n) const {
-    size_t access = vertex*rand_nums_per_vertex + n;
+    size_t access = (vertex*rand_nums_per_vertex + n)%rand_size;
 #ifndef NDEBUG
     if (!(access < rand_size)) {
       printf ("access %ld v %d n %d rand_size %ld\n", access, vertex, n, rand_size);

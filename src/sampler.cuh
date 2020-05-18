@@ -28,14 +28,15 @@ private:
   Node2VecSampler(Node2VecSampler& x) : last_stop(x.last_stop) {}
 
 public:
-  const float p = 2.0;
-  const float q = 0.5;
-  Node2VecSampler() {}
+  float p = 2.0f;
+  float q = 0.5f;
+  Node2VecSampler():last_stop(-1) {}
 
-  void set_last_stop(VertexID t) {last_stop = t;}
+  __device__
+  inline void set_last_stop(VertexID t) {last_stop = t;}
   
   __device__ __host__
-  inline VertexID get_last_stop() {return last_stop;}
+  inline VertexID get_last_stop() const {return last_stop;}
 
   virtual size_t size() {return sizeof(Node2VecSampler);}
  

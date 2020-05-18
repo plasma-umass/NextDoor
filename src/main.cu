@@ -77,11 +77,11 @@ using namespace GPUUtils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-//#define RANDOM_WALK
+#define RANDOM_WALK
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
 //For mico, 512 works best
 const int N_THREADS = 256;
@@ -103,18 +103,22 @@ const int ALL_NEIGHBORS = -1;
 // __host__ __device__ 
 // int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
 
-// __device__ 
-// VertexID next(int k, const VertexID src, const VertexID root, 
-//               const CSR::Edge* src_edges, const EdgePos_t num_edges,
-//               const EdgePos_t neighbrId, 
-//               const RandNumGen* rand_num_gen)
-// {
-//   EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
-//   return src_edges[id];
-// }
+__device__ 
+VertexID next(int k, const VertexID src, const VertexID root, 
+              const CSR::Edge* src_edges, const EdgePos_t num_edges,
+              const EdgePos_t neighbrId, 
+              const RandNumGen* rand_num_gen,
+              Sampler& sampler)
+{
+  assert(false);
+  EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
+  return src_edges[id];
+}
 
 //Node2Vec
 const bool has_random = true;
+#define node2vec_p 2.0f
+#define node2vec_q 0.5f
 
 // __device__ static const float Node2Vec::p = 2.0;
 // __device__ static const float Node2Vec::q = 0.5;
@@ -125,15 +129,56 @@ __host__ __device__
 int sampleSize(int k) {return 1;}
 
 __device__ 
-VertexID next(int k, const VertexID src, const VertexID root, 
+VertexID next_node2vec(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
               const EdgePos_t neighbrId,
               const RandNumGen* rand_num_gen,
-              const Sampler& sampler)
+              Sampler& sampler,
+              CSRPartition* graph)
 {
-  const Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
-  EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
-  return src_edges[id];
+  Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
+  if (k == 1) {
+    node2vec_sampler.set_last_stop(root);
+  }
+
+  VertexID last_stop = node2vec_sampler.get_last_stop();
+#ifndef NDEBUG
+   if (!(last_stop >= 0 && last_stop < graph->get_n_vertices()))
+    printf ("last_stop %d graph->get_n_vertices() %d\n", last_stop, graph->get_n_vertices());
+   assert (last_stop >= 0 && last_stop < graph->get_n_vertices());
+#endif
+  if (graph->get_n_edges_for_vertex(src) <= 2) 
+  {
+    node2vec_sampler.set_last_stop(src);
+    EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
+    return src_edges[id];
+  }
+
+  const int width = graph->get_n_edges_for_vertex(src);
+  const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
+  int ii = 0;
+  while (true) {
+    const int x = rand_num_gen->rand_neighbor(root, ii++, width);
+    const float y = rand_num_gen->rand_float(root, ii++)*height;
+    const VertexID neighbr = src_edges[x];
+    const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
+                      (graph->has_edge_logn(last_stop, neighbr) ? 1 :
+                      1/node2vec_q);
+    if (round(y) <= round(neighbrH)) {
+      node2vec_sampler.set_last_stop(src);
+      return neighbr;
+    }
+
+    //assert (ii < 10);
+    if(false && src == 21496) {
+      printf ("k %d y %f neighbrH %f height %f src %d srcedges %d root %d neighbr %d last_stop %d neighbr.hasedge(last_stop) %d ii %d\n", k, y, neighbrH, height, src, graph->get_n_edges_for_vertex(src), root, neighbr, last_stop, graph->has_edge(last_stop, neighbr), ii);
+      assert (ii < 10);
+    }
+    else {
+      //if (ii >= 10)
+        //return src_edges[0];
+    }
+  }
 }
 
 //Uniform Random Walk
@@ -931,7 +976,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
 
 double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                  CSRPartition& src_partition, CSRPartition& root_partition,
-                 int& linear_threads_executed,
+                 EdgePos_t& linear_threads_executed,
                  std::vector<std::vector<EdgePos_t>>& root_to_linear_thread,
                  std::vector<EdgePos_t*>& per_part_src_to_roots_positions, 
                  std::vector<VertexID*>& per_part_src_to_roots,
@@ -1331,7 +1376,7 @@ int main (int argc, char* argv[])
       RandNumGen* rand_num_gen = nullptr;
       RandNumGen* device_rand_num_gen = nullptr;
       if (has_random and sampleSize(hop) != ALL_NEIGHBORS) {
-        rand_num_gen = new RandNumGen(sampleSize(hop), root_partition.get_n_vertices());
+        rand_num_gen = new RandNumGen(sampleSize(hop)*10, root_partition.get_n_vertices());
         rand_num_gen->gen_random_nums();
         device_rand_num_gen = rand_num_gen->to_device();
       }
@@ -1373,6 +1418,7 @@ int main (int argc, char* argv[])
           VertexID vertices_for_grid_level = 0;
 
           if (LoadBalancing::EnableLoadBalancing) {
+#ifndef RANDOM_WALK
             for (VertexID src_vertex_id : src_partition.get_vertex_range()) {
               // if (src_partition.get_n_edges_for_vertex(src_vertex_id) >= N_THREADS) {
               EdgePos_t num_roots = per_part_src_to_roots_positions[part_idx][2*src_vertex_id+1];
@@ -1412,13 +1458,16 @@ int main (int argc, char* argv[])
               }
             //CHK_CU (cudaDeviceSynchronize ());
             }
+#endif
           }
 
           std::cout << "vertices for block level exec " << (src_partition.get_n_vertices() - vertices_for_grid_level) << std::endl;
           if (src_partition.get_n_vertices() - vertices_for_grid_level > 0) {
 #ifdef RANDOM_WALK
-          double t = random_walk(N_HOPS, hop, part_idx, root_part_idx, src_partition, 
-                      root_partition, linear_threads_executed,
+          double t = random_walk(N_HOPS, hop, part_idx, 
+                      root_part_idx, src_partition, 
+                      root_partition, 
+                      linear_threads_executed,
                       root_to_linear_thread,
                       per_part_src_to_roots_positions, 
                       per_part_src_to_roots,
@@ -1778,10 +1827,11 @@ int main (int argc, char* argv[])
         const EdgePos_t final_end = final_idx + final_map_vertex_to_additions[hop][0][2*v + 1];
         std::unordered_set<VertexID> set_neighbors;
 #ifdef RANDOM_WALK
-        {
-          EdgePos_t idx = ((hop == 0) ? 2*part_v + 1 : root_to_linear_thread[part][part_v]);
+        EdgePos_t idx = ((hop == 0) ? 2*part_v + 1 : root_to_linear_thread[part][part_v]);
+        assert (idx >= -1);
+        if (idx != -1) {
           if (!(part_additions_sizes[part][idx] <= final_map_vertex_to_additions[hop][0][2*part_v + 1]))
-            std::cout << "v " << v << " p " << part_additions_sizes[part][idx] << " f " << final_map_vertex_to_additions[hop][0][2*part_v + 1] << std::endl;
+          std::cout << "v " << v << " p " << part_additions_sizes[part][idx] << " f " << final_map_vertex_to_additions[hop][0][2*part_v + 1] << std::endl;
           assert (part_additions_sizes[part][idx] <= final_map_vertex_to_additions[hop][0][2*part_v + 1]);
         }
 #else
@@ -1881,7 +1931,7 @@ int main (int argc, char* argv[])
 
 #ifdef CHECK_RESULT
   if (sampleSize(1) != ALL_NEIGHBORS) {
-    check_result(csr, final_map_vertex_to_additions, additions_sizes, neighbors);
+    std::cout << "Results are correct? " <<check_result(csr, final_map_vertex_to_additions, additions_sizes, neighbors) << std::endl;
   } else {  
     std::cout << "Generating CPU Embeddings:" << std::endl;
     double cpu_t1 = convertTimeValToDouble (getTimeOfDay ());
