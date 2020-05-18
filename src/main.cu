@@ -103,7 +103,7 @@ const int ALL_NEIGHBORS = -1;
 // __host__ __device__ 
 // int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
 
-__device__ 
+__device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
               const EdgePos_t neighbrId, 
@@ -116,86 +116,78 @@ VertexID next(int k, const VertexID src, const VertexID root,
 }
 
 //Node2Vec
-const bool has_random = true;
-#define node2vec_p 2.0f
-#define node2vec_q 0.5f
+// const bool has_random = true;
+// #define node2vec_p 2.0f
+// #define node2vec_q 0.5f
 
-// __device__ static const float Node2Vec::p = 2.0;
-// __device__ static const float Node2Vec::q = 0.5;
-
-__host__ __device__ int size() {return 10;}
-
-__host__ __device__ 
-int sampleSize(int k) {return 1;}
-
-__device__ 
-VertexID next_node2vec(int k, const VertexID src, const VertexID root, 
-              const CSR::Edge* src_edges, const EdgePos_t num_edges,
-              const EdgePos_t neighbrId,
-              const RandNumGen* rand_num_gen,
-              Sampler& sampler,
-              CSRPartition* graph)
-{
-  Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
-  if (k == 1) {
-    node2vec_sampler.set_last_stop(root);
-  }
-
-  VertexID last_stop = node2vec_sampler.get_last_stop();
-#ifndef NDEBUG
-   if (!(last_stop >= 0 && last_stop < graph->get_n_vertices()))
-    printf ("last_stop %d graph->get_n_vertices() %d\n", last_stop, graph->get_n_vertices());
-   assert (last_stop >= 0 && last_stop < graph->get_n_vertices());
-#endif
-  if (graph->get_n_edges_for_vertex(src) <= 2) 
-  {
-    node2vec_sampler.set_last_stop(src);
-    EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
-    return src_edges[id];
-  }
-
-  const int width = graph->get_n_edges_for_vertex(src);
-  const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
-  int ii = 0;
-  while (true) {
-    const int x = rand_num_gen->rand_neighbor(root, ii++, width);
-    const float y = rand_num_gen->rand_float(root, ii++)*height;
-    const VertexID neighbr = src_edges[x];
-    const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
-                      (graph->has_edge_logn(last_stop, neighbr) ? 1 :
-                      1/node2vec_q);
-    if (round(y) <= round(neighbrH)) {
-      node2vec_sampler.set_last_stop(src);
-      return neighbr;
-    }
-
-    //assert (ii < 10);
-    if(false && src == 21496) {
-      printf ("k %d y %f neighbrH %f height %f src %d srcedges %d root %d neighbr %d last_stop %d neighbr.hasedge(last_stop) %d ii %d\n", k, y, neighbrH, height, src, graph->get_n_edges_for_vertex(src), root, neighbr, last_stop, graph->has_edge(last_stop, neighbr), ii);
-      assert (ii < 10);
-    }
-    else {
-      //if (ii >= 10)
-        //return src_edges[0];
-    }
-  }
-}
-
-//Uniform Random Walk
 // __host__ __device__ int size() {return 10;}
+
 // __host__ __device__ 
 // int sampleSize(int k) {return 1;}
 
 // __device__ inline
-// VertexID next(int k, const VertexID src, const VertexID root, 
+// VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
 //               const CSR::Edge* src_edges, const EdgePos_t num_edges,
-//               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen)
+//               const EdgePos_t neighbrId,
+//               const RandNumGen* rand_num_gen,
+//               Sampler& sampler,
+//               CSRPartition* graph)
 // {
-//   //TODO: make random float access based on linear thread id for coalesced memory accesses?
-//   //int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-//   EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
-//   return src_edges[id];
+//   Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
+//   VertexID last_stop;
+//   if (k == 1) {
+//     last_stop = root;
+//   } else {
+//     last_stop = node2vec_sampler.get_last_stop();
+//   }
+
+// #ifndef NDEBUG
+//    if (!(last_stop >= 0 && last_stop < graph->get_n_vertices()))
+//     printf ("last_stop %d graph->get_n_vertices() %d\n", last_stop, graph->get_n_vertices());
+//    assert (last_stop >= 0 && last_stop < graph->get_n_vertices());
+// #endif
+//   int thread_idx = threadIdx.x + blockIdx.x*blockDim.x;
+//   // if (graph->get_n_edges_for_vertex(src) <= 2) 
+//   // {
+//   //   node2vec_sampler.set_last_stop(src);
+//   //   EdgePos_t id = rand_num_gen->rand_neighbor(thread_idx, 0, num_edges);
+//   //   return src_edges[id];
+//   // }
+  
+//   const EdgePos_t width = graph->get_n_edges_for_vertex(src);
+//   const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
+//   int ii = 0;
+//   while (true) {
+//     const EdgePos_t x = rand_num_gen->rand_neighbor(thread_idx, ii++, width);
+//     const float y = rand_num_gen->rand_float(thread_idx, ii++)*height;
+//     const VertexID neighbr = src_edges[x];
+//     const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
+//                       (graph->has_edge_logn(last_stop, neighbr) ? 1 :
+//                       1/node2vec_q);
+//     if (round(y) <= round(neighbrH)) {
+//       node2vec_sampler.set_last_stop(src);
+//       return neighbr;
+//     }
+//   }
 // }
+
+//Uniform Random Walk
+const bool has_random = true;
+__host__ __device__ int size() {return 10;}
+__host__ __device__ 
+int sampleSize(int k) {return 1;}
+
+__device__ inline
+VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
+              const CSR::Edge* src_edges, const EdgePos_t num_edges,
+              const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
+              Sampler& sampler,
+              CSRPartition* graph)
+{
+  int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+  EdgePos_t id = rand_num_gen->rand_neighbor(thread_id, 0, num_edges);
+  return src_edges[id];
+}
 
 __host__ __device__ 
 bool distinct(VertexID root) {return false;}
@@ -1376,7 +1368,7 @@ int main (int argc, char* argv[])
       RandNumGen* rand_num_gen = nullptr;
       RandNumGen* device_rand_num_gen = nullptr;
       if (has_random and sampleSize(hop) != ALL_NEIGHBORS) {
-        rand_num_gen = new RandNumGen(sampleSize(hop)*10, root_partition.get_n_vertices());
+        rand_num_gen = new RandNumGen(sampleSize(hop)*10, root_partition.get_n_vertices()*2);
         rand_num_gen->gen_random_nums();
         device_rand_num_gen = rand_num_gen->to_device();
       }

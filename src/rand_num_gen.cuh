@@ -17,6 +17,26 @@ private:
   }
 
 public:
+  __device__
+  RandNumGen() {}
+
+  __device__ inline
+  void init(const RandNumGen& x)
+  {
+    rand_nums_per_vertex = x.rand_nums_per_vertex;
+    num_vertices = x.num_vertices;
+    d_rand = x.d_rand;
+    rand_size = x.rand_size;
+  }
+
+  __device__ inline
+  void init(size_t _rand_nums_per_vertex, size_t _num_vertices, float* _d_rand)
+  {
+    rand_nums_per_vertex = _rand_nums_per_vertex;
+    num_vertices = _num_vertices;
+    d_rand = _d_rand;
+  }
+
   RandNumGen(EdgePos_t _rand_nums_per_vertex,
              size_t _num_vertices) :
     rand_nums(nullptr), d_rand(nullptr),
@@ -68,7 +88,7 @@ public:
 
   __device__ 
   inline float rand_float(const VertexID vertex, const int n) const {
-    size_t access = (vertex*rand_nums_per_vertex + n)%rand_size;
+    size_t access = (vertex*rand_nums_per_vertex + n);
 #ifndef NDEBUG
     if (!(access < rand_size)) {
       printf ("access %ld v %d n %d rand_size %ld\n", access, vertex, n, rand_size);
