@@ -283,7 +283,7 @@ namespace LoadBalancing {
   };
 
   enum LoadBalancingTBSizes {
-    GridLevelTBSize = 32,
+    GridLevelTBSize = 512,
     BlockLevelTBSize = 512,
     SubWarpLevelTBSize = 32,
   };
