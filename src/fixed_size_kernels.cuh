@@ -144,19 +144,19 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
 {
   int linear_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
   VertexID hop_vertex;
-  __shared__ char sh_rand_num_gen_buf[sizeof(RandNumGen)]; 
-  for (int v = 0; v < sizeof(RandNumGen)/blockDim.x + 1; v+= blockDim.x) {
-    int i = v + threadIdx.x;
-    if (i >= sizeof(RandNumGen))
-      continue;
-    sh_rand_num_gen_buf[i] = *(((char*)rand_num_gen) + i);
-  }
-  __syncthreads ();
+  // __shared__ char sh_rand_num_gen_buf[sizeof(RandNumGen)]; 
+  // for (int v = 0; v < sizeof(RandNumGen)/blockDim.x + 1; v+= blockDim.x) {
+  //   int i = v + threadIdx.x;
+  //   if (i >= sizeof(RandNumGen))
+  //     continue;
+  //   sh_rand_num_gen_buf[i] = *(((char*)rand_num_gen) + i);
+  // }
+  // __syncthreads ();
 
   if (linear_thread_id >= total_roots) 
     return;
 
-  const RandNumGen* sh_rand_num_gen = (RandNumGen*)&sh_rand_num_gen_buf[0];
+  const RandNumGen* sh_rand_num_gen = rand_num_gen;//(RandNumGen*)&sh_rand_num_gen_buf[0];
   hop_vertex = thread_to_src[linear_thread_id];
   VertexID root_vertex = thread_to_roots[linear_thread_id];
   EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, root_vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  

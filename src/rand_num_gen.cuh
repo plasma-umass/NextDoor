@@ -86,8 +86,8 @@ public:
     
   }
 
-  __device__ 
-  inline float rand_float(const VertexID vertex, const int n) const {
+  __device__ __forceinline__
+  float rand_float(const VertexID vertex, const int n) const {
     size_t access = (vertex*rand_nums_per_vertex + n);
 #ifndef NDEBUG
     if (!(access < rand_size)) {
@@ -107,13 +107,13 @@ public:
     return f;
   }
 
-  __device__ 
-  inline double rand_double(const VertexID vertex, const int n) const {
+  __device__ __forceinline__
+  double rand_double(const VertexID vertex, const int n) const {
     return (double)rand_float(vertex, n);
   }
 
-  __device__ 
-  inline EdgePos_t rand_neighbor(const VertexID vertex, const int n, 
+  __device__ __forceinline__
+  EdgePos_t rand_neighbor(const VertexID vertex, const int n, 
                                  const EdgePos_t num_edges) const {
     constexpr int sz = sizeof(EdgePos_t);
     if(sz == 4) {

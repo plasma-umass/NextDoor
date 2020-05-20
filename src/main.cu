@@ -84,7 +84,7 @@ using namespace GPUUtils;
 #define CHECK_RESULT
 
 //For mico, 512 works best
-const int N_THREADS = 512;
+const int N_THREADS = 256;
 
 #define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 1
@@ -120,7 +120,7 @@ const bool has_random = true;
 #define node2vec_p 2.0f
 #define node2vec_q 0.5f
 
-__host__ __device__ int size() {return 4;}
+__host__ __device__ int size() {return 10;}
 
 __host__ __device__ 
 int sampleSize(int k) {return 1;}

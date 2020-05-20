@@ -32,11 +32,11 @@ public:
   float q = 0.5f;
   Node2VecSampler():last_stop(-1) {}
 
-  __device__
-  inline void set_last_stop(VertexID t) {last_stop = t;}
+  __device__ __forceinline__
+  void set_last_stop(VertexID t) {last_stop = t;}
   
-  __device__ __host__
-  inline VertexID get_last_stop() const {return last_stop;}
+  __device__ __host__ __forceinline__
+  VertexID get_last_stop() const {return last_stop;}
 
   virtual size_t size() {return sizeof(Node2VecSampler);}
  
