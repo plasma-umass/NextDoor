@@ -78,7 +78,7 @@ using namespace GPUUtils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-#define RANDOM_WALK
+// #define RANDOM_WALK
 
 //#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
@@ -98,33 +98,34 @@ const int N_THREADS = 256;
 const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
-// const bool has_random = true;
-// __host__ __device__ int size() {return 2;}
+const bool has_random = true;
+__host__ __device__ int size() {return 2;}
 
-// __host__ __device__ 
-// int sampleSize(int k) {return ((k == 0) ? 25 : 10);}
+__host__ __device__ 
+int sampleSize(int k) {return ((k == 0) ? 10 : 5);}
 
 __device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
               const EdgePos_t neighbrId, 
               const RandNumGen* rand_num_gen,
-              Sampler& sampler)
+              Sampler& sampler,
+              curandState* state)
 {
-  assert(false);
-  EdgePos_t id = rand_num_gen->rand_neighbor(root, neighbrId, num_edges);
+  EdgePos_t id =  RandNumGen::rand_int(state,num_edges);
   return src_edges[id];
 }
 
 //Node2Vec
-const bool has_random = true;
+// const bool has_random = true;
+
+// __host__ __device__ int size() {return 10;}
+
+// __host__ __device__ 
+// int sampleSize(int k) {return 1;}
+
 #define node2vec_p 2.0f
 #define node2vec_q 0.5f
-
-__host__ __device__ int size() {return 10;}
-
-__host__ __device__ 
-int sampleSize(int k) {return 1;}
 
 __device__ inline
 VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
@@ -215,7 +216,8 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               const VertexID source_vertex,
               const RandNumGen* rand_num_gen,
-              Sampler* samplers
+              Sampler* samplers,
+              curandState* curand_states
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -302,11 +304,13 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
 #ifdef USE_PARTITION_FOR_SHMEM
     VertexID edge = next(hop, hop_vertex, root_vertex, &shmem_csr_edges[0], 
                          n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
-                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)]);
+                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
+                         &curand_states[root_vertex]);
 #else
     VertexID edge = next(hop, hop_vertex, root_vertex, csr->get_edges(source_vertex), 
                          n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
-                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)]);
+                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
+                         &curand_states[root_vertex]);
 #endif
     EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
   #ifndef NDEBUG
@@ -346,7 +350,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
               VertexID* source_vertex_idx,
               char* device_src_vertices_for_device_level,
               RandNumGen* rand_num_gen,
-              Sampler* samplers
+              Sampler* samplers,
+              curandState* curand_states
 #ifndef NDEBUG
               , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
 #endif
@@ -371,7 +376,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
   int laneid = threadIdx.x%warpSize;
   assert (last_src_vertex <= csr->last_vertex_id);
   assert (csr->first_vertex_id <= last_src_vertex);
-
+  int thread_idx = threadIdx.x + blockDim.x*blockIdx.x;
+  
   if (hop != 0) {
     thread_idx_to_load [2*threadIdx.x] = -1;
     thread_idx_to_load [2*threadIdx.x + 1] = -1;
@@ -586,7 +592,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
                                  csr->get_edges(hop_vertex), 
                                  n_edges, new_neighbor_idx,
                                  rand_num_gen, 
-                                 samplers[root_partition->get_vertex_idx(root_vertex)]);
+                                 samplers[root_partition->get_vertex_idx(root_vertex)],
+                                 &curand_states[thread_idx]);
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
   #ifndef NDEBUG
             if (!(addr < num_neighbors)) {
@@ -682,13 +689,15 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
                                  shmem_csr_edges, 
                                  n_edges, new_neighbor_idx,
                                  rand_num_gen,
-                                 samplers[root_partition->get_vertex_idx(root_vertex)]);
+                                 samplers[root_partition->get_vertex_idx(root_vertex)],
+                                 &curand_states[thread_idx]);
 #else
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
                                  n_edges, new_neighbor_idx,
                                  rand_num_gen,
-                                 samplers[root_partition->get_vertex_idx(root_vertex)]);
+                                 samplers[root_partition->get_vertex_idx(root_vertex)],
+                                 &curand_states[thread_idx]);
 #endif
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
 #ifndef NDEBUG
@@ -1110,13 +1119,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
   float* device_rand = GPUUtils::gen_rand_on_gpu(sum_all_roots);
   
-  if (hop == 1) {
-    std::cout << "size of curandstate " << root_partition.get_n_vertices()*sizeof(curandState) << std::endl;
-    CHK_CU(cudaMalloc(&device_curand_states, root_partition.get_n_vertices()*sizeof(curandState)));
-    int num_blocks = thread_block_size(root_partition.get_n_vertices(), 256);
-    init_curand_states<<<num_blocks, 256>>> (device_curand_states, root_partition.get_n_vertices());
-    CHK_CU(cudaDeviceSynchronize());
-  }
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   
   //for (VertexID src_idx = src_idx_for_grid_level_exec; 
@@ -1165,7 +1167,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
   double t2 = convertTimeValToDouble(getTimeOfDay ());
 
-  cudaFree(device_rand);
+  CHK_CU(cudaFree(device_rand));
   CHK_CU(cudaFree(device_thread_to_src_map));
   CHK_CU(cudaFree(device_thread_to_roots_map));
   CHK_CU(cudaFree(device_grid_level_thread_to_linear_thread));
@@ -1299,6 +1301,17 @@ int main (int argc, char* argv[])
                            root_partition.get_n_vertices(), device_samplers);
 
       num_neighbors_iter = 0;
+      //TODO: Amortize this cost
+      //TODO: support partitions here
+      //TODO: Use curandMakeMTGP32KernelState to decrease memory usage. (https://docs.nvidia.com/cuda/curand/device-api-overview.html#bit-generation-1)
+      if (hop > 0) {
+        CHK_CU(cudaMalloc(&device_curand_states, neighbors_sizes[hop-1]*sizeof(curandState)*num_edges_to_warp_size(sampleSize(hop), SourceVertexExec_t::BlockLevel)));
+      } else {
+        CHK_CU(cudaMalloc(&device_curand_states, root_partition.get_n_vertices()*sizeof(curandState)*32));
+      }
+      int num_blocks = thread_block_size(root_partition.get_n_vertices()*sampleSize(hop), 256);
+      init_curand_states<<<num_blocks, 256>>> (device_curand_states, root_partition.get_n_vertices()*sampleSize(hop));
+      CHK_CU(cudaDeviceSynchronize());
       
       CHK_CU (cudaMemset (device_max_neighbors_iter, 0, 
                           sizeof (unsigned long long)));
@@ -1408,11 +1421,7 @@ int main (int argc, char* argv[])
 
       RandNumGen* rand_num_gen = nullptr;
       RandNumGen* device_rand_num_gen = nullptr;
-      if (has_random and sampleSize(hop) != ALL_NEIGHBORS) {
-        rand_num_gen = new RandNumGen(sampleSize(hop)*10, root_partition.get_n_vertices()*2);
-        rand_num_gen->gen_random_nums();
-        device_rand_num_gen = rand_num_gen->to_device();
-      }
+
       for (auto part_idx : src_partitions) {
         VertexID* device_src_to_roots;
         EdgePos_t* device_src_to_root_positions;
@@ -1469,6 +1478,8 @@ int main (int argc, char* argv[])
 #else
                 size_t sh_mem =  0;
 #endif
+                std::cout << "Curand is not supported in case of device level execution" << std::endl;
+                assert (false);
                 run_hop_parallel_single_step_device_level <<<N_BLOCKS, N_THREADS,sh_mem,streams[src_vertex_id]>>> (N_HOPS, hop, device_csr,  
                                                                       device_root_partition,
                                                                       device_additions,
@@ -1480,7 +1491,8 @@ int main (int argc, char* argv[])
                                                                       device_src_to_root_positions,
                                                                       src_vertex_id,
                                                                       device_rand_num_gen,
-                                                                      device_samplers
+                                                                      device_samplers,
+                                                                      device_curand_states
       #ifndef NDEBUG
                                                                       , device_profile_branch_1,
                                                                       device_profile_branch_2
@@ -1529,7 +1541,8 @@ int main (int argc, char* argv[])
               source_vertex_idx,
               device_src_vertices_for_device_level,
               device_rand_num_gen,
-              device_samplers
+              device_samplers,
+              device_curand_states
     #ifndef NDEBUG
               , device_profile_branch_1,
               device_profile_branch_2
@@ -1580,7 +1593,8 @@ int main (int argc, char* argv[])
             source_vertex_idx,
             nullptr,
             device_rand_num_gen,
-            device_samplers
+            device_samplers,
+            device_curand_states
   #ifndef NDEBUG
             , device_profile_branch_1,
             device_profile_branch_2
@@ -1633,7 +1647,7 @@ int main (int argc, char* argv[])
                           partition_map_vertex_to_additions_size (root_partition)*sizeof (EdgePos_t), 
                           cudaMemcpyDeviceToHost));
       }
-
+      CHK_CU(cudaFree(device_curand_states));
       //Remove Duplicates
 #ifdef REMOVE_DUPLICATES_ON_GPU
       const VertexID block_level_duplicate_find_max_val = 1024;
