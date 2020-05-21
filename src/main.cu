@@ -21,6 +21,7 @@
 #include <cub/device/device_select.cuh>
 #include <cub/cub.cuh>
 #include <curand.h>
+#include <curand_kernel.h>
 #include <cuda.h>
 
 //TODO-List:
@@ -130,8 +131,9 @@ VertexID next_random_walk(int k, const VertexID src, const VertexID root,
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
               const EdgePos_t neighbrId,
               const RandNumGen* rand_num_gen,
-              Sampler& sampler,
-              CSRPartition* graph)
+              Sampler* sampler,
+              CSRPartition* graph,
+              curandState* state)
 {
   Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
   VertexID last_stop;
@@ -154,12 +156,12 @@ VertexID next_random_walk(int k, const VertexID src, const VertexID root,
   //   return src_edges[id];
   // }
   
-  const EdgePos_t width = graph->get_n_edges_for_vertex(src);
+  const EdgePos_t width = num_edges;
   const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
   int ii = 0;
   while (true) {
-    const EdgePos_t x = rand_num_gen->rand_neighbor(thread_idx, ii++, width);
-    const float y = rand_num_gen->rand_float(thread_idx, ii++)*height;
+    const EdgePos_t x = RandNumGen::rand_int(state,width);//rand_num_gen->rand_neighbor(thread_idx, ii++, width);
+    const float y = curand_uniform(state)*height;//rand_num_gen->rand_float(thread_idx, ii++)*height;
     const VertexID neighbr = src_edges[x];
     const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
                       (graph->has_edge_logn(last_stop, neighbr) ? 1 :
@@ -995,6 +997,8 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
   std::cout << "Time taken to create hop vertex data: " << (t2 - t1) << " secs " << std::endl;
 }
 
+static curandState* device_curand_states = nullptr;
+
 double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                  CSRPartition& src_partition, CSRPartition& root_partition,
                  EdgePos_t& linear_threads_executed,
@@ -1105,6 +1109,14 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                     cudaMemcpyHostToDevice));
 
   float* device_rand = GPUUtils::gen_rand_on_gpu(sum_all_roots);
+  
+  if (hop == 1) {
+    std::cout << "size of curandstate " << root_partition.get_n_vertices()*sizeof(curandState) << std::endl;
+    CHK_CU(cudaMalloc(&device_curand_states, root_partition.get_n_vertices()*sizeof(curandState)));
+    int num_blocks = thread_block_size(root_partition.get_n_vertices(), 256);
+    init_curand_states<<<num_blocks, 256>>> (device_curand_states, root_partition.get_n_vertices());
+    CHK_CU(cudaDeviceSynchronize());
+  }
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   
   //for (VertexID src_idx = src_idx_for_grid_level_exec; 
@@ -1144,7 +1156,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       block_level_roots,
       linear_threads_executed,
       device_rand_num_gen,
-      device_samplers
+      device_samplers,
+      device_curand_states
     );
   }
 

@@ -111,7 +111,12 @@ public:
   double rand_double(const VertexID vertex, const int n) const {
     return (double)rand_float(vertex, n);
   }
-
+  __device__ __forceinline__
+  static EdgePos_t rand_int(curandState* state, int n) {
+    float ff = curand_uniform(state)*n;
+    EdgePos_t id =  min ((EdgePos_t)ff, n-1);//(EdgePos_t)round(ff) - 1.0f;
+    return id;
+  }
   __device__ __forceinline__
   EdgePos_t rand_neighbor(const VertexID vertex, const int n, 
                                  const EdgePos_t num_edges) const {

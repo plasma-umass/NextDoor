@@ -93,8 +93,8 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
     const CSR::Edge* src_edges = csr->get_edges(hop_vertex);
 #endif
     VertexID edge = next_random_walk(hop, hop_vertex, root_vertex, src_edges, 
-    n_edges, (EdgePos_t)0, rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
-    csr);
+    n_edges, (EdgePos_t)0, rand_num_gen, &samplers[root_partition->get_vertex_idx(root_vertex)],
+    csr, nullptr);
     embeddings_additions[linear_threads_executed+global_thread_id] = edge;
   }
 }
@@ -123,8 +123,8 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (
   if (n_edges > 0) {
     previous_stage_filled_range[root_vertex] = 1;
     VertexID edge = next_random_walk(hop, root_vertex, root_vertex, csr->get_edges(root_vertex), 
-    n_edges, (EdgePos_t)0, rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
-  csr);
+    n_edges, (EdgePos_t)0, rand_num_gen, &samplers[root_partition->get_vertex_idx(root_vertex)],
+  csr, nullptr);
     embeddings_additions[root_vertex] = edge;
   }
 }
@@ -140,7 +140,8 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
               EdgePos_t total_roots,
               EdgePos_t linear_threads_executed,
               const RandNumGen* rand_num_gen,
-              Sampler* samplers)
+              Sampler* samplers,
+              curandState* curand_states)
 {
   int linear_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
   VertexID hop_vertex;
@@ -168,8 +169,15 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   if (n_edges > 0) {
     previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
     VertexID edge = next_random_walk(hop, hop_vertex, root_vertex, csr->get_edges(hop_vertex), 
-    n_edges, (EdgePos_t)0, sh_rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
-    csr);
+    n_edges, (EdgePos_t)0, sh_rand_num_gen, &samplers[root_partition->get_vertex_idx(root_vertex)],
+    csr, &curand_states[linear_thread_id]);
     embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
   }
+}
+
+__global__ void init_curand_states(curandState* states, size_t num_states)
+{
+  int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
+  if (thread_id < num_states)
+    curand_init(1234, 0, 0, &states[thread_id]);
 }
