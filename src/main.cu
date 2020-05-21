@@ -878,6 +878,35 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
                                     std::vector<EdgePos_t>& per_part_src_to_roots_size, 
                                     std::vector<EdgePos_t*>& per_part_src_to_root_positions)
 {
+  if (false) {
+    VertexID* d_neighbors, *d_neighbors_2;
+    CHK_CU(cudaMalloc(&d_neighbors, neighbors_sizes[hop-1]));
+    CHK_CU(cudaMemcpy(d_neighbors, neighbors[hop-1], neighbors_sizes[hop-1], cudaMemcpyHostToDevice));
+    CHK_CU(cudaMalloc(&d_neighbors_2, neighbors_sizes[hop-1]));
+
+    int* d_in = d_neighbors;
+    int* d_out = d_neighbors_2;
+    int* d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    
+    //Check if the space runs out.
+    //TODO: Use DoubleBuffer version that requires O(P) space.
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, 
+                                    d_in, d_out, neighbors_sizes[hop-1]/4);
+    
+    CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+    double t1 = convertTimeValToDouble(getTimeOfDay());
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, 
+                                    d_in, d_out, neighbors_sizes[hop-1]/4);
+    //--------------------------------------------------------------------------
+    // device result check
+    CHK_CU(cudaDeviceSynchronize());
+    double t2 = convertTimeValToDouble(getTimeOfDay());
+    std::cout << "Time " << (t2-t1) << " secs " << std::endl;
+
+  }
+
   const CSRPartition& root_partition = csr_partitions[root_part_idx];
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   host_src_to_roots.clear ();
