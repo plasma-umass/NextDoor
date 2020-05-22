@@ -20,7 +20,8 @@ bool check_result(CSR* csr, EdgePos_t*** final_map_vertex_to_additions, EdgePos_
   //Now check the correctness
   for (VertexID vertex : csr->iterate_vertices()) {
     std::vector<VertexID> prev_hop_neighbors;
-    for (int hop = 1; hop < size(); hop++) {      
+
+    for (int hop = 1; hop < size(); hop++) {
       EdgePos_t start_idx = final_map_vertex_to_additions[hop][0][2*vertex];
       EdgePos_t n_additions = additions_sizes[hop][2*vertex + 1];
 

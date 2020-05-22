@@ -115,6 +115,9 @@ public:
   __host__ __device__
   EdgePos_t get_end_edge_idx (VertexID vertex_id) const 
   {
+    if (!(vertex_id < n_vertices && 0 <= vertex_id)) {
+      printf ("vertex_id %d\n", vertex_id);
+    }
     assert (vertex_id < n_vertices && 0 <= vertex_id);
     return vertices[vertex_id].end_edge_id;
   }

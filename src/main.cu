@@ -1198,24 +1198,25 @@ int main (int argc, char* argv[])
 
 
   char* graph_file = argv[1];
-  FILE* fp = fopen (graph_file, "r");
-  if (fp == nullptr) {
-    std::cout << "File '" << graph_file << "' not found" << std::endl;
-    return 1;
-  }
+  // FILE* fp = fopen (graph_file, "r");
+  // if (fp == nullptr) {
+  //   std::cout << "File '" << graph_file << "' not found" << std::endl;
+  //   return 1;
+  // }
 
   Graph graph;
   //TODO: instead of FILE pointer, file path should be passed
   if (strcmp(argv[2], "adj-list") == 0) {
-    graph.load_from_adjacency_list(fp);
+    // graph.load_from_adjacency_list(fp);
   } else if (strcmp(argv[2], "edge-list") == 0) {
-    graph.load_from_edge_list(fp, true);
+    graph.load_from_edge_list_binary(graph_file, true);
+    // graph.load_from_edge_list(fp, true);
   } else {
     printf("Incorrect graph file type '%s'\n", argv[2]);
     abort();
   }
 
-  fclose (fp);
+  // fclose (fp);
   //graph.print (std::cout);
   std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
   std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
