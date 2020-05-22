@@ -5,6 +5,7 @@
 #include <math.h>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 
 #ifndef __GRAPH_HPP__
 #define __GRAPH_HPP__
@@ -77,8 +78,80 @@ public:
   Graph (std::vector<Vertex> _vertices, int _n_edges) :
     vertices (_vertices), n_edges(_n_edges)
   {}
+  Graph ()
+  {}
+  enum {
+    EdgeList,
+    AdjacenyList,
+  } GraphFileType;
+  
+  void load_from_edge_list (FILE* fp, bool weighted) 
+  {
+    assert (fp != nullptr);
+    n_edges = 0;
+    std::map<size_t, std::vector<std::pair<size_t, float>>> vertex_to_edges;
+    size_t max_vertex = 0;
+    while (true) {
+      char line[LINE_SIZE];
 
-  Graph (FILE* fp) 
+      if (fgets (line, LINE_SIZE, fp) == nullptr) {
+        break;
+      }
+
+      size_t src, dst;
+      float weight;
+
+      size_t bytes_read = sscanf (line, "%ld %ld %f\n", &src, &dst, &weight);
+      assert (bytes_read > 0);
+
+      if (vertex_to_edges.find(src) == vertex_to_edges.end()) {
+        vertex_to_edges[src] = std::vector<std::pair<size_t, float>>();
+      }
+
+      vertex_to_edges[src].push_back(std::make_pair(dst, weight));
+      if (vertex_to_edges.find(dst) == vertex_to_edges.end()) {
+        vertex_to_edges.emplace(dst, std::vector<std::pair<size_t, float>>());
+      }
+
+      max_vertex = max(src, max_vertex);
+      max_vertex = max(dst, max_vertex);
+      n_edges++;
+    }    
+
+    for (size_t i = 0; i <= max_vertex; i++) {
+      //std::cout << "running for " << i << std::endl;
+      if (vertex_to_edges.find(i) == vertex_to_edges.end()) {
+        vertex_to_edges.emplace(i, std::vector<std::pair<size_t, float>>());
+      }
+    }
+        
+    for (auto it : vertex_to_edges) {
+      size_t v = it.first;
+      vertices.push_back(Vertex(v, v));
+      for (auto e : it.second) {
+        size_t dst = std::get<0>(e);
+        if (!(dst < vertex_to_edges.size())) {
+          printf (" dst %d vertex_to_edges.size() %d\n", dst, vertex_to_edges.size());
+        }
+        //assert (dst < vertex_to_edges.size());
+        vertices[vertices.size()-1].add_edge(dst);
+      }
+    }
+    //Sort vertices by number of edges
+    // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
+
+    // std::unordered_map <int, int> previous_id_to_new_ids;
+    // for (int i = 0; i < vertices.size (); i++) {
+    //   previous_id_to_new_ids[vertices[i].get_id ()] = i;
+    //   vertices[i].set_id (i);
+    // }
+
+    // for (int i = 0; i < vertices.size (); i++) {
+    //   vertices[i].update_edges (previous_id_to_new_ids);
+    // }
+  }
+
+  void load_from_adjacency_list (FILE* fp) 
   {
     assert (fp != nullptr);
     n_edges = 0;

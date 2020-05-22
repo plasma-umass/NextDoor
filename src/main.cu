@@ -112,8 +112,8 @@ VertexID next(int k, const VertexID src, const VertexID root,
               Sampler& sampler,
               curandState* state)
 {
-  EdgePos_t id =  RandNumGen::rand_int(state,num_edges);
-  return src_edges[id];
+  //EdgePos_t id = RandNumGen::rand_int(state,num_edges);
+  return src_edges[neighbrId%num_edges];
 }
 
 //Node2Vec
@@ -1182,8 +1182,8 @@ int main (int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
 
-  if (argc < 2) {
-    std::cout << "Arguments: graph-file" << std::endl;
+  if (argc < 3) {
+    std::cout << "Arguments: graph-file, adj-list/edge-list" << std::endl;
     return -1;
   }
 
@@ -1198,13 +1198,22 @@ int main (int argc, char* argv[])
 
 
   char* graph_file = argv[1];
-  FILE* fp = fopen (graph_file, "r+");
+  FILE* fp = fopen (graph_file, "r");
   if (fp == nullptr) {
     std::cout << "File '" << graph_file << "' not found" << std::endl;
     return 1;
   }
 
-  Graph graph (fp);
+  Graph graph;
+  //TODO: instead of FILE pointer, file path should be passed
+  if (strcmp(argv[2], "adj-list") == 0) {
+    graph.load_from_adjacency_list(fp);
+  } else if (strcmp(argv[2], "edge-list") == 0) {
+    graph.load_from_edge_list(fp, true);
+  } else {
+    printf("Incorrect graph file type '%s'\n", argv[2]);
+    abort();
+  }
 
   fclose (fp);
   //graph.print (std::cout);
@@ -1301,17 +1310,6 @@ int main (int argc, char* argv[])
                            root_partition.get_n_vertices(), device_samplers);
 
       num_neighbors_iter = 0;
-      //TODO: Amortize this cost
-      //TODO: support partitions here
-      //TODO: Use curandMakeMTGP32KernelState to decrease memory usage. (https://docs.nvidia.com/cuda/curand/device-api-overview.html#bit-generation-1)
-      if (hop > 0) {
-        CHK_CU(cudaMalloc(&device_curand_states, neighbors_sizes[hop-1]*sizeof(curandState)*num_edges_to_warp_size(sampleSize(hop), SourceVertexExec_t::BlockLevel)));
-      } else {
-        CHK_CU(cudaMalloc(&device_curand_states, root_partition.get_n_vertices()*sizeof(curandState)*32));
-      }
-      int num_blocks = thread_block_size(root_partition.get_n_vertices()*sampleSize(hop), 256);
-      init_curand_states<<<num_blocks, 256>>> (device_curand_states, root_partition.get_n_vertices()*sampleSize(hop));
-      CHK_CU(cudaDeviceSynchronize());
       
       CHK_CU (cudaMemset (device_max_neighbors_iter, 0, 
                           sizeof (unsigned long long)));
@@ -1430,6 +1428,25 @@ int main (int argc, char* argv[])
         copy_partition_to_gpu (src_partition, device_csr, device_vertex_array, device_edge_array);
         CHK_CU (cudaMemcpy (source_vertex_idx, &src_partition.first_vertex_id,  sizeof (VertexID), cudaMemcpyHostToDevice));
         //TODO: Free source_vertex_idx
+#ifdef RANDOM_WALK
+        size_t num_curands;
+        if (hop > 0) {
+          num_curands = src_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
+          printf ("curand size %ld\n", num_curands);
+          CHK_CU(cudaMalloc(&device_curand_states, num_curands*sizeof(curandState)));
+        } else {
+          num_curands = root_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
+          CHK_CU(cudaMalloc(&device_curand_states, num_curands*sizeof(curandState)));
+        }
+
+        //TODO: Amortize this cost
+        //TODO: support partitions here
+        //TODO: Use curandMakeMTGP32KernelState to decrease memory usage. (https://docs.nvidia.com/cuda/curand/device-api-overview.html#bit-generation-1)
+        // std::cout << "sizeof(curandMakeMTGP32KernelState) = "<<sizeof(curandMakeMTGP32KernelState) << std::endl;
+        size_t num_blocks = thread_block_size(num_curands, 256UL);
+        init_curand_states<<<num_blocks, 256>>> (device_curand_states, num_curands);
+        CHK_CU(cudaDeviceSynchronize());
+#endif
 
         if (hop > 0) {
           CHK_CU (cudaMalloc (&device_src_to_roots, 
@@ -1621,6 +1638,7 @@ int main (int argc, char* argv[])
         CHK_CU (cudaFree ((void*)device_vertex_array));
         CHK_CU (cudaFree ((void*)device_edge_array));
         CHK_CU (cudaFree ((void*)device_csr));
+        CHK_CU (cudaFree(device_curand_states));
       }
 
   #ifdef PROFILE
@@ -1647,7 +1665,7 @@ int main (int argc, char* argv[])
                           partition_map_vertex_to_additions_size (root_partition)*sizeof (EdgePos_t), 
                           cudaMemcpyDeviceToHost));
       }
-      CHK_CU(cudaFree(device_curand_states));
+      
       //Remove Duplicates
 #ifdef REMOVE_DUPLICATES_ON_GPU
       const VertexID block_level_duplicate_find_max_val = 1024;
