@@ -169,8 +169,11 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   if (n_edges > 0) {
     previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
     VertexID edge = next_random_walk(hop, hop_vertex, root_vertex, csr->get_edges(hop_vertex), 
-    n_edges, (EdgePos_t)0, sh_rand_num_gen, &samplers[root_partition->get_vertex_idx(root_vertex)],
-    csr, &curand_states[linear_thread_id]);
+    n_edges, 
+    (EdgePos_t)0, sh_rand_num_gen, 
+    &samplers[root_partition->get_vertex_idx(root_vertex)],
+    csr, 
+    &curand_states[linear_thread_id]);
     embeddings_additions[linear_thread_id+linear_threads_executed] = edge;
   }
 }

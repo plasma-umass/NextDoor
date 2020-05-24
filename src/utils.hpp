@@ -314,7 +314,7 @@ namespace LoadBalancing {
     num_subwarp_threads = 0;
     for (VertexID src : src_range) {
       EdgePos_t num_roots = src_num_roots[2*src + 1];
-      if (is_grid_level_assignment(num_roots)) {
+      if (EnableLoadBalancing and is_grid_level_assignment(num_roots)) {
         num_grid_threads += num_roots;
         num_grid_threads = utils::next_multiple(num_grid_threads, 
                                                 GridLevelTBSize);

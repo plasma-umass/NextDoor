@@ -110,6 +110,8 @@ public:
     std::cout << "graph string loaded " << std::endl;
 
     n_edges = 0;
+
+    // std::unordered_set<int> vertices_with_degree;
     
     for (size_t s = 0; s < fsize; s += 12) {
       int src = *(int*)(string+s);
@@ -121,14 +123,15 @@ public:
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
         // }
-        std::cout << "src " << src << std::endl;
       }
+
       if (dst > vertices.size()) {
         vertices.resize(dst+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
         // }
       }
+
       vertices[src].add_edge(dst);
 
       n_edges++;
@@ -136,58 +139,11 @@ public:
 
     delete string;
     fclose(fp);
-    // assert (fp != nullptr);
-    // n_edges = 0;
-    // fseek(fp, 0, SEEK_END);
-    // long fsize = ftell(fp);
-    // fseek(fp, 0, SEEK_SET);  /* same as rewind(f); */
-    // size_t max_vertex = 0;
-    // std::vector<std::tuple<size_t, size_t>> all_edges;
 
-    // for (int part = 0; part < 1; part++) {
-    //   char *string = new char[fsize/1 + 1];
-    //   fread(string, 1, fsize/1, fp);
-    //   std::cout << "graph string loaded " << std::endl;
-    //   std::string ss = std::string(string)+"\n";
-    //   std::stringstream iss(ss);
-    //   delete string;
-
-    //   while (true) {
-    //     size_t src = 0, dst = 0;
-    //     float weight = 0;
-    //     if (iss.eof())
-    //       break;
-        
-    //     iss >> src;
-    //     if (iss.eof())
-    //       break;
-    //     iss >> dst;
-    //     if (iss.eof())
-    //       break;
-    //     iss >> weight;
-    //     if (weight == 0.0) {
-    //       break;
-    //     }
-    //     //all_edges.push_back (std::make_tuple(src, dst));
-
-    //     if (src > vertices.size()) {
-    //       vertices.resize(src+1);
-    //       // for (size_t i = sz; i <= src; i++) {
-    //       //   vertices.push_back(Vertex(i, i));
-    //       // }
-    //     }
-    //     if (dst > vertices.size()) {
-    //       vertices.resize(dst+1);
-    //       // for (size_t i = sz; i <= src; i++) {
-    //       //   vertices.push_back(Vertex(i, i));
-    //       // }
-    //     }
-    //     vertices[src].add_edge(dst);
-    //     max_vertex = max(src, max_vertex);
-    //     max_vertex = max(dst, max_vertex);
-    //     n_edges++;
-    //   }
+    for (auto v : vertices) {
+      v.sort_edges();
     }
+  }
 
   
   void load_from_edge_list_txt (FILE* fp, bool weighted) 

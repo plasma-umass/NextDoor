@@ -122,7 +122,7 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
     std::cout << __LINE__ <<": "<<sum_partition_edges  << " " << csr->get_n_edges() << std::endl;
   }
   assert (sum_partition_edges == csr->get_n_edges());
-
+ 
   VertexID sum_vertices = 0;
   for (int p = 0; p < (int)csr_partitions.size (); p++) {
     if (p > 0 && csr_partitions[p].first_vertex_id == csr_partitions[p-1].last_vertex_id) {

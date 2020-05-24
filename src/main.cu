@@ -78,9 +78,9 @@ using namespace GPUUtils;
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
 //#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-// #define RANDOM_WALK
+#define RANDOM_WALK
 
-//#define GRAPH_PARTITION_SIZE (1*1024*1024) //24 KB is the size of each partition of graph
+//#define GRAPH_PARTITION_SIZE (1UL*1024UL*1024UL*1024UL) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
 #define CHECK_RESULT
 
@@ -98,11 +98,11 @@ const int N_THREADS = 256;
 const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
-const bool has_random = true;
-__host__ __device__ int size() {return 2;}
+// const bool has_random = true;
+// __host__ __device__ int size() {return 2;}
 
-__host__ __device__ 
-int sampleSize(int k) {return ((k == 0) ? 10 : 5);}
+// __host__ __device__ 
+// int sampleSize(int k) {return ((k == 0) ? 10 : 5);}
 
 __device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
@@ -117,12 +117,13 @@ VertexID next(int k, const VertexID src, const VertexID root,
 }
 
 //Node2Vec
-// const bool has_random = true;
+#if 1
+const bool has_random = true;
 
-// __host__ __device__ int size() {return 10;}
+__host__ __device__ int size() {return 10;}
 
-// __host__ __device__ 
-// int sampleSize(int k) {return 1;}
+__host__ __device__ 
+int sampleSize(int k) {return 1;}
 
 #define node2vec_p 2.0f
 #define node2vec_q 0.5f
@@ -174,6 +175,7 @@ VertexID next_random_walk(int k, const VertexID src, const VertexID root,
   }
 }
 
+#else
 //Uniform Random Walk
 // const bool has_random = true;
 // __host__ __device__ int size() {return 10;}
@@ -184,16 +186,16 @@ VertexID next_random_walk(int k, const VertexID src, const VertexID root,
 // VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
 //               const CSR::Edge* src_edges, const EdgePos_t num_edges,
 //               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
-//               Sampler& sampler,
-//               CSRPartition* graph)
+//               Sampler* sampler, CSRPartition* graph, curandState* state)
 // {
-//   int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-//   EdgePos_t id = rand_num_gen->rand_neighbor(thread_id, 0, num_edges);
+//   EdgePos_t id = RandNumGen::rand_int(state, num_edges);
+
 //   return src_edges[id];
 // }
+#endif
 
-// __host__ __device__ 
-// bool distinct(VertexID root) {return false;}
+__host__ __device__ 
+bool distinct(VertexID root) {return false;}
 
 #include "check_results.cu"
 
@@ -1038,6 +1040,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
   std::vector<std::pair<EdgePos_t, VertexID>> src_and_num_roots;
   for (VertexID src = 0; src < src_partition.get_n_vertices(); src++) {
+   
     if (per_part_src_to_roots_positions[part_idx][2*src + 1] != 0) 
       src_and_num_roots.push_back(std::make_pair(per_part_src_to_roots_positions[part_idx][2*src + 1], src));
   }
@@ -1060,7 +1063,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
     std::pair<EdgePos_t, VertexID> src_num_root = src_and_num_roots[pair_src_num_roots_idx];
     VertexID src = std::get<1>(src_num_root);
     EdgePos_t num_roots = std::get<0> (src_num_root);
-    if (LoadBalancing::is_grid_level_assignment(num_roots)) {
+    if (LoadBalancing::EnableLoadBalancing &&
+        LoadBalancing::is_grid_level_assignment(num_roots)) {
       break;
     }
 
@@ -1073,6 +1077,9 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       VertexID root = per_part_src_to_roots[part_idx][root_idx];
       thread_to_roots[linear_thread] = root;
       root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
+      if (hop == 5 and src == 43204 and root == 3366) {
+        printf ("thread_to_src[linear_thread] %d thread_to_roots[linear_thread] %d linear_thread %d\n", thread_to_src[linear_thread], thread_to_roots[linear_thread], linear_thread);
+      }
       linear_thread += 1;
     }
   }
@@ -1146,7 +1153,8 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
   );
   }
   if (num_block_threads + num_subwarp_threads > 0) {
-    EdgePos_t block_level_roots = num_block_threads + num_subwarp_threads;
+    EdgePos_t block_level_roots = (LoadBalancing::EnableLoadBalancing) ? num_block_threads + num_subwarp_threads : linear_thread;
+    std::cout << "block_level_roots " << block_level_roots << std::endl;
     int N_BLOCKS = thread_block_size(block_level_roots, (EdgePos_t)N_THREADS);
     run_hop_parallel_single_step_block_level_fixed_size<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_src_csr,  
       device_root_partition,
@@ -1183,7 +1191,7 @@ int main (int argc, char* argv[])
   std::vector<Vertex> vertices;
 
   if (argc < 3) {
-    std::cout << "Arguments: graph-file, adj-list/edge-list" << std::endl;
+    std::cout << "Arguments: graph-file, adj-list/edge-list, binary" << std::endl;
     return -1;
   }
 
@@ -1198,25 +1206,34 @@ int main (int argc, char* argv[])
 
 
   char* graph_file = argv[1];
-  // FILE* fp = fopen (graph_file, "r");
-  // if (fp == nullptr) {
-  //   std::cout << "File '" << graph_file << "' not found" << std::endl;
-  //   return 1;
-  // }
 
   Graph graph;
   //TODO: instead of FILE pointer, file path should be passed
   if (strcmp(argv[2], "adj-list") == 0) {
-    // graph.load_from_adjacency_list(fp);
+    FILE* fp = fopen (graph_file, "r");
+    if (fp == nullptr) {
+      std::cout << "File '" << graph_file << "' not found" << std::endl;
+      return 1;
+    }
+    graph.load_from_adjacency_list(fp);
+    fclose (fp);
   } else if (strcmp(argv[2], "edge-list") == 0) {
-    graph.load_from_edge_list_binary(graph_file, true);
-    // graph.load_from_edge_list(fp, true);
+    if (strcmp(argv[3], "binary") == 0) {
+      graph.load_from_edge_list_binary(graph_file, true);
+    } else {
+      FILE* fp = fopen (graph_file, "r");
+      if (fp == nullptr) {
+        std::cout << "File '" << graph_file << "' not found" << std::endl;
+        return 1;
+      }
+      graph.load_from_edge_list_txt(fp, true);
+      fclose (fp);
+    }
   } else {
     printf("Incorrect graph file type '%s'\n", argv[2]);
     abort();
   }
 
-  // fclose (fp);
   //graph.print (std::cout);
   std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
   std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
@@ -1305,10 +1322,13 @@ int main (int argc, char* argv[])
       CSRPartition* device_root_partition;
       Sampler* device_samplers;
 
+
       copy_partition_to_gpu (root_partition, device_root_partition, device_vertex_array, device_edge_array);
       Sampler* root_samplers = (Sampler*)(((char*)samplers) + samplers[0].size()*root_partition.first_vertex_id);
+#ifdef RANDOM_WALK
       copy_sampler_to_gpu (root_samplers, 
                            root_partition.get_n_vertices(), device_samplers);
+#endif
 
       num_neighbors_iter = 0;
       
@@ -1433,7 +1453,6 @@ int main (int argc, char* argv[])
         size_t num_curands;
         if (hop > 0) {
           num_curands = src_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
-          printf ("curand size %ld\n", num_curands);
           CHK_CU(cudaMalloc(&device_curand_states, num_curands*sizeof(curandState)));
         } else {
           num_curands = root_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
@@ -1464,6 +1483,7 @@ int main (int argc, char* argv[])
                               cudaMemcpyHostToDevice));
         }
 
+        std::cout << "src_partition.get_n_vertices() = " << src_partition.get_n_vertices() << std::endl;
         char* src_vertices_for_device_level = new char[src_partition.get_n_vertices()]; //TODO: Allocate in PageLocked Memory
         //TODO: Make this a bitset
         char* device_src_vertices_for_device_level;
@@ -1869,7 +1889,9 @@ int main (int argc, char* argv[])
       double cpu_part_t2 = convertTimeValToDouble(getTimeOfDay());
 
       std::cout << "CPU Part " << (cpu_part_t2 - cpu_part_t1) << std::endl;
+#ifdef RANDOM_WALK
       copy_back_sampler_from_gpu (root_samplers, root_partition.get_n_vertices(), device_samplers);
+#endif
     }
 
     num_neighbors = num_neighbors * sizeof (VertexID);
