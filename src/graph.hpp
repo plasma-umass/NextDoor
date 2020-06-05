@@ -237,31 +237,36 @@ public:
     // }
   }
 
-  void load_from_adjacency_list (FILE* fp) 
+  void load_from_adjacency_list(char* graph_file)
   {
-    assert (fp != nullptr);
+    FILE* fp = fopen(graph_file, "r");
+    if (fp == nullptr) {
+      std::cout << "File '" << graph_file << "' cannot open" << std::endl;
+      exit(EXIT_SUCCESS);
+    }
+
     n_edges = 0;
 
     while (true) {
       char line[LINE_SIZE];
 
-      if (fgets (line, LINE_SIZE, fp) == nullptr) {
+      if (fgets(line, LINE_SIZE, fp) == nullptr) {
         break;
       }
 
       int id, label;
       int bytes_read;
 
-      bytes_read = sscanf (line, "%d %d", &id, &label);
-      Vertex vertex (id, label);
-      char* _line = line + chars_in_int (id) + chars_in_int (label);
+      bytes_read = sscanf(line, "%d %d", &id, &label);
+      Vertex vertex(id, label);
+      char* _line = line + chars_in_int(id) + chars_in_int(label);
       do {
         int num;
 
-        bytes_read = sscanf (_line, "%d", &num);
+        bytes_read = sscanf(_line, "%d", &num);
         if (bytes_read > 0) {
-          vertex.add_edge (num);
-          _line += chars_in_int (num);
+          vertex.add_edge(num);
+          _line += chars_in_int(num);
           n_edges++;
         }
 
@@ -269,8 +274,8 @@ public:
 
       //vertex.remove_duplicate_edges ();
 
-      vertex.sort_edges ();
-      vertices.push_back (vertex);
+      vertex.sort_edges();
+      vertices.push_back(vertex);
     }
 
     //Sort vertices by number of edges
@@ -285,6 +290,8 @@ public:
     // for (int i = 0; i < vertices.size (); i++) {
     //   vertices[i].update_edges (previous_id_to_new_ids);
     // }
+
+    fclose(fp);
   }
 
   const std::vector<Vertex>& get_vertices () {return vertices;}

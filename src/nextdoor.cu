@@ -1354,7 +1354,6 @@ int main(int argc, char* argv[])
   global_mem_ptr = (char*)_ptr;
 #endif
 
-
   char* graph_file = opt->getValue('g');
   char* graph_type = opt->getValue('t');
   char* graph_format = opt->getValue('f');
@@ -1365,20 +1364,21 @@ int main(int argc, char* argv[])
     delete opt;
     return 0;
   }
+
+  //Load Graph
   Graph graph;
-  //TODO: instead of FILE pointer, file path should be passed
   if (strcmp(graph_type, "adj-list") == 0) {
-    FILE* fp = fopen (graph_file, "r");
-    if (fp == nullptr) {
-      std::cout << "File '" << graph_file << "' not found" << std::endl;
-      return 1;
+    if (strcmp(graph_format, "text") == 0)   
+      graph.load_from_adjacency_list(graph_file);
+    else {
+      printf ("graph_format '%s' not supported for graph_type '%s'\n", 
+              graph_format, graph_type);
+      return -1;
     }
-    graph.load_from_adjacency_list(fp);
-    fclose (fp);
   } else if (strcmp(graph_type, "edge-list") == 0) {
     if (strcmp(graph_format, "binary") == 0) {
       graph.load_from_edge_list_binary(graph_file, true);
-    } else {
+    } else if (strcmp(graph_format, "text") == 0) {
       FILE* fp = fopen (graph_file, "r");
       if (fp == nullptr) {
         std::cout << "File '" << graph_file << "' not found" << std::endl;
@@ -1386,22 +1386,22 @@ int main(int argc, char* argv[])
       }
       graph.load_from_edge_list_txt(fp, true);
       fclose (fp);
+    } else {
+      printf ("graph_format '%s' not supported for graph_type '%s'\n", 
+              graph_format, graph_type);
+      return -1;
     }
   } else {
     printf("Incorrect graph file type '%s'\n", argv[2]);
     abort();
   }
 
-  //graph.print (std::cout);
-  std::cout << "n_edges "<<graph.get_n_edges () <<std::endl;
-  std::cout << "vertices " << graph.get_vertices ().size () << std::endl; 
+  std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
+      graph.get_vertices ().size () << " vertices " std::endl; 
 
+  //Convert graph to CSR format
   CSR* csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
-  std::cout << "sizeof(CSR)"<< sizeof(CSR)<<std::endl;
   csr_from_graph (csr, graph);
-  std::cout << "csr.n_vertices " << csr->get_n_vertices () << std::endl;
-
-  std::cout << "Pinned Memory Allocated" << std::endl;
 
   double total_stream_time = 0;
 
