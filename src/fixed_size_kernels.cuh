@@ -129,6 +129,13 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (
   }
 }
 
+//To store in block. After sorting the (transit, sample) pairs
+//assign each thread of the kernel to one pair.
+//Collect all the transit vertices
+//Load their edges in the shared memory and create a graph.
+//Assign a mapping of each thread id to the (start edge, n_edges) pair
+//Do this only for >= 1024 source vertices 
+//Or you can execute many cuda kernels for these vertices after transferring data back or using cuda dynamic parallelism
 __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS, int hop, 
               CSRPartition* csr,
               CSRPartition* root_partition,
@@ -162,8 +169,6 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   VertexID root_vertex = thread_to_roots[linear_thread_id];
   EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, root_vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  
   //assert (map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)] == vertex);
-  EdgePos_t start_edge_idx;
-  start_edge_idx = csr->get_start_edge_idx (hop_vertex);
   EdgePos_t n_edges = csr->get_n_edges_for_vertex(hop_vertex);
   
   if (n_edges > 0) {

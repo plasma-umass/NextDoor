@@ -77,15 +77,16 @@ using namespace GPUUtils;
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
-//#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
-#define RANDOM_WALK
+#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
-//#define GRAPH_PARTITION_SIZE (1UL*1024UL*1024UL*1024UL) //24 KB is the size of each partition of graph
+#define GRAPH_PARTITION_SIZE (2UL*1024*1024UL*1024UL) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-#define CHECK_RESULT
+//#define CHECK_RESULT
 
 //For mico, 512 works best
 const int N_THREADS = 256;
+
+//TODO try for larger random walks to improve results
 
 #define MAX_LOAD_PER_TB (N_THREADS)
 #define MAX_VERTICES_PER_TB 1
@@ -98,11 +99,12 @@ const int N_THREADS = 256;
 const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
-// const bool has_random = true;
-// __host__ __device__ int size() {return 2;}
+const bool has_random = true;
+__host__ __device__ int size() {return 2;}
 
-// __host__ __device__ 
-// int sampleSize(int k) {return ((k == 0) ? 10 : 5);}
+__host__ __device__ 
+int sampleSize(int k) {return 1;
+  return ((k == 0) ? 10 : 5);}
 
 __device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
@@ -116,82 +118,144 @@ VertexID next(int k, const VertexID src, const VertexID root,
   return src_edges[neighbrId%num_edges];
 }
 
+// #define Node2Vec
+//#define UniformRandWalk
 //Node2Vec
-#if 1
-const bool has_random = true;
+#ifdef Node2Vec
+  #define RANDOM_WALK
 
-__host__ __device__ int size() {return 10;}
+  const bool has_random = true;
 
-__host__ __device__ 
-int sampleSize(int k) {return 1;}
+  __host__ __device__ int size() {return 10;}
 
-#define node2vec_p 2.0f
-#define node2vec_q 0.5f
+  __host__ __device__ 
+  int sampleSize(int k) {return 1;}
 
-__device__ inline
-VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
-              const CSR::Edge* src_edges, const EdgePos_t num_edges,
-              const EdgePos_t neighbrId,
-              const RandNumGen* rand_num_gen,
-              Sampler* sampler,
-              CSRPartition* graph,
-              curandState* state)
-{
-  Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
-  VertexID last_stop;
-  if (k == 1) {
-    last_stop = root;
-  } else {
-    last_stop = node2vec_sampler.get_last_stop();
-  }
+  #define node2vec_p 2.0f
+  #define node2vec_q 0.5f
 
-#ifndef NDEBUG
-   if (!(last_stop >= 0 && last_stop < graph->get_n_vertices()))
-    printf ("last_stop %d graph->get_n_vertices() %d for root %d sampler 0x%p\n", last_stop, graph->get_n_vertices(), root, sampler);
-   assert (last_stop >= 0 && last_stop < graph->get_n_vertices());
-#endif
-  int thread_idx = threadIdx.x + blockIdx.x*blockDim.x;
-  // if (graph->get_n_edges_for_vertex(src) <= 2) 
-  // {
-  //   node2vec_sampler.set_last_stop(src);
-  //   EdgePos_t id = rand_num_gen->rand_neighbor(thread_idx, 0, num_edges);
-  //   return src_edges[id];
-  // }
-  
-  const EdgePos_t width = num_edges;
-  const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
-  int ii = 0;
-  while (true) {
-    const EdgePos_t x = RandNumGen::rand_int(state,width);//rand_num_gen->rand_neighbor(thread_idx, ii++, width);
-    const float y = curand_uniform(state)*height;//rand_num_gen->rand_float(thread_idx, ii++)*height;
-    const VertexID neighbr = src_edges[x];
-    const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
-                      (graph->has_edge_logn(last_stop, neighbr) ? 1 :
-                      1/node2vec_q);
-    if (round(y) <= round(neighbrH)) {
-      node2vec_sampler.set_last_stop(src);
-      return neighbr;
+  __device__ inline
+  VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
+                const CSR::Edge* src_edges, const EdgePos_t num_edges,
+                const EdgePos_t neighbrId,
+                const RandNumGen* rand_num_gen,
+                Sampler* sampler,
+                CSRPartition* graph,
+                curandState* state)
+  {
+    Node2VecSampler& node2vec_sampler = (Node2VecSampler&)sampler;
+    VertexID last_stop;
+    if (k == 1) {
+      last_stop = root;
+    } else {
+      last_stop = node2vec_sampler.get_last_stop();
+    }
+
+  #ifndef NDEBUG
+    if (!(last_stop >= 0 && last_stop < graph->get_n_vertices()))
+      printf ("last_stop %d graph->get_n_vertices() %d for root %d sampler 0x%p\n", last_stop, graph->get_n_vertices(), root, sampler);
+    assert (last_stop >= 0 && last_stop < graph->get_n_vertices());
+  #endif
+    int thread_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    // if (graph->get_n_edges_for_vertex(src) <= 2) 
+    // {
+    //   node2vec_sampler.set_last_stop(src);
+    //   EdgePos_t id = rand_num_gen->rand_neighbor(thread_idx, 0, num_edges);
+    //   return src_edges[id];
+    // }
+    
+    const EdgePos_t width = num_edges;
+    const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
+    int ii = 0;
+    while (true) {
+      const EdgePos_t x = RandNumGen::rand_int(state,width);//rand_num_gen->rand_neighbor(thread_idx, ii++, width);
+      const float y = curand_uniform(state)*height;//rand_num_gen->rand_float(thread_idx, ii++)*height;
+      const VertexID neighbr = src_edges[x];
+      const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
+                        (graph->has_edge_logn(last_stop, neighbr) ? 1 :
+                        1/node2vec_q);
+      if (round(y) <= round(neighbrH)) {
+        node2vec_sampler.set_last_stop(src);
+        return neighbr;
+      }
     }
   }
-}
 
-#else
-//Uniform Random Walk
-// const bool has_random = true;
-// __host__ __device__ int size() {return 10;}
-// __host__ __device__ 
-// int sampleSize(int k) {return 1;}
+#else 
+  #if 0
+  // const bool has_random = true;
 
-// __device__ inline
-// VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
-//               const CSR::Edge* src_edges, const EdgePos_t num_edges,
-//               const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
-//               Sampler* sampler, CSRPartition* graph, curandState* state)
-// {
-//   EdgePos_t id = RandNumGen::rand_int(state, num_edges);
+  // __host__ __device__ int size() {return 10;}
 
-//   return src_edges[id];
-// }
+  // __host__ __device__ 
+  // int sampleSize(int k) {return 1;}
+
+  // #define node2vec_p 2.0f
+  // #define node2vec_q 0.5f
+
+  // __device__ inline
+  // VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
+  //               const CSR::Edge* src_edges, const EdgePos_t num_edges,
+  //               const EdgePos_t neighbrId,
+  //               const RandNumGen* rand_num_gen,
+  //               Sampler* sampler,
+  //               CSRPartition* graph,
+  //               curandState* state)
+  // {
+  //   // if (graph->get_n_edges_for_vertex(src) <= 2) 
+  //   // {
+  //   //   node2vec_sampler.set_last_stop(src);
+  //   //   EdgePos_t id = rand_num_gen->rand_neighbor(thread_idx, 0, num_edges);
+  //   //   return src_edges[id];
+  //   // }
+    
+  //   const EdgePos_t width = num_edges;
+  //   const float height = max();
+  //   int ii = 0;
+  //   while (true) {
+  //     const EdgePos_t x = RandNumGen::rand_int(state,width);
+  //     const float y = curand_uniform(state)*height;
+  //     const VertexID neighbr = src_edges[x];
+  //     const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
+  //                       (graph->has_edge_logn(last_stop, neighbr) ? 1 :
+  //                       1/node2vec_q);
+  //     if (round(y) <= round(neighbrH)) {
+  //       node2vec_sampler.set_last_stop(src);
+  //       return neighbr;
+  //     }
+  //   }
+  // }
+  #endif
+  #ifdef UniformRandWalk
+    #define RANDOM_WALK
+
+    //Uniform Random Walk
+    const bool has_random = true;
+    __host__ __device__ int size() {return 10;}
+    __host__ __device__ 
+    int sampleSize(int k) {return 1;}
+
+    __device__ inline
+    VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
+                  const CSR::Edge* src_edges, const EdgePos_t num_edges,
+                  const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
+                  Sampler* sampler, CSRPartition* graph, curandState* state)
+    {
+      EdgePos_t id = RandNumGen::rand_int(state, num_edges);
+
+      return src_edges[id];
+    }
+  #else
+    __device__ inline
+    VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
+                  const CSR::Edge* src_edges, const EdgePos_t num_edges,
+                  const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
+                  Sampler* sampler, CSRPartition* graph, curandState* state)
+    {
+      assert (false);
+     return -1;
+    }
+  #endif
 #endif
 
 __host__ __device__ 
@@ -404,15 +468,15 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
         do {
           vertices[n_vertex_load] = ::atomicAdd(source_vertex_idx, 1);
         } while(vertices[n_vertex_load] <= csr->last_vertex_id and 
-                device_src_vertices_for_device_level[vertices[n_vertex_load]] == 1);
+                device_src_vertices_for_device_level[vertices[n_vertex_load] - csr->first_vertex_id] == 1);
 
         if (vertices[n_vertex_load] > csr->last_vertex_id || 
-            device_src_vertices_for_device_level[vertices[n_vertex_load]] == 1) {
+            device_src_vertices_for_device_level[vertices[n_vertex_load] - csr->first_vertex_id] == 1) {
           break;
         }
         
         assert (vertices[n_vertex_load] >= 0 && vertices[n_vertex_load] <= csr->last_vertex_id && 
-                device_src_vertices_for_device_level[vertices[n_vertex_load]] == 0);
+                device_src_vertices_for_device_level[vertices[n_vertex_load] - csr->first_vertex_id] == 0);
         EdgePos_t start_edge_idx = csr->get_start_edge_idx (vertices[n_vertex_load]);
         const EdgePos_t end_edge_idx = csr->get_end_edge_idx (vertices[n_vertex_load]);
         const EdgePos_t n_edges = (end_edge_idx != -1) ? (end_edge_idx - start_edge_idx + 1) : 0;
@@ -892,32 +956,54 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
                                     std::vector<EdgePos_t*>& per_part_src_to_root_positions)
 {
   if (false) {
-    VertexID* d_neighbors, *d_neighbors_2;
+    int32_t* d_neighbors, *d_neighbors_2, *d_values_in, *d_values_out;
     CHK_CU(cudaMalloc(&d_neighbors, neighbors_sizes[hop-1]));
     CHK_CU(cudaMemcpy(d_neighbors, neighbors[hop-1], neighbors_sizes[hop-1], cudaMemcpyHostToDevice));
+    CHK_CU(cudaMalloc(&d_values_in, neighbors_sizes[hop-1]));
+    CHK_CU(cudaMemset(d_values_in, 0, neighbors_sizes[hop-1]));
+    CHK_CU(cudaMalloc(&d_values_out, neighbors_sizes[hop-1]));
     CHK_CU(cudaMalloc(&d_neighbors_2, neighbors_sizes[hop-1]));
+    // CHK_CU(cudaMalloc(&d_values_out, neighbors_sizes[hop-1]));
+    //You can save the cost of storing new pair of (root,transit). just store the transit at grid_threadIdx and the existing root vertex is already at that grid_threadIdx. Now the map still exists. Hence, we do not need to store root vertex to new position.
+    //We can decrease this overhead of sorting by avoiding those transit vertices in the data that are invalid by may be setting the new transit vertex to 1 << (msb + 1) (or to (1 << (msb+1)) - 1)but use msb in the sort only? Something like  this might work.
+//Use this paper to decrease this overhead: https://dl.acm.org/doi/10.1145/3035918.3064043
+//Or in CUB you can have (source, root) 64-bit pairs and treat these lowest bytes as 32-bit integer?
+    int msb = 0;
+    int r = csr->get_n_vertices();
+    while (msb <= sizeof(VertexID)*8) {
+      if (r == 0) 
+        break;
+      r = r >> 1;
+      msb++;
+    }
 
-    int* d_in = d_neighbors;
-    int* d_out = d_neighbors_2;
-    int* d_temp_storage = nullptr;
+    std::cout << "msb is " << msb << std::endl;
+    int32_t* d_in = d_neighbors;
+    int32_t* d_out = d_neighbors_2;
+    int32_t* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
     
     //Check if the space runs out.
     //TODO: Use DoubleBuffer version that requires O(P) space.
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, 
-                                    d_in, d_out, neighbors_sizes[hop-1]/4);
+    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                    d_in, d_out, d_values_in, d_values_out, neighbors_sizes[hop-1]/4,0,msb);
     
     CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
 
     double t1 = convertTimeValToDouble(getTimeOfDay());
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, 
-                                    d_in, d_out, neighbors_sizes[hop-1]/4);
+    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                    d_in, d_out,  d_values_in, d_values_out, neighbors_sizes[hop-1]/4,0,msb);
     //--------------------------------------------------------------------------
     // device result check
     CHK_CU(cudaDeviceSynchronize());
     double t2 = convertTimeValToDouble(getTimeOfDay());
-    std::cout << "Time " << (t2-t1) << " secs " << std::endl;
+    std::cout << "Time " << (t2-t1) << " secs " << " num_neighbors = " << (neighbors_sizes[hop-1]/4) << std::endl;
 
+    CHK_CU(cudaFree(d_in));
+    CHK_CU(cudaFree(d_out));
+    CHK_CU(cudaFree(d_values_out));
+    CHK_CU(cudaFree(d_values_in));
+    CHK_CU(cudaFree(d_temp_storage));
   }
 
   const CSRPartition& root_partition = csr_partitions[root_part_idx];
@@ -949,6 +1035,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
 //   for (auto pair: vertices_sorted_by_start) {
 //     VertexID v = std::get<1>(pair);
 // #else
+  std::vector<VertexID> __new_neighbors;
   for (VertexID v = first_vertex_id; v <= root_partition.last_vertex_id; v++) {
 // #endif
 
@@ -957,6 +1044,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
 
     for (EdgePos_t i = 0; i < end; i++) {
       EdgePos_t src = neighbors[hop-1][start + i];
+      __new_neighbors.push_back(src);
       int part = get_partition_idx_of_vertex (csr_partitions, src);
       //TODO: Create a bitvector instead a set of source partitions?
       src_partitions.insert (part);
@@ -968,7 +1056,57 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
   }
 
   double _t2 = convertTimeValToDouble(getTimeOfDay());
-  std::cout << "Core Time " << (_t2 - _t1) << " secs" << std::endl;
+  std::cout << "Core Time " << (_t2 - _t1) << " secs __new_neighbors = " << __new_neighbors.size() << std::endl;
+  if (true) {
+    int32_t* d_neighbors, *d_neighbors_2, *d_values_in, *d_values_out;
+    CHK_CU(cudaMalloc(&d_neighbors, __new_neighbors.size()*sizeof(VertexID)));
+    CHK_CU(cudaMemcpy(d_neighbors,  __new_neighbors.data(),  sizeof_vector( __new_neighbors), cudaMemcpyHostToDevice));
+    CHK_CU(cudaMalloc(&d_values_in, sizeof_vector( __new_neighbors)));
+    CHK_CU(cudaMemset(d_values_in, 0, sizeof_vector( __new_neighbors)));
+    CHK_CU(cudaMalloc(&d_values_out, sizeof_vector( __new_neighbors)));
+    CHK_CU(cudaMalloc(&d_neighbors_2, sizeof_vector( __new_neighbors)));
+    // CHK_CU(cudaMalloc(&d_values_out, neighbors_sizes[hop-1]));
+    //You can save the cost of storing new pair of (root,transit). just store the transit at grid_threadIdx and the existing root vertex is already at that grid_threadIdx. Now the map still exists. Hence, we do not need to store root vertex to new position.
+    //We can decrease this overhead of sorting by avoiding those transit vertices in the data that are invalid by may be setting the new transit vertex to 1 << (msb + 1) (or to (1 << (msb+1)) - 1)but use msb in the sort only? Something like  this might work.
+//Use this paper to decrease this overhead: https://dl.acm.org/doi/10.1145/3035918.3064043
+//Or in CUB you can have (source, root) 64-bit pairs and treat these lowest bytes as 32-bit integer?
+    int msb = 0;
+    int r = csr->get_n_vertices();
+    while (msb <= sizeof(VertexID)*8) {
+      if (r == 0) 
+        break;
+      r = r >> 1;
+      msb++;
+    }
+
+    std::cout << "msb is " << msb << std::endl;
+    int32_t* d_in = d_neighbors;
+    int32_t* d_out = d_neighbors_2;
+    int32_t* d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    
+    //Check if the space runs out.
+    //TODO: Use DoubleBuffer version that requires O(P) space.
+    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                    d_in, d_out, d_values_in, d_values_out, __new_neighbors.size(),0,msb);
+    
+    CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+    double t1 = convertTimeValToDouble(getTimeOfDay());
+    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                    d_in, d_out,  d_values_in, d_values_out, __new_neighbors.size(),0,msb);
+    //--------------------------------------------------------------------------
+    // device result check
+    CHK_CU(cudaDeviceSynchronize());
+    double t2 = convertTimeValToDouble(getTimeOfDay());
+    std::cout << "Time " << (t2-t1) << " secs " << " num_neighbors = " << (__new_neighbors.size()) << std::endl;
+
+    CHK_CU(cudaFree(d_in));
+    CHK_CU(cudaFree(d_out));
+    CHK_CU(cudaFree(d_values_out));
+    CHK_CU(cudaFree(d_values_in));
+    CHK_CU(cudaFree(d_temp_storage));
+  }
   per_part_src_to_roots = std::vector<VertexID*> (csr_partitions.size (), nullptr);
   per_part_src_to_root_positions = std::vector<EdgePos_t*> (csr_partitions.size (), nullptr);
   per_part_src_to_roots_size = std::vector<EdgePos_t> (csr_partitions.size(), 0);
@@ -1068,7 +1206,7 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       break;
     }
 
-    if (src_partition.get_n_edges_for_vertex(src) == 0)
+    if (src_partition.get_n_edges_for_vertex(src+ src_partition.first_vertex_id) == 0)
       continue;
 
     for (int _idx = 0; _idx < num_roots; _idx++) {
@@ -1077,9 +1215,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       VertexID root = per_part_src_to_roots[part_idx][root_idx];
       thread_to_roots[linear_thread] = root;
       root_to_linear_thread[root_part_idx][root_partition.get_vertex_idx(root)] = linear_thread+linear_threads_executed;
-      if (hop == 5 and src == 43204 and root == 3366) {
-        printf ("thread_to_src[linear_thread] %d thread_to_roots[linear_thread] %d linear_thread %d\n", thread_to_src[linear_thread], thread_to_roots[linear_thread], linear_thread);
-      }
       linear_thread += 1;
     }
   }
@@ -1123,8 +1258,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                     grid_level_thread_to_linear_thread_map.data(),
                     sizeof_vector(grid_level_thread_to_linear_thread_map),
                     cudaMemcpyHostToDevice));
-
-  float* device_rand = GPUUtils::gen_rand_on_gpu(sum_all_roots);
   
   double t1 = convertTimeValToDouble(getTimeOfDay ());
   
@@ -1175,7 +1308,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
   double t2 = convertTimeValToDouble(getTimeOfDay ());
 
-  CHK_CU(cudaFree(device_rand));
   CHK_CU(cudaFree(device_thread_to_src_map));
   CHK_CU(cudaFree(device_thread_to_roots_map));
   CHK_CU(cudaFree(device_grid_level_thread_to_linear_thread));
@@ -1294,7 +1426,8 @@ int main (int argc, char* argv[])
   for (int hop = 0; hop < N_HOPS; hop++) {
     unsigned long long int* device_profile_branch_1;
     unsigned long long int* device_profile_branch_2;
-    EdgePos_t* partition_map_vertex_to_additions[csr_partitions.size ()] = {nullptr};
+    EdgePos_t** partition_map_vertex_to_additions = new EdgePos_t*[csr_partitions.size ()];
+    memset(partition_map_vertex_to_additions, 0, csr_partitions.size()*sizeof(EdgePos_t));
     std::vector<EdgePos_t> per_part_num_neighbors = std::vector<EdgePos_t> (csr_partitions.size (), 0);
     EdgePos_t num_neighbors = 0;
     final_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
@@ -1321,7 +1454,6 @@ int main (int argc, char* argv[])
       CSRPartition& root_partition = csr_partitions[root_part_idx];
       CSRPartition* device_root_partition;
       Sampler* device_samplers;
-
 
       copy_partition_to_gpu (root_partition, device_root_partition, device_vertex_array, device_edge_array);
       Sampler* root_samplers = (Sampler*)(((char*)samplers) + samplers[0].size()*root_partition.first_vertex_id);
@@ -1414,8 +1546,8 @@ int main (int argc, char* argv[])
       for (VertexID i = 0; i < per_part_num_neighbors[root_part_idx]; i++)
         temp_array[i] = -1;
 
-      CHK_CU (cudaMemcpy (device_additions, temp_array, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyHostToDevice));
-      delete temp_array;
+      CHK_CU (cudaMemcpy (device_additions, temp_array, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyHostToDevice)); //Create a device kernel to memset.
+      delete[] temp_array;
 #endif
 
       if (hop > 0) {
@@ -1451,6 +1583,7 @@ int main (int argc, char* argv[])
         //TODO: Free source_vertex_idx
 #ifdef RANDOM_WALK
         size_t num_curands;
+  #ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
         if (hop > 0) {
           num_curands = src_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
           CHK_CU(cudaMalloc(&device_curand_states, num_curands*sizeof(curandState)));
@@ -1458,6 +1591,7 @@ int main (int argc, char* argv[])
           num_curands = root_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
           CHK_CU(cudaMalloc(&device_curand_states, num_curands*sizeof(curandState)));
         }
+  
 
         //TODO: Amortize this cost
         //TODO: support partitions here
@@ -1466,6 +1600,15 @@ int main (int argc, char* argv[])
         size_t num_blocks = thread_block_size(num_curands, 256UL);
         init_curand_states<<<num_blocks, 256>>> (device_curand_states, num_curands);
         CHK_CU(cudaDeviceSynchronize());
+  #else
+        if (hop == 0) {
+          num_curands = root_partition.get_n_vertices()*((sampleSize(hop) == 1) ? 1 : N_THREADS);
+          CHK_CU(cudaMalloc(&device_curand_states, num_curands*sizeof(curandState)));
+          size_t num_blocks = thread_block_size(num_curands, 256UL);
+          init_curand_states<<<num_blocks, 256>>> (device_curand_states, num_curands);
+          CHK_CU(cudaDeviceSynchronize());
+        }
+  #endif
 #endif
 
         if (hop > 0) {
@@ -1598,10 +1741,10 @@ int main (int argc, char* argv[])
 
             // CHK_CU(cudaStreamDestroy(streams[0]));
 
-            delete streams;
+            delete[] streams;
           }
 
-          delete src_vertices_for_device_level;
+          delete[] src_vertices_for_device_level;
           CHK_CU(cudaFree(device_src_vertices_for_device_level));
         }
 
@@ -1652,14 +1795,16 @@ int main (int argc, char* argv[])
           CHK_CU (cudaFree (device_src_to_root_positions));
 
 
-          delete per_part_src_to_roots[part_idx];
-          delete per_part_src_to_roots_positions[part_idx];
+          delete[] per_part_src_to_roots[part_idx];
+          delete[] per_part_src_to_roots_positions[part_idx];
         }
 
         CHK_CU (cudaFree ((void*)device_vertex_array));
         CHK_CU (cudaFree ((void*)device_edge_array));
         CHK_CU (cudaFree ((void*)device_csr));
+#ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
         CHK_CU (cudaFree(device_curand_states));
+#endif
       }
 
   #ifdef PROFILE
@@ -1670,9 +1815,11 @@ int main (int argc, char* argv[])
       std::cout << "profile_branch_1 " << profile_branch_1 << std::endl;
       std::cout << "profile_branch_2 " << profile_branch_2 << std::endl;
   #endif
-
-      if (rand_num_gen != nullptr)
+      
+      if (rand_num_gen != nullptr) {
+        rand_num_gen = nullptr;
         delete rand_num_gen;
+      }
       part_additions_sizes[root_part_idx] = new EdgePos_t[partition_additions_sizes_size];
       CHK_CU (cudaMemcpy (part_additions_sizes[root_part_idx], device_additions_sizes, 
         partition_additions_sizes_size, 
@@ -1783,6 +1930,7 @@ int main (int argc, char* argv[])
       std::cout << "Duplicates removed" << std::endl;
 #endif
       
+      std::cout << "per_part_num_neighbors [root_part_idx] = " << per_part_num_neighbors [root_part_idx] << " " << num_neighbors_iter << std::endl;
       part_neighbors[root_part_idx] = new VertexID[per_part_num_neighbors [root_part_idx]];
       CHK_CU (cudaMemcpy (part_neighbors[root_part_idx], device_additions, 
                           per_part_num_neighbors [root_part_idx]*sizeof (VertexID), 
@@ -1799,8 +1947,9 @@ int main (int argc, char* argv[])
                 partition_map_vertex_to_additions[root_part_idx],
                 partition_map_vertex_to_additions_size(root_partition)*sizeof (EdgePos_t));
         final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size(root_partition);
-        per_part_num_neighbors [root_part_idx] = num_neighbors_iter;
       } else if (vertex_with_prev_partition != -1) {
+        printf ("should not be called\n");
+        assert (false);
         //TODO remove the cases of vertex_with_prev_partition
         VertexID common_vertex = vertex_with_prev_partition;
         EdgePos_t common_vertex_new_additions = partition_map_vertex_to_additions[root_part_idx][2*(common_vertex - common_vertex) + 1];
@@ -1835,15 +1984,13 @@ int main (int argc, char* argv[])
         }
         
         final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size(root_partition) - 2;
-
-        per_part_num_neighbors [root_part_idx] = num_neighbors_iter;
       } else {
         EdgePos_t start_pos = 0;
         for (VertexID v : csr_partitions[root_part_idx - 1].get_vertex_range()) {
           EdgePos_t pos = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
           start_pos = max (start_pos, pos);
         }
-        assert (start_pos <= num_neighbors);
+        assert (start_pos <= num_neighbors && start_pos > 0);
         for (VertexID v = 0; v < csr_partitions[root_part_idx].get_n_vertices (); v++) {
           VertexID vertex = csr_partitions[root_part_idx].first_vertex_id + v;
           final_map_vertex_to_additions[hop][0][2*vertex] = start_pos + partition_map_vertex_to_additions[root_part_idx][2*v];
@@ -1929,6 +2076,7 @@ int main (int argc, char* argv[])
 #endif
 #ifdef RANDOM_WALK
         if (hop == 0) {
+          assert (part_end >= part_start);
           memcpy (&neighbors[hop][final_idx], &part_neighbors[part][part_start], (part_end-part_start)*sizeof(VertexID));
         } else {
           if (part_end > part_start) {
@@ -1947,8 +2095,8 @@ int main (int argc, char* argv[])
 #endif
       }
 
-      delete part_neighbors[part];
-      delete part_additions_sizes[part];
+      delete[] part_neighbors[part];
+      delete[] part_additions_sizes[part];
       PinnedMemory::pinned_memory_heap.free(partition_map_vertex_to_additions[part]);
     }
 

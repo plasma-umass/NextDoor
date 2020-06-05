@@ -4,7 +4,7 @@ void create_csr_partitions (CSR* csr, std::vector<CSRPartition>& csr_partitions,
 
   //Create Partitions.
   VertexID u = 0;
-  EdgePos_t partition_edge_start_idx = 0;
+  EdgePos_t partition_edge_start_idx = 0; 
 
   while (u < csr->get_n_vertices ()) {
     EdgePos_t n_edges = 0;

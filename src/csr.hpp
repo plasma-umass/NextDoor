@@ -176,8 +176,8 @@ public:
 class CSRPartition
 {
 public:
-  const int first_vertex_id;
-  const int last_vertex_id;
+  const VertexID first_vertex_id;
+  const VertexID last_vertex_id;
   const EdgePos_t first_edge_idx;
   const EdgePos_t last_edge_idx;
   const CSR::Vertex *vertices;
@@ -232,7 +232,7 @@ public:
 
   VertexRange iterate_num_vertices() const 
   {
-    return VertexRange(0, get_n_vertices());
+    return VertexRange(0, get_n_vertices()-1);
   }
 
   __host__ __device__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
@@ -249,7 +249,7 @@ public:
   __host__ __device__
   const CSR::Edge* get_edges (VertexID v) const 
   {
-    return &edges[get_start_edge_idx(v)];
+    return &edges[get_start_edge_idx(v) - first_edge_idx];
   }
 
   __host__ __device__
