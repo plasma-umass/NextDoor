@@ -112,7 +112,6 @@ __device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
               const CSR::Edge* src_edges, const EdgePos_t num_edges,
               const EdgePos_t neighbrId, 
-              const RandNumGen* rand_num_gen,
               Sampler& sampler,
               curandState* state)
 {
@@ -140,7 +139,6 @@ VertexID next(int k, const VertexID src, const VertexID root,
   VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
                 const CSR::Edge* src_edges, const EdgePos_t num_edges,
                 const EdgePos_t neighbrId,
-                const RandNumGen* rand_num_gen,
                 Sampler* sampler,
                 CSRPartition* graph,
                 curandState* state)
@@ -158,20 +156,13 @@ VertexID next(int k, const VertexID src, const VertexID root,
       printf ("last_stop %d graph->get_n_vertices() %d for root %d sampler 0x%p\n", last_stop, graph->get_n_vertices(), root, sampler);
     assert (last_stop >= 0 && last_stop < graph->get_n_vertices());
   #endif
-    int thread_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    // if (graph->get_n_edges_for_vertex(src) <= 2) 
-    // {
-    //   node2vec_sampler.set_last_stop(src);
-    //   EdgePos_t id = rand_num_gen->rand_neighbor(thread_idx, 0, num_edges);
-    //   return src_edges[id];
-    // }
-    
+    int thread_idx = threadIdx.x + blockIdx.x*blockDim.x;    
     const EdgePos_t width = num_edges;
     const float height = max(1.0/node2vec_p, max(1.0f, 1.0/node2vec_q));
     int ii = 0;
     while (true) {
-      const EdgePos_t x = RandNumGen::rand_int(state,width);//rand_num_gen->rand_neighbor(thread_idx, ii++, width);
-      const float y = curand_uniform(state)*height;//rand_num_gen->rand_float(thread_idx, ii++)*height;
+      const EdgePos_t x = RandNumGen::rand_int(state,width);
+      const float y = curand_uniform(state)*height;
       const VertexID neighbr = src_edges[x];
       const float neighbrH = (last_stop == neighbr) ? 1/node2vec_p : 
                         (graph->has_edge_logn(last_stop, neighbr) ? 1 :
@@ -240,7 +231,7 @@ VertexID next(int k, const VertexID src, const VertexID root,
     __device__ inline
     VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
                   const CSR::Edge* src_edges, const EdgePos_t num_edges,
-                  const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
+                  const EdgePos_t neighbrId,
                   Sampler* sampler, CSRPartition* graph, curandState* state)
     {
       EdgePos_t id = RandNumGen::rand_int(state, num_edges);
@@ -251,7 +242,7 @@ VertexID next(int k, const VertexID src, const VertexID root,
     __device__ inline
     VertexID next_random_walk(int k, const VertexID src, const VertexID root, 
                   const CSR::Edge* src_edges, const EdgePos_t num_edges,
-                  const EdgePos_t neighbrId, const RandNumGen* rand_num_gen,
+                  const EdgePos_t neighbrId,
                   Sampler* sampler, CSRPartition* graph, curandState* state)
     {
       assert (false);
@@ -283,13 +274,8 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
               VertexID* hop_vertex_to_roots,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               const VertexID source_vertex,
-              const RandNumGen* rand_num_gen,
               Sampler* samplers,
-              curandState* curand_states
-#ifndef NDEBUG
-              , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
-#endif
-)
+              curandState* curand_states)
 {
 #ifdef USE_PARTITION_FOR_SHMEM
   extern __shared__ VertexID shmem_csr_edges[];
@@ -372,12 +358,12 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
 #ifdef USE_PARTITION_FOR_SHMEM
     VertexID edge = next(hop, hop_vertex, root_vertex, &shmem_csr_edges[0], 
                          n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
-                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
+                         samplers[root_partition->get_vertex_idx(root_vertex)],
                          &curand_states[root_vertex]);
 #else
     VertexID edge = next(hop, hop_vertex, root_vertex, csr->get_edges(source_vertex), 
                          n_edges, (EdgePos_t)(neighbor_idx + laneid%shfl_warp_size),
-                         rand_num_gen, samplers[root_partition->get_vertex_idx(root_vertex)],
+                         samplers[root_partition->get_vertex_idx(root_vertex)],
                          &curand_states[root_vertex]);
 #endif
     EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
@@ -417,13 +403,8 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
               EdgePos_t* map_vertex_to_hop_vertex_data,
               VertexID* source_vertex_idx,
               char* device_src_vertices_for_device_level,
-              RandNumGen* rand_num_gen,
               Sampler* samplers,
-              curandState* curand_states
-#ifndef NDEBUG
-              , unsigned long long int* profile_branch_1, unsigned long long int* profile_branch_2
-#endif
-)
+              curandState* curand_states)
 {
   __shared__ VertexID vertices[MAX_VERTICES_PER_TB];
   __shared__ VertexID n_vertex_load;
@@ -659,7 +640,6 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
                                  n_edges, new_neighbor_idx,
-                                 rand_num_gen, 
                                  samplers[root_partition->get_vertex_idx(root_vertex)],
                                  &curand_states[thread_idx]);
             EdgePos_t addr = start + _e + neighbor_idx + laneid%shfl_warp_size;
@@ -756,14 +736,12 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  shmem_csr_edges, 
                                  n_edges, new_neighbor_idx,
-                                 rand_num_gen,
                                  samplers[root_partition->get_vertex_idx(root_vertex)],
                                  &curand_states[thread_idx]);
 #else
             VertexID edge = next(hop, hop_vertex, root_vertex, 
                                  csr->get_edges(hop_vertex), 
                                  n_edges, new_neighbor_idx,
-                                 rand_num_gen,
                                  samplers[root_partition->get_vertex_idx(root_vertex)],
                                  &curand_states[thread_idx]);
 #endif
@@ -1159,7 +1137,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
                  std::vector<EdgePos_t>& per_part_num_neighbors,
                  CSRPartition* device_src_csr, CSRPartition* device_root_partition,
                  VertexID* device_additions, EdgePos_t* device_additions_sizes,
-                 const RandNumGen* device_rand_num_gen,
                  Sampler* device_samplers)
 {
   EdgePos_t sum_all_roots = 0;
@@ -1283,7 +1260,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       grid_level_start_linear_th_id,
       num_roots,
       linear_threads_executed,
-      device_rand_num_gen,
       device_samplers
   );
   }
@@ -1300,7 +1276,6 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
       device_thread_to_roots_map,
       block_level_roots,
       linear_threads_executed,
-      device_rand_num_gen,
       device_samplers,
       device_curand_states
     );
@@ -1397,7 +1372,7 @@ int main(int argc, char* argv[])
   }
 
   std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
-      graph.get_vertices ().size () << " vertices " std::endl; 
+      graph.get_vertices ().size () << " vertices " << std::endl; 
 
   //Convert graph to CSR format
   CSR* csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
@@ -1450,8 +1425,6 @@ int main(int argc, char* argv[])
 
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int hop = 0; hop < N_HOPS; hop++) {
-    unsigned long long int* device_profile_branch_1;
-    unsigned long long int* device_profile_branch_2;
     EdgePos_t** partition_map_vertex_to_additions = new EdgePos_t*[csr_partitions.size ()];
     memset(partition_map_vertex_to_additions, 0, csr_partitions.size()*sizeof(EdgePos_t));
     std::vector<EdgePos_t> per_part_num_neighbors = std::vector<EdgePos_t> (csr_partitions.size (), 0);
@@ -1555,12 +1528,7 @@ int main(int argc, char* argv[])
                           sizeof (CSRPartition), cudaMemcpyHostToDevice));
 
       const EdgePos_t partition_additions_sizes_size = partition_map_vertex_to_additions_size (root_partition)*sizeof(EdgePos_t);
-#ifdef PROFILE
-      CHK_CU (cudaMalloc (&device_profile_branch_1, sizeof (unsigned long)));
-      CHK_CU (cudaMalloc (&device_profile_branch_2, sizeof (unsigned long)));
-      CHK_CU (cudaMemset (device_profile_branch_1, 0, sizeof (unsigned long)));
-      CHK_CU (cudaMemset (device_profile_branch_2, 0, sizeof (unsigned long)));
-#endif 
+
       CHK_CU (cudaMalloc (&device_additions_sizes, 
                           partition_additions_sizes_size));
       CHK_CU (cudaMemset (device_additions_sizes, 0, 
@@ -1595,9 +1563,6 @@ int main(int argc, char* argv[])
         root_to_linear_thread[root_part_idx][v] = -1;
       }
 #endif
-
-      RandNumGen* rand_num_gen = nullptr;
-      RandNumGen* device_rand_num_gen = nullptr;
 
       for (auto part_idx : src_partitions) {
         VertexID* device_src_to_roots;
@@ -1697,13 +1662,8 @@ int main(int argc, char* argv[])
                                                                       device_src_to_roots,
                                                                       device_src_to_root_positions,
                                                                       src_vertex_id,
-                                                                      device_rand_num_gen,
                                                                       device_samplers,
                                                                       device_curand_states
-      #ifndef NDEBUG
-                                                                      , device_profile_branch_1,
-                                                                      device_profile_branch_2
-      #endif
                                                                     );
 
                 CHK_CU(cudaGetLastError());
@@ -1726,7 +1686,6 @@ int main(int argc, char* argv[])
                       per_part_num_neighbors,
                       device_csr, device_root_partition,
                       device_additions, device_additions_sizes,
-                      device_rand_num_gen,
                       device_samplers);
         std::cout<<"Block Level time " << t <<" secs" << std::endl;
         rand_walk_time += t;
@@ -1747,13 +1706,8 @@ int main(int argc, char* argv[])
               device_src_to_root_positions,
               source_vertex_idx,
               device_src_vertices_for_device_level,
-              device_rand_num_gen,
               device_samplers,
               device_curand_states
-    #ifndef NDEBUG
-              , device_profile_branch_1,
-              device_profile_branch_2
-    #endif
             );
             CHK_CU (cudaDeviceSynchronize ());
 #endif
@@ -1799,13 +1753,8 @@ int main(int argc, char* argv[])
             device_src_to_root_positions,
             source_vertex_idx,
             nullptr,
-            device_rand_num_gen,
             device_samplers,
             device_curand_states
-  #ifndef NDEBUG
-            , device_profile_branch_1,
-            device_profile_branch_2
-  #endif
           );
 
           CHK_CU(cudaGetLastError());
@@ -1832,20 +1781,7 @@ int main(int argc, char* argv[])
         CHK_CU (cudaFree(device_curand_states));
 #endif
       }
-
-  #ifdef PROFILE
-      unsigned long profile_branch_1, profile_branch_2;
-      CHK_CU (cudaMemcpy (&profile_branch_1, device_profile_branch_1, sizeof(profile_branch_1), cudaMemcpyDeviceToHost));
-      CHK_CU (cudaMemcpy (&profile_branch_2, device_profile_branch_2, sizeof(profile_branch_1), cudaMemcpyDeviceToHost));
-
-      std::cout << "profile_branch_1 " << profile_branch_1 << std::endl;
-      std::cout << "profile_branch_2 " << profile_branch_2 << std::endl;
-  #endif
       
-      if (rand_num_gen != nullptr) {
-        rand_num_gen = nullptr;
-        delete rand_num_gen;
-      }
       part_additions_sizes[root_part_idx] = new EdgePos_t[partition_additions_sizes_size];
       CHK_CU (cudaMemcpy (part_additions_sizes[root_part_idx], device_additions_sizes, 
         partition_additions_sizes_size, 
