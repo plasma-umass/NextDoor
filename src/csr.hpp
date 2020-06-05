@@ -6,6 +6,42 @@
 typedef int32_t VertexID;
 typedef int32_t EdgePos_t;
 
+class VertexRange 
+{
+  public:
+    class vertex_iterator 
+    {
+    private:
+      VertexID v;
+
+    public: 
+      vertex_iterator(VertexID _v) : v(_v) {}
+      vertex_iterator operator++() {v++; return *this;}
+      vertex_iterator operator--() {v--; return *this;}
+      VertexID operator*() {return v;}
+
+      bool operator==(const vertex_iterator& rhs) {return v == rhs.v;}
+      bool operator!=(const vertex_iterator& rhs) {return v != rhs.v;}
+    };
+
+  private:
+    VertexID first;
+    VertexID last;
+
+  public:
+    VertexRange(VertexID _first, VertexID _last) : first(_first), last(_last) {}
+
+    vertex_iterator begin() const
+    {
+      return vertex_iterator(first);
+    }
+
+    vertex_iterator end() const
+    {
+      return vertex_iterator(last+1);
+    }
+};
+
 class CSR
 {
 public:
@@ -39,8 +75,8 @@ public:
 
 typedef VertexID Edge;
 
-  CSR::Vertex vertices[N];
-  CSR::Edge edges[N_EDGES];
+  CSR::Vertex* vertices;
+  CSR::Edge* edges;
   int n_vertices;
   EdgePos_t n_edges;
 
@@ -49,13 +85,9 @@ public:
   {
     n_vertices = _n_vertices;
     n_edges = _n_edges;
-  }
-
-  __host__ __device__
-  CSR ()
-  {
-    n_vertices = N;
-    n_edges = N_EDGES;
+    //TODO: Can we allocate it in pinned memory?
+    edges = new CSR::Edge[n_edges];
+    vertices = new CSR::Vertex[n_vertices];
   }
 
   void print (std::ostream& os) const 
@@ -83,6 +115,9 @@ public:
   __host__ __device__
   EdgePos_t get_end_edge_idx (VertexID vertex_id) const 
   {
+    if (!(vertex_id < n_vertices && 0 <= vertex_id)) {
+      printf ("vertex_id %d\n", vertex_id);
+    }
     assert (vertex_id < n_vertices && 0 <= vertex_id);
     return vertices[vertex_id].end_edge_id;
   }
@@ -131,49 +166,18 @@ public:
 
   __host__ __device__
   int get_n_edges () const  {return n_edges;}
+
+  VertexRange iterate_vertices() const 
+  {
+    return VertexRange(0, get_n_vertices()-1);
+  }
 };
 
 class CSRPartition
 {
 public:
-  class VertexRange 
-  {
-    public:
-      class vertex_iterator 
-      {
-      private:
-        VertexID v;
-
-      public: 
-        vertex_iterator(VertexID _v) : v(_v) {}
-        vertex_iterator operator++() {v++; return *this;}
-        vertex_iterator operator--() {v--; return *this;}
-        VertexID operator*() {return v;}
-
-        bool operator==(const vertex_iterator& rhs) {return v == rhs.v;}
-        bool operator!=(const vertex_iterator& rhs) {return v != rhs.v;}
-      };
-
-    private:
-      VertexID first;
-      VertexID last;
-
-    public:
-      VertexRange(VertexID _first, VertexID _last) : first(_first), last(_last) {}
-
-      vertex_iterator begin() 
-      {
-        return vertex_iterator(first);
-      }
-
-      vertex_iterator end() 
-      {
-        return vertex_iterator(last+1);
-      }
-  };
-
-  const int first_vertex_id;
-  const int last_vertex_id;
+  const VertexID first_vertex_id;
+  const VertexID last_vertex_id;
   const EdgePos_t first_edge_idx;
   const EdgePos_t last_edge_idx;
   const CSR::Vertex *vertices;
@@ -225,6 +229,12 @@ public:
   {
     return VertexRange(first_vertex_id, last_vertex_id);
   }
+
+  VertexRange iterate_num_vertices() const 
+  {
+    return VertexRange(0, get_n_vertices()-1);
+  }
+
   __host__ __device__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
   {
     return (get_end_edge_idx (v) != -1) ? (get_end_edge_idx(v) - get_start_edge_idx (v) + 1) : 0;
@@ -237,9 +247,15 @@ public:
   }
 
   __host__ __device__
+  const CSR::Edge* get_edges (VertexID v) const 
+  {
+    return &edges[get_start_edge_idx(v) - first_edge_idx];
+  }
+
+  __host__ __device__
   const CSR::Vertex* get_vertices () const 
   {
-    return vertices;
+    return vertices; 
   }
 
   __host__ __device__
@@ -260,6 +276,43 @@ public:
     return v >= first_vertex_id && v <= last_vertex_id;
   }
 
+  __host__ __device__
+  bool has_edge (VertexID src, VertexID dst) const 
+  {
+    for (EdgePos_t i = get_start_edge_idx(src); i <= get_end_edge_idx(src); i++) {
+      if (get_edge(i) == dst) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  __host__ __device__
+  bool has_edge_logn (VertexID src, VertexID dst) const 
+  {
+    EdgePos_t l = get_start_edge_idx(src);
+    EdgePos_t r = get_end_edge_idx(src);
+    
+    while (l <= r) {
+      EdgePos_t m = l + (r-l)/2;
+      if (get_edge(m) == dst)
+        return true;
+      
+      if (get_edge(m) < dst)
+        l = m + 1;
+      else
+        r = m - 1;
+    }
+    return false;
+  }
+
+  __host__ __device__
+  VertexID get_vertex_idx(VertexID v) const
+  {
+    assert (has_vertex (v));
+    return v - first_vertex_id;
+  }
   // static struct HasVertex {
   //   bool operator () (CSRPartition& partition, const VertexID& v) const {
   //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);
@@ -285,7 +338,14 @@ void csr_from_graph (CSR* csr, Graph& graph)
       edge_iterator++;
     }
 
-    csr->vertices[i].set_end_edge_id (edge_iterator-1);
+    if (vertex.get_edges().size() == 0)
+      csr->vertices[i].set_end_edge_id (-1);
+    else
+      csr->vertices[i].set_end_edge_id (edge_iterator-1);
+
+    // if (i == 45241) {
+    //   printf("start %d end %d\n", csr->vertices[i].get_start_edge_idx(), csr->vertices[i].get_end_edge_idx());
+    // }
   }
 }
 

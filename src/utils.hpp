@@ -11,6 +11,7 @@
 #define __UTILS_HPP__
 
 namespace utils {
+
   __device__
   EdgePos_t atomicAdd (EdgePos_t* ptr, const EdgePos_t val)
   {
@@ -65,6 +66,269 @@ namespace utils {
     return false;
   }
 
-  #define CHK_CU(x) assert (utils::is_cuda_error (x) == false);
+  void get_num_roots_distribution(int* roots_distribution, int* ranges, int num_ranges,
+                                  EdgePos_t* src_num_roots, VertexRange src_range)
+  {
+    for (VertexID src : src_range) {
+      EdgePos_t num_roots = src_num_roots[2*src + 1];
+      if (num_roots <= ranges[0]) {
+      } else {
+        for (int i = 1; i < num_ranges - 1; i++) {
+          if (num_roots >= ranges[i-1] and num_roots < ranges[i]) {
+            roots_distribution[i] += num_roots;
+            break;
+          }
+        }
+        
+        if (num_roots >= ranges[num_ranges]) {
+          roots_distribution[num_ranges] += num_roots;
+        }
+      }
+    }
+  }
+
+  template<class T1, class T2>
+  inline T1 next_multiple(const T1 val, const T2 divisor)
+  {
+    if (val%divisor == 0) return val;
+    return (val/divisor + 1)*divisor;
+  }
+
+  template<class T>
+  inline T thread_block_size(const T total, const T tb_size)
+  {
+    if (total%tb_size == 0)
+      return total/tb_size;
+    return total/tb_size +1;
+  }
+
+  template<class T1, class T2, class T3>
+  inline void set_till_next_multiple(T1& val, const T2 divisor, T3* mem, 
+                                     const T3 init_val)
+  {
+    while (val%divisor != 0)
+      mem[val++] = -1;
+  }
+
+  template<class T>
+  class RangeIterator
+  {
+    public:
+      class iterator 
+      {
+      private:
+         T it;
+
+      public: 
+        iterator(T _it) : it(_it) {}
+        iterator operator++() {it++; return *this;}
+        iterator operator--() {it--; return *this;}
+        T operator*() {return it;}
+
+        bool operator==(const iterator& rhs) {return it == rhs.it;}
+        bool operator!=(const iterator& rhs) {return it != rhs.it;}
+      };
+
+    private:
+      T first;
+      T last;
+
+    public:
+      RangeIterator(T _first, T _last) : first(_first), last(_last) {}
+
+      iterator begin() const
+      {
+        return iterator(first);
+      }
+
+      iterator end() const
+      {
+        return iterator(last+1);
+      }
+  };
+
+  template<class T>
+  size_t sizeof_vector(const T& vec)
+  {
+    return vec.size()*sizeof(vec[0]);
+  }
+
+  #define CHK_CU(x) if (utils::is_cuda_error (x) == true) {abort();}
+
+#if 0
+  void bfs (CSR* csr) 
+  {
+    std::queue <VertexID> bfs_queue;
+    bool* seen = new bool [csr->get_n_vertices ()];
+    memset (seen, 0, csr->get_n_vertices ());
+
+    for (VertexID v = 0; v < csr->get_n_vertices (); v++) {
+      if (seen[v] == true) 
+        continue;
+        
+      bfs_queue.push (v);
+
+      while (!bfs_queue.empty ()) {
+        VertexID  v = bfs_queue.front ();
+        bfs_queue.pop ();
+        EdgePos_t s = csr->get_start_edge_idx (v);
+        const EdgePos_t e = csr->get_end_edge_idx (v);
+
+        while (s <= e) {
+          EdgePos_t u = csr->get_edges ()[s];
+          if (seen [u] == false) {
+            bfs_queue.push (u);
+            seen[u] = true;
+          }
+          s++;
+        }
+      }
+    }
+  }
+#endif
 }
+
+#define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
+  printf("Error at %s:%d\n",__FILE__,__LINE__);\
+  abort();}} while(0)
+
+namespace GPUUtils {
+  typedef uint32_t ShMemEdgePos_t;
+
+  enum SourceVertexExec_t
+  {
+    BlockLevel,
+    DeviceLevel
+  };
+
+  const uint FULL_MASK = 0xffffffff;
+
+  __device__ inline int get_warp_mask_and_participating_threads (int condition, int& participating_threads, int& first_active_thread)
+  {
+    uint warp_mask = __ballot_sync(FULL_MASK, condition);
+    first_active_thread = -1;
+    participating_threads = 0;
+    int qq = 0;
+    while (qq < 32) {
+      if ((warp_mask & (1U << qq)) == (1U << qq)) {
+        if (first_active_thread == -1) {
+          first_active_thread = qq;
+        }
+        participating_threads++;
+      }
+      qq++;
+    }
+
+    return warp_mask;
+  }
+
+  void copy_partition_to_gpu (CSRPartition& part, CSRPartition*& device_csr, CSR::Vertex*& device_vertex_array, CSR::Edge*& device_edge_array)
+  {
+    CHK_CU (cudaMalloc (&device_csr, sizeof(CSRPartition)));
+    CHK_CU (cudaMalloc (&device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
+    CHK_CU (cudaMalloc (&device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
+    CHK_CU (cudaMemcpy (device_vertex_array, part.vertices, sizeof (CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
+    CHK_CU (cudaMemcpy (device_edge_array, part.edges, sizeof (CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
+
+    CSRPartition device_csr_partition_value = CSRPartition (part.first_vertex_id,
+                                                            part.last_vertex_id, 
+                                                            part.first_edge_idx, part.last_edge_idx, 
+                                                            device_vertex_array, device_edge_array);
+    CHK_CU (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
+  }
+  
+  __host__ __device__ int num_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
+  {
+    //Different warp sizes gives different performance. 32 is worst. adapative is a litter better.
+    //Best is 4.
+  #ifdef RANDOM_WALK
+    return 1;
+  #else
+    if (src_vertex_exec == SourceVertexExec_t::BlockLevel) {
+      //TODO: setting this to 4,8,or 16 gives error.
+      if (n_edges < 4) 
+        return 2;
+      if (n_edges < 8)
+        return 4;
+      if (n_edges < 16)
+        return 8;
+      if (n_edges < 32)
+        return 16;
+      else
+        return 32;
+    } else {
+      return 32;
+    }
+  #endif
+  }
+
+  float* gen_rand_on_gpu(size_t n_rands)
+  {
+    float* device_rand;
+    cudaMalloc(&device_rand, n_rands*sizeof(float));
+    curandGenerator_t gen;
+    CURAND_CALL(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
+    CURAND_CALL(curandSetPseudoRandomGeneratorSeed(gen, clock()));
+    CURAND_CALL(curandGenerateUniform(gen, device_rand, n_rands));
+
+    return device_rand;
+  }
+}
+
+namespace LoadBalancing {
+  enum LoadBalancingThreshold{
+    GridLevel = 32,
+    BlockLevel = 0,
+    SubWarpLevel = 0,
+  };
+
+  enum LoadBalancingTBSizes {
+    GridLevelTBSize = 512,
+    BlockLevelTBSize = 512,
+    SubWarpLevelTBSize = 32,
+  };
+
+  const bool EnableLoadBalancing = false;
+
+  bool is_grid_level_assignment(const EdgePos_t num_roots) 
+  {
+    return num_roots >= LoadBalancingThreshold::GridLevel;
+  }
+
+  bool is_block_level_assignment(const EdgePos_t num_roots) 
+  {
+    return num_roots < LoadBalancingThreshold::GridLevel and num_roots >= LoadBalancingThreshold::BlockLevel;
+  }
+
+  bool is_subwarp_level_assignment(const EdgePos_t num_roots) 
+  {
+    return num_roots < LoadBalancingThreshold::SubWarpLevel;
+  }
+
+  void num_gpu_threads(const VertexRange src_range, const EdgePos_t* src_num_roots, 
+                       EdgePos_t& num_grid_threads, EdgePos_t& num_block_threads, 
+                       EdgePos_t& num_subwarp_threads)
+  {
+    num_grid_threads = 0;
+    num_block_threads = 0;
+    num_subwarp_threads = 0;
+    for (VertexID src : src_range) {
+      EdgePos_t num_roots = src_num_roots[2*src + 1];
+      if (EnableLoadBalancing and is_grid_level_assignment(num_roots)) {
+        num_grid_threads += num_roots;
+        num_grid_threads = utils::next_multiple(num_grid_threads, 
+                                                GridLevelTBSize);
+      } else if (is_block_level_assignment(num_roots)) {
+        num_block_threads += num_roots;
+        // num_block_threads = utils::next_multiple(num_block_threads, 
+        //                                          BlockLevelTBSize);
+      } else if (is_subwarp_level_assignment(num_roots)) {
+        num_subwarp_threads += num_roots;
+        // num_subwarp_threads = utils::next_multiple(num_subwarp_threads, 
+        //                                            SubWarpLevelTBSize);
+      }
+    }
+  }
+};
+
 #endif
