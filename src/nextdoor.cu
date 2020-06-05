@@ -24,6 +24,8 @@
 #include <curand_kernel.h>
 #include <cuda.h>
 
+#include <anyoption.h>
+
 //TODO-List:
 //[] Divide main() function in several small functions.
 //[] Divide the code in several include files that can be included in the API.
@@ -77,9 +79,9 @@ using namespace GPUUtils;
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
-#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+//#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
-#define GRAPH_PARTITION_SIZE (2UL*1024*1024UL*1024UL) //24 KB is the size of each partition of graph
+//#define GRAPH_PARTITION_SIZE (2UL*1024*1024UL*1024UL) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
 //#define CHECK_RESULT
 
@@ -1318,14 +1320,30 @@ double random_walk(int N_HOPS, int hop, int part_idx, int root_part_idx,
 
 #define PINNED_MEMORY
 
-int main (int argc, char* argv[])
+int main(int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
 
-  if (argc < 3) {
-    std::cout << "Arguments: graph-file, adj-list/edge-list, binary" << std::endl;
-    return -1;
-  }
+  AnyOption *opt = new AnyOption();
+  opt->addUsage("usage: ");
+  opt->addUsage("");
+  opt->addUsage("-h --help        Prints this help");
+  opt->addUsage("-g --graph-file  File containing graph");
+  opt->addUsage("-t --graph-type <type> Format of graph file: 'adj-list' or 'edge-list'");
+  opt->addUsage("-f --format <format> Format of graph file: 'binary' or 'text'");
+
+  opt->setFlag("help", 'h');
+  opt->setOption("graph-file",  'g');
+  opt->setOption("graph-type", 't');
+  opt->setOption("graph-format", 'f');
+
+  opt->processCommandArgs(argc, argv);
+
+  if (!opt->hasOptions()) {
+    opt->printUsage();
+    delete opt;
+    return 0;
+  }  
 
   size_t global_mem_size = 1024UL*1024*1024;
 
@@ -1337,11 +1355,19 @@ int main (int argc, char* argv[])
 #endif
 
 
-  char* graph_file = argv[1];
+  char* graph_file = opt->getValue('g');
+  char* graph_type = opt->getValue('t');
+  char* graph_format = opt->getValue('f');
 
+  if (graph_file == nullptr || graph_type == nullptr || 
+      graph_format == nullptr) {
+    opt->printUsage();
+    delete opt;
+    return 0;
+  }
   Graph graph;
   //TODO: instead of FILE pointer, file path should be passed
-  if (strcmp(argv[2], "adj-list") == 0) {
+  if (strcmp(graph_type, "adj-list") == 0) {
     FILE* fp = fopen (graph_file, "r");
     if (fp == nullptr) {
       std::cout << "File '" << graph_file << "' not found" << std::endl;
@@ -1349,8 +1375,8 @@ int main (int argc, char* argv[])
     }
     graph.load_from_adjacency_list(fp);
     fclose (fp);
-  } else if (strcmp(argv[2], "edge-list") == 0) {
-    if (strcmp(argv[3], "binary") == 0) {
+  } else if (strcmp(graph_type, "edge-list") == 0) {
+    if (strcmp(graph_format, "binary") == 0) {
       graph.load_from_edge_list_binary(graph_file, true);
     } else {
       FILE* fp = fopen (graph_file, "r");
