@@ -83,7 +83,7 @@ using namespace GPUUtils;
 
 //#define GRAPH_PARTITION_SIZE (2UL*1024*1024UL*1024UL) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
 //For mico, 512 works best
 const int N_THREADS = 256;
@@ -259,7 +259,7 @@ bool distinct(VertexID root) {return false;}
 __host__ __device__
 EdgePos_t new_neighbors_size(int hop, EdgePos_t num_edges)
 {
-  return (sampleSize(hop) == ALL_NEIGHBORS) ? num_edges : min((EdgePos_t)sampleSize(hop),num_edges);
+  return (sampleSize(hop) == ALL_NEIGHBORS) ? num_edges : (EdgePos_t)sampleSize(hop);
 }
 
 __global__ void __launch_bounds__(N_THREADS) 
