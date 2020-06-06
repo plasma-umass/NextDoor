@@ -172,6 +172,11 @@ public:
     return VertexRange(0, get_n_vertices()-1);
   }
 
+  VertexID get_invalid_vertex() const 
+  {
+    return get_n_vertices()+1;
+  }
+  
   __host__
   bool has_vertex(VertexID v) const {
     return 0 <= v && v < n_vertices;
@@ -318,6 +323,18 @@ public:
     assert (has_vertex (v));
     return v - first_vertex_id;
   }
+
+  __host__ __device__
+  VertexID get_invalid_vertex() const 
+  {
+#ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+    //Implement this
+    assert(false);
+#endif
+    return get_n_vertices()+1;
+  }
+
+
   // static struct HasVertex {
   //   bool operator () (CSRPartition& partition, const VertexID& v) const {
   //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);

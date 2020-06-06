@@ -10,6 +10,8 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
+#define CHK_CU(x) if (utils::is_cuda_error (x) == true) {abort();}
+
 namespace utils {
 
   __device__
@@ -110,6 +112,27 @@ namespace utils {
       mem[val++] = -1;
   }
 
+  //Kernel to memset global memory
+  template <class T>
+  __global__ void memset_kernel(T* mem, T val, size_t nelems)
+  {
+    int id = threadIdx.x + blockIdx.x*blockDim.x;
+
+    if (id < nelems) {
+      mem[id] = val;
+    }
+  }
+
+  template <class T>
+  void gpu_memset(T* mem, T val, size_t nelems)
+  {
+    const size_t threads = 256;
+    const size_t blocks = thread_block_size(nelems, threads);
+
+    memset_kernel<<<blocks, threads>>>(mem, val, nelems);
+    CHK_CU(cudaDeviceSynchronize());
+  }
+
   template<class T>
   class RangeIterator
   {
@@ -152,8 +175,6 @@ namespace utils {
   {
     return vec.size()*sizeof(vec[0]);
   }
-
-  #define CHK_CU(x) if (utils::is_cuda_error (x) == true) {abort();}
 
 #if 0
   void bfs (CSR* csr) 

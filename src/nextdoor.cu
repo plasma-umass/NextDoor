@@ -399,11 +399,11 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
     }
     assert (addr < start + sample_size_at_hop(hop));
     assert (addr >= start);
-    if (embeddings_additions[addr] != -1) {
+    if (embeddings_additions[addr] != root_partition->get_invalid_vertex()) {
       //printf ("embeddings_additions addrs %x\n", &embeddings_additions[0]);
       printf ("not -1 at %ld hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
     }
-    assert (embeddings_additions[addr] == -1);
+    assert (embeddings_additions[addr] == root_partition->get_invalid_vertex());
   #endif
     embeddings_additions[addr] = edge;
   }
@@ -412,11 +412,12 @@ run_hop_parallel_single_step_device_level (int N_HOPS, int hop,
 
 #include "fixed_size_kernels.cuh"
 
-__global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop, 
+__global__ void run_hop_parallel_single_step_block_level(int N_HOPS, int hop, 
               CSRPartition* csr,
               CSRPartition* root_partition,
               VertexID last_src_vertex,
               VertexID* embeddings_additions, 
+              VertexID* samples,
               EdgePos_t num_neighbors,
               VertexID* embeddings_additions_prev_hop,
               EdgePos_t* previous_stage_filled_range,
@@ -648,6 +649,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             while (_start_edge_idx + laneid%shfl_warp_size <= _end_edge_idx) {
               VertexID edge = shmem_csr_edges[_start_edge_idx + laneid%shfl_warp_size];
               embeddings_additions[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = edge;
+              samples[start + _e + iter*shfl_warp_size + laneid%shfl_warp_size] = root_vertex;
               _start_edge_idx += shfl_warp_size;
               iter++;
             }
@@ -674,12 +676,13 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             }
             assert (addr < start + sample_size_at_hop(hop));
             assert (addr >= start);
-            if (embeddings_additions[addr] != -1) {
+            if (embeddings_additions[addr] != root_partition->get_invalid_vertex()) {
               //printf ("embeddings_additions addrs %x\n", &embeddings_additions[0]);
               printf ("not -1 at %d hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
             }
-            assert (embeddings_additions[addr] == -1);
-  #endif
+            assert (embeddings_additions[addr] == root_partition->get_invalid_vertex());
+  #endif  
+            samples[addr] = root_vertex;
             embeddings_additions[addr] = edge;
           }
 #endif
@@ -777,12 +780,13 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
             }
             assert (addr < start + sample_size_at_hop(hop));
             assert (addr >= start);
-            if (embeddings_additions[addr] != -1) {
+            if (embeddings_additions[addr] != root_partition->get_invalid_vertex()) {
               //printf ("embeddings_additions addrs %x\n", &embeddings_additions[0]);
               printf ("not -1 at %d hop %d root %d src %d start %d, value %d\n", addr, hop, root_vertex, hop_vertex, start, embeddings_additions[addr]);
             }
-            assert (embeddings_additions[addr] == -1);
+            assert (embeddings_additions[addr] == root_partition->get_invalid_vertex());
 #endif
+            samples[addr] = root_vertex;
             embeddings_additions[addr] = edge;
           }
         }
@@ -829,6 +833,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
           assert (start + e < num_neighbors);
           assert (start + e >= 0);
           //printf ("edge %d for %d\n", edge, source_vertex);
+          samples[start + e] = source_vertex;
           embeddings_additions[start + e] = edge;    
         }
       }
@@ -933,6 +938,61 @@ int get_partition_idx_of_vertex (std::vector<CSRPartition> csr_partitions, Verte
 }
 
 //#define SRC_TO_ROOT_VERTEX_IN_SORTED_ORDER
+
+//Sort Key Value Pairs on GPU using NVIDIA CUB
+template <class T>
+void gpu_sort_key_val_pairs(T* d_keys_in, T* d_values_in, 
+                            T* d_keys_out, T* d_values_out, size_t nelems,
+                            int msb)
+{
+
+  // CHK_CU(cudaMalloc(&d_values_out, neighbors_sizes[hop-1]));
+  //You can save the cost of storing new pair of (root,transit). just store the transit at grid_threadIdx and the existing root vertex is already at that grid_threadIdx. Now the map still exists. Hence, we do not need to store root vertex to new position.
+  //We can decrease this overhead of sorting by avoiding those transit vertices in the data that are invalid by may be setting the new transit vertex to 1 << (msb + 1) (or to (1 << (msb+1)) - 1)but use msb in the sort only? Something like  this might work.
+//Use this paper to decrease this overhead: https://dl.acm.org/doi/10.1145/3035918.3064043
+//Or in CUB you can have (source, root) 64-bit pairs and treat these lowest bytes as 32-bit integer?
+  T* d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  
+  //Check if the space runs out.
+  //TODO: Use DoubleBuffer version that requires O(P) space.
+  cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                  d_keys_in, d_keys_out, d_values_in, d_values_out, nelems, 0, msb);
+  
+  CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
+  double t1 = convertTimeValToDouble(getTimeOfDay());
+  cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                  d_keys_in, d_keys_out,  d_values_in, d_values_out, nelems, 0, msb);
+  //--------------------------------------------------------------------------
+  // device result check
+  CHK_CU(cudaDeviceSynchronize());
+  CHK_CU(cudaFree(d_temp_storage));
+}
+
+void compute_source_to_root_data_gpu (const CSR* csr,
+                                      const VertexID root_part_idx, const int hop, 
+                                      const std::vector<CSRPartition>& csr_partitions,
+                                      VertexID* device_samples,
+                                      VertexID* device_additions,
+                                      VertexID* device_transposed_transits,
+                                      VertexID* device_transposed_samples,
+                                      size_t num_transits)
+{
+  int msb = 0;
+  int r = csr->get_invalid_vertex();
+  while (msb <= sizeof(VertexID)*8) {
+    if (r == 0) 
+      break;
+    r = r >> 1;
+    msb++;
+  }
+
+  gpu_sort_key_val_pairs(device_samples, device_additions, 
+                         device_transposed_transits, device_transposed_samples,
+                         num_transits, msb);
+    
+}
 
 void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, int>>>& host_src_to_roots,
                                     const CSR* csr,
@@ -1441,6 +1501,10 @@ int main(int argc, char* argv[])
     additions_sizes[hop] = new EdgePos_t[csr->get_n_vertices () * 2];
     VertexID** part_neighbors = new VertexID*[csr_partitions.size ()];
     EdgePos_t** part_additions_sizes = new EdgePos_t*[csr_partitions.size ()];
+    VertexID* device_samples = nullptr;
+    const size_t device_samples_size = csr->get_n_vertices()*sample_size_at_hop(hop);
+    CHK_CU(cudaMalloc(&device_samples, device_samples_size*sizeof(device_samples[0])));
+    gpu_memset(device_samples, csr->get_invalid_vertex(), device_samples_size);
 
 #ifdef RANDOM_WALK
     std::vector<std::vector<EdgePos_t>> root_to_linear_thread = std::vector<std::vector<EdgePos_t>>(csr_partitions.size());
@@ -1514,15 +1578,7 @@ int main(int argc, char* argv[])
       CHK_CU (cudaMemset (device_additions_sizes, 0, 
                           partition_additions_sizes_size));
       CHK_CU (cudaMalloc (&device_additions, per_part_num_neighbors[root_part_idx]*sizeof (VertexID)));
-      
-#ifndef NDEBUG
-      VertexID *temp_array = new VertexID[per_part_num_neighbors[root_part_idx]];
-      for (VertexID i = 0; i < per_part_num_neighbors[root_part_idx]; i++)
-        temp_array[i] = -1;
-
-      CHK_CU (cudaMemcpy (device_additions, temp_array, per_part_num_neighbors[root_part_idx]*sizeof (VertexID), cudaMemcpyHostToDevice)); //Create a device kernel to memset.
-      delete[] temp_array;
-#endif
+      gpu_memset(device_additions, csr->get_invalid_vertex(), per_part_num_neighbors[root_part_idx]);
 
       if (hop > 0) {
         compute_source_to_root_data (host_src_to_roots, csr, root_part_idx, hop,
@@ -1676,6 +1732,7 @@ int main(int argc, char* argv[])
               device_root_partition,
               src_partition.last_vertex_id,
               device_additions,
+              device_samples,
               per_part_num_neighbors[root_part_idx],
               device_additions_prev_hop,
               device_additions_sizes,
@@ -1712,6 +1769,7 @@ int main(int argc, char* argv[])
             device_root_partition,
             src_partition.last_vertex_id,
             device_additions,
+            device_samples,
             per_part_num_neighbors[root_part_idx],
             device_additions_prev_hop,
             device_additions_sizes,
@@ -1868,6 +1926,7 @@ int main(int argc, char* argv[])
 
     std::cout << "CPU Part " << (cpu_part_t2 - cpu_part_t1) << std::endl;
 
+    CHK_CU(cudaFree(device_samples));
     if (device_additions_prev_hop != nullptr) {
       CHK_CU (cudaFree (device_additions_prev_hop));
     }
