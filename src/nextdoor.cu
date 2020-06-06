@@ -941,7 +941,6 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
                                     const CSR* csr,
                                     const VertexID root_part_idx, const int hop, 
                                     const std::vector<CSRPartition>& csr_partitions,
-                                    EdgePos_t*** final_map_vertex_to_additions, 
                                     EdgePos_t** additions_sizes, 
                                     VertexID** neighbors, 
                                     EdgePos_t* neighbors_sizes,
@@ -1020,7 +1019,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
 //   //TODO: Add a vertex and edge iterator in each root partition
 //   for (VertexID v = first_vertex_id; 
 //        v <= root_partition.last_vertex_id; v++) {
-//     EdgePos_t start = final_map_vertex_to_additions[hop-1][0][2*v];
+//     EdgePos_t start = ;
 //     vertices_sorted_by_start.push_back(std::make_pair(start, v));
 //   }
 
@@ -1428,7 +1427,6 @@ int main(int argc, char* argv[])
   VertexID** neighbors = new VertexID* [N_HOPS];
   EdgePos_t* neighbors_sizes = new EdgePos_t [N_HOPS];
   EdgePos_t** additions_sizes = new EdgePos_t* [N_HOPS];
-  EdgePos_t*** final_map_vertex_to_additions = new EdgePos_t**[N_HOPS];
   //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
   EdgePos_t*** device_map_vertex_to_additions = new EdgePos_t**[N_HOPS];
 
@@ -1444,11 +1442,8 @@ int main(int argc, char* argv[])
     memset(partition_map_vertex_to_additions, 0, csr_partitions.size()*sizeof(EdgePos_t));
     std::vector<EdgePos_t> per_part_num_neighbors = std::vector<EdgePos_t> (csr_partitions.size (), 0);
     EdgePos_t num_neighbors = 0;
-    final_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
     //size_t map_vertex_to_additions_size;
     const EdgePos_t map_vertex_to_additions_size = csr->get_n_vertices () * sizeof (EdgePos_t) * 2;
-    final_map_vertex_to_additions[hop][0] = (EdgePos_t*)new char[map_vertex_to_additions_size];
-    EdgePos_t final_map_vertex_to_additions_iter = 0;
     device_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
     additions_sizes[hop] = new EdgePos_t[csr->get_n_vertices () * 2];
     VertexID** part_neighbors = new VertexID*[csr_partitions.size ()];
@@ -1560,8 +1555,8 @@ int main(int argc, char* argv[])
 
       if (hop > 0) {
         compute_source_to_root_data (host_src_to_roots, csr, root_part_idx, hop,
-                                     csr_partitions, final_map_vertex_to_additions,
-                                     additions_sizes, neighbors, neighbors_sizes,
+                                     csr_partitions, additions_sizes, neighbors, 
+                                     neighbors_sizes,
                                      src_partitions, per_part_src_to_roots, 
                                      per_part_src_to_roots_size,
                                      per_part_src_to_roots_positions);
@@ -1677,8 +1672,7 @@ int main(int argc, char* argv[])
                                                                       device_src_to_root_positions,
                                                                       src_vertex_id,
                                                                       device_samplers,
-                                                                      device_curand_states
-                                                                    );
+                                                                      device_curand_states);
 
                 CHK_CU(cudaGetLastError());
               }
@@ -1721,8 +1715,7 @@ int main(int argc, char* argv[])
               source_vertex_idx,
               device_src_vertices_for_device_level,
               device_samplers,
-              device_curand_states
-            );
+              device_curand_states);
             CHK_CU (cudaDeviceSynchronize ());
 #endif
           }
@@ -1833,7 +1826,7 @@ int main(int argc, char* argv[])
       //TODO: We can use CUDA streams to speed this up, but it will lead to high
       //memory usage.
       for (VertexID v : root_partition.get_vertex_range()) {
-        EdgePos_t start = sample_start_pos(hop, root_partition, v); //partition_map_vertex_to_additions[root_part_idx][2*(v-root_partition.first_vertex_id)];
+        EdgePos_t start = sample_start_pos(hop, root_partition, v);
         EdgePos_t end = part_additions_sizes[root_part_idx][2*(v-root_partition.first_vertex_id) + 1];
         if (end < block_level_duplicate_find_max_val) {
           //Used BlockLevel primitives above
@@ -1909,26 +1902,6 @@ int main(int argc, char* argv[])
       /***DONE***/
       //TODO: Free device_map_vertex_to_additions
       double cpu_part_t1 = convertTimeValToDouble(getTimeOfDay());
-      if (root_part_idx == 0) {
-        memcpy (&final_map_vertex_to_additions[hop][0][final_map_vertex_to_additions_iter],
-                partition_map_vertex_to_additions[root_part_idx],
-                partition_map_vertex_to_additions_size(root_partition)*sizeof (EdgePos_t));
-        final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size(root_partition);
-      } else {
-        EdgePos_t start_pos = 0;
-        // for (VertexID v : csr_partitions[root_part_idx - 1].get_vertex_range()) {
-        //   EdgePos_t pos = final_map_vertex_to_additions[hop][0][2*v] + final_map_vertex_to_additions[hop][0][2*v + 1];
-        //   start_pos = max (start_pos, pos);
-        // }
-        // assert (start_pos <= num_neighbors && start_pos > 0);
-        for (VertexID v = 0; v < csr_partitions[root_part_idx].get_n_vertices (); v++) {
-          VertexID vertex = csr_partitions[root_part_idx].first_vertex_id + v;
-          final_map_vertex_to_additions[hop][0][2*vertex] = start_pos + sample_start_pos(hop, &root_partition, v); //partition_map_vertex_to_additions[root_part_idx][2*v];
-          final_map_vertex_to_additions[hop][0][2*vertex + 1] = sample_size_at_hop(hop);// partition_map_vertex_to_additions[root_part_idx][2*v + 1];
-        }
-
-        final_map_vertex_to_additions_iter += partition_map_vertex_to_additions_size(root_partition);
-      }
 
       VertexID first_vertex_id = root_partition.first_vertex_id;
       if (root_part_idx == 0) {
@@ -1982,13 +1955,13 @@ int main(int argc, char* argv[])
       //TODO: copy directly to neigbhors array instead of part_neighbors
       for (VertexID v : csr_partitions[part].get_vertex_range()) {
         VertexID part_v = v - csr_partitions[part].first_vertex_id;
-        EdgePos_t part_start = sample_start_pos(hop, &csr_partitions[part], v); //partition_map_vertex_to_additions[part][2*part_v];
+        EdgePos_t part_start = sample_start_pos(hop, &csr_partitions[part], v);
 #ifdef RANDOM_WALK
         const EdgePos_t part_end = part_start + ((hop == 0) ? part_additions_sizes[part][2*part_v + 1] : part_additions_sizes[part][root_to_linear_thread[part][part_v]]);
 #else
         const EdgePos_t part_end = part_start + part_additions_sizes[part][2*part_v + 1];
 #endif
-        EdgePos_t final_idx = sample_start_pos(hop, csr, v); //final_map_vertex_to_additions[hop][0][2*v];
+        EdgePos_t final_idx = sample_start_pos(hop, csr, v);
         const EdgePos_t final_end = final_idx + sample_size_at_hop(hop);
         std::unordered_set<VertexID> set_neighbors;
 #ifdef RANDOM_WALK
@@ -2117,7 +2090,7 @@ int main(int argc, char* argv[])
       std::sort (gpu_vector.begin (), gpu_vector.end ());
 
       if (vector_hops != gpu_vector) {
-        std::cout << "checking for vertex " << idx << " start " << final_map_vertex_to_additions[0][0][2*idx] << " " << additions_sizes[0][2*idx+1] << std::endl;
+        std::cout << "checking for vertex " << idx << " start " << " " << additions_sizes[0][2*idx+1] << std::endl;
         std::cout << "size " << vector_hops.size () << " " << gpu_vector.size () << std::endl;
         #if 1
         for (size_t i = 0; i < max (vector_hops.size (), gpu_vector.size ()); i++) {
