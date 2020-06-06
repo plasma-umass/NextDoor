@@ -102,10 +102,10 @@ const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
 const bool has_random = true;
-__host__ __device__ int size() {return 2;}
+__host__ __device__ int size() {return 3;}
 
 __host__ __device__ 
-int sampleSize(int k) {return 1;
+int sampleSize(int k) {return 5 - k;
   return ((k == 0) ? 10 : 5);}
 
 __device__ inline
@@ -260,6 +260,23 @@ __host__ __device__
 EdgePos_t new_neighbors_size(int hop, EdgePos_t num_edges)
 {
   return (sampleSize(hop) == ALL_NEIGHBORS) ? num_edges : (EdgePos_t)sampleSize(hop);
+}
+
+__host__ __device__
+EdgePos_t new_neighbors_at_hop(int hop)
+{
+  EdgePos_t n = 1;
+  for (int i = 0; i <= hop; i++) {
+    n = n * sampleSize(i);
+  }
+
+  return n;
+}
+
+__device__ __host__ inline EdgePos_t sample_start_pos (int hop, const CSRPartition* root_partition, VertexID vertex)
+{
+  assert (root_partition->has_vertex(vertex));
+  return (vertex-root_partition->first_vertex_id)*new_neighbors_at_hop(hop);
 }
 
 __global__ void __launch_bounds__(N_THREADS) 
@@ -578,7 +595,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
     if (_curr_vertex_id != -1 && root_vertex_idx != -1 && vertices[_curr_vertex_id] <= last_src_vertex) {
       if (root_vertex != -1) {
         VertexID vertex = root_vertex;
-        EdgePos_t start = map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];
+        EdgePos_t start = sample_start_pos(hop, root_partition, root_vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];
         VertexID hop_vertex = embeddings_additions_prev_hop[hop_idx];
         if (!(hop_vertex == vertices[_curr_vertex_id])) {
           printf ("hop_vertex %d vertices[_curr_vertex_id] %d\n", hop_vertex, vertices[_curr_vertex_id]);
@@ -707,7 +724,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
         
         VertexID root_vertex = hop_vertex_to_roots[hop_vertex_start_idx + 2*(root_idx + last_hop_vertex_roots_done)];
         VertexID hop_idx = hop_vertex_to_roots[hop_vertex_start_idx + 2*(root_idx + last_hop_vertex_roots_done) + 1];
-        EdgePos_t start = map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id)];
+        EdgePos_t start = sample_start_pos(hop, root_partition, root_vertex);//map_orig_embedding_to_additions[2*(root_vertex - root_partition->first_vertex_id)];
         EdgePos_t* end = &previous_stage_filled_range[2*(root_vertex - root_partition->first_vertex_id) + 1];
         VertexID hop_vertex = embeddings_additions_prev_hop[hop_idx];
         assert (_hop_vertex == hop_vertex);
@@ -775,7 +792,7 @@ __global__ void run_hop_parallel_single_step_block_level (int N_HOPS, int hop,
     assert (csr->first_vertex_id <= csr->last_vertex_id);
 
     VertexID idx = 2*(source_vertex - csr->first_vertex_id);
-    EdgePos_t start = map_orig_embedding_to_additions[idx];
+    EdgePos_t start = sample_start_pos(hop, root_partition, source_vertex);//map_orig_embedding_to_additions[idx];
     // if (source_vertex == common_vertex_with_previous_partition) {
     //   start += common_vertex_with_previous_partition_additions;
     // }
@@ -885,14 +902,15 @@ size_t cpu_get_max_lengths_for_vertices_single_step (int hop, CSRPartition& root
       _new_additions = new_neighbors_size(hop, csr->n_edges_for_vertex(v));
       new_additions += _new_additions;
     } else {
-      const EdgePos_t start = map_vertex_to_additions_prev_hop[2*v];
-      const EdgePos_t end = addition_sizes_prev_hop[2*v+1];
-      for (int idx = start; idx < start + end; idx++) {
-        VertexID addition = additions_prev_hop[idx];
-        EdgePos_t _new_additions;
-        _new_additions = new_neighbors_size(hop, csr->n_edges_for_vertex(addition)); 
-        new_additions += _new_additions;
-      }
+      new_additions = new_neighbors_at_hop(hop);
+      // const EdgePos_t start = map_vertex_to_additions_prev_hop[2*v];
+      // const EdgePos_t end = addition_sizes_prev_hop[2*v+1];
+      // for (int idx = start; idx < start + end; idx++) {
+      //   VertexID addition = additions_prev_hop[idx];
+      //   EdgePos_t _new_additions;
+      //   _new_additions = new_neighbors_size(hop, csr->n_edges_for_vertex(addition)); 
+      //   new_additions += _new_additions;
+      // }
     }
 
     map_vertex_to_additions_curr_iter[2*(v - root_partition.first_vertex_id)] = embeddings_additions_iter;
