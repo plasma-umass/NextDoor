@@ -1,4 +1,4 @@
-bool check_result(CSR* csr, EdgePos_t*** final_map_vertex_to_additions, EdgePos_t** additions_sizes, VertexID** neighbors)
+bool check_result(CSR* csr, EdgePos_t** additions_sizes, VertexID** neighbors)
 {
   //Check result by traversing all sampled neighbors and making
   //sure that if neighbors at kth-hop is an adjacent vertex of one
@@ -22,11 +22,11 @@ bool check_result(CSR* csr, EdgePos_t*** final_map_vertex_to_additions, EdgePos_
     std::vector<VertexID> prev_hop_neighbors;
 
     for (int hop = 1; hop < size(); hop++) {
-      EdgePos_t start_idx = final_map_vertex_to_additions[hop][0][2*vertex];
+      EdgePos_t start_idx = sample_start_pos(hop, csr, vertex);
       EdgePos_t n_additions = additions_sizes[hop][2*vertex + 1];
       
       if (n_additions == 0) {
-        EdgePos_t prev_start = final_map_vertex_to_additions[hop-1][0][2*vertex];
+        EdgePos_t prev_start = sample_start_pos(hop-1, csr, vertex);
         for (EdgePos_t prev_neighbr_idx = prev_start;
           prev_neighbr_idx < prev_start + additions_sizes[hop-1][2*vertex + 1]; 
           prev_neighbr_idx++) {
@@ -40,7 +40,7 @@ bool check_result(CSR* csr, EdgePos_t*** final_map_vertex_to_additions, EdgePos_
         for (EdgePos_t neighbr_idx = start_idx; neighbr_idx < start_idx + n_additions;
             neighbr_idx++) {
           VertexID neighbor = neighbors[hop][neighbr_idx];
-          EdgePos_t prev_start = final_map_vertex_to_additions[hop-1][0][2*vertex];
+          EdgePos_t prev_start = sample_start_pos(hop-1, csr, vertex);
           bool found = false;
           for (EdgePos_t prev_neighbr_idx = prev_start;
             prev_neighbr_idx < prev_start + additions_sizes[hop-1][2*vertex + 1]; 

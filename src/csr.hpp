@@ -171,6 +171,11 @@ public:
   {
     return VertexRange(0, get_n_vertices()-1);
   }
+
+  __host__
+  bool has_vertex(VertexID v) const {
+    return 0 <= v && v < n_vertices;
+  }
 };
 
 class CSRPartition
