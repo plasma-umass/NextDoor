@@ -1425,7 +1425,6 @@ int main(int argc, char* argv[])
   EdgePos_t* neighbors_sizes = new EdgePos_t [N_HOPS];
   EdgePos_t** additions_sizes = new EdgePos_t* [N_HOPS];
   //Map of idx of embedding to the start of how many inputs are added and number of new embeddings
-  EdgePos_t*** device_map_vertex_to_additions = new EdgePos_t**[N_HOPS];
 
   VertexID* source_vertex_idx;
   CHK_CU (cudaMalloc (&source_vertex_idx, sizeof(int)));
@@ -1439,15 +1438,9 @@ int main(int argc, char* argv[])
     EdgePos_t num_neighbors = 0;
     //size_t map_vertex_to_additions_size;
     const EdgePos_t map_vertex_to_additions_size = csr->get_n_vertices () * sizeof (EdgePos_t) * 2;
-    device_map_vertex_to_additions[hop] = new EdgePos_t*[csr_partitions.size ()];
     additions_sizes[hop] = new EdgePos_t[csr->get_n_vertices () * 2];
     VertexID** part_neighbors = new VertexID*[csr_partitions.size ()];
     EdgePos_t** part_additions_sizes = new EdgePos_t*[csr_partitions.size ()];
-
-    for (int p = 0; p < (int)csr_partitions.size (); p++) {
-      device_map_vertex_to_additions[hop][p] = nullptr;
-    }
-
 
 #ifdef RANDOM_WALK
     std::vector<std::vector<EdgePos_t>> root_to_linear_thread = std::vector<std::vector<EdgePos_t>>(csr_partitions.size());
@@ -1713,15 +1706,6 @@ int main(int argc, char* argv[])
 
         if (hop == 0) {
 #if 0
-          int N_BLOCKS = thread_block_size(src_partition.get_n_vertices(), N_THREADS);
-          float* rand = GPUUtils::gen_rand_on_gpu(src_partition.get_n_vertices());
-          run_hop_parallel_single_step_block_level_fixed_size_first_step<<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, 
-            device_csr, device_root_partition, device_additions, per_part_num_neighbors[root_part_idx],
-            device_map_vertex_to_additions[hop][root_part_idx], device_src_to_roots,
-            device_src_to_root_positions, src_partition.get_n_vertices(),
-            rand);
-          );
-          cudaFree(rand);
 #else
           int N_BLOCKS = src_partition.get_n_vertices ();
           run_hop_parallel_single_step_block_level <<<N_BLOCKS, N_THREADS>>> (N_HOPS, hop, device_csr,  
@@ -1779,7 +1763,6 @@ int main(int argc, char* argv[])
       CHK_CU (cudaFree (device_additions_sizes));
 
       /***DONE***/
-      //TODO: Free device_map_vertex_to_additions
       double cpu_part_t1 = convertTimeValToDouble(getTimeOfDay());
 
       VertexID first_vertex_id = root_partition.first_vertex_id;
@@ -1898,12 +1881,6 @@ int main(int argc, char* argv[])
 
   if (device_additions_prev_hop != nullptr) {
     CHK_CU (cudaFree (device_additions_prev_hop));
-  }
-
-  for (int i = 0; i < N_HOPS; i++) {
-    for (int part = 0; part < (int)csr_partitions.size (); part++) {
-      cudaFree (device_map_vertex_to_additions[i][part]);
-    }
   }
 
   std::cout << "Getting embeddings from GPU" << std::endl;
