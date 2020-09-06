@@ -77,11 +77,11 @@ using namespace GPUUtils;
 #define MAX_EDGES (2*MAX_LOAD_PER_TB)
 //#define USE_PARTITION_FOR_SHMEM
 #define MAX_HOP_VERTICES_IN_SH_MEM (MAX_VERTICES_PER_TB)
-#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+//#define ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
 
-#define GRAPH_PARTITION_SIZE (2UL*1024*1024UL*1024UL) //24 KB is the size of each partition of graph
+//#define GRAPH_PARTITION_SIZE (2UL*1024*1024UL*1024UL) //24 KB is the size of each partition of graph
 //#define REMOVE_DUPLICATES_ON_GPU
-//#define CHECK_RESULT
+#define CHECK_RESULT
 
 //For mico, 512 works best
 const int N_THREADS = 256;
@@ -99,12 +99,12 @@ const int N_THREADS = 256;
 const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
-const bool has_random = true;
-__host__ __device__ int size() {return 2;}
+// const bool has_random = true;
+// __host__ __device__ int size() {return 2;}
 
-__host__ __device__ 
-int sampleSize(int k) {return 1;
-  return ((k == 0) ? 10 : 5);}
+// __host__ __device__ 
+// int sampleSize(int k) {return 1;
+//   return ((k == 0) ? 10 : 5);}
 
 __device__ inline
 VertexID next(int k, const VertexID src, const VertexID root, 
@@ -119,7 +119,7 @@ VertexID next(int k, const VertexID src, const VertexID root,
 }
 
 // #define Node2Vec
-//#define UniformRandWalk
+#define UniformRandWalk
 //Node2Vec
 #ifdef Node2Vec
   #define RANDOM_WALK
@@ -243,7 +243,7 @@ VertexID next(int k, const VertexID src, const VertexID root,
     {
       EdgePos_t id = RandNumGen::rand_int(state, num_edges);
 
-      return src_edges[id];
+      return src_edges[num_edges];
     }
   #else
     __device__ inline
@@ -1057,7 +1057,7 @@ void compute_source_to_root_data (std::vector<std::vector<std::pair <VertexID, i
 
   double _t2 = convertTimeValToDouble(getTimeOfDay());
   std::cout << "Core Time " << (_t2 - _t1) << " secs __new_neighbors = " << __new_neighbors.size() << std::endl;
-  if (true) {
+  if (false) {
     int32_t* d_neighbors, *d_neighbors_2, *d_values_in, *d_values_out;
     CHK_CU(cudaMalloc(&d_neighbors, __new_neighbors.size()*sizeof(VertexID)));
     CHK_CU(cudaMemcpy(d_neighbors,  __new_neighbors.data(),  sizeof_vector( __new_neighbors), cudaMemcpyHostToDevice));
