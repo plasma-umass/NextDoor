@@ -10,7 +10,7 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
-#define CHK_CU(x) if (utils::is_cuda_error (x) == true) {abort();}
+#define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {abort();}
 
 namespace utils {
 
@@ -56,12 +56,13 @@ namespace utils {
   }
 
 
-  bool is_cuda_error (cudaError_t error) 
+  bool is_cuda_error (cudaError_t error, int line) 
   {
     //cudaError_t error = cudaGetLastError ();
     if (error != cudaSuccess) {
       const char* error_string = cudaGetErrorString (error);
-      std::cout << "Cuda Error: " << error_string << std::endl;
+      std::cout << "Cuda Error: " << error_string << " " << line <<
+      std::endl;
       return true;
     }
 
@@ -207,6 +208,84 @@ namespace utils {
     }
   }
 #endif
+
+  enum StorageLocationType
+  {
+    Host,
+    Device, 
+  };
+
+  template<class T>
+  class Array
+  {
+    private:
+      T* data_;
+      
+      StorageLocationType storageLocationType_;
+
+      size_t nelems_;
+    public:
+      Array (StorageLocationType storageLocation, size_t nelems) : Array(nullptr, storageLocation, nelems)
+      {
+      }
+
+      Array (T* ptr, StorageLocationType storageLocation, size_t nelems) : data_(ptr), storageLocationType_(storageLocation), nelems_(nelems)
+      {
+      }
+
+      Array & operator=(const Array& a) 
+      {
+        nelems_ = a.nelems();
+        storageLocationType_ = a.location();
+        allocate();
+        copy(a.data(), a.nelems());
+        memcpy(data_, a.data(), sizeof(T)*nelems_);
+      }
+
+      void copy(T* dst, size_t nelems)
+      {
+        assert(nelems == nelems_);
+
+        if (location() == Device) {
+          assert(false);
+        } else {
+          memcpy(data_, dst, sizeof(T)*nelems);
+        }
+      }
+
+      T* data() {return data_;}
+      inline size_t nelems() {return nelems_;}
+      inline StorageLocationType location() {return storageLocationType_;}
+      T& operator[](size_t idx) 
+      {
+        assert(idx < nelems());
+
+        return data_[idx];
+      }
+
+      void allocate()
+      {
+        if (location() == Device) {
+          assert(false); //TODO
+        } else {
+          data_ = new T[nelems()];
+        }
+      }
+
+      void free()
+      {
+        if (location() == Device) {
+          assert(false); //TODO
+        } else {
+          delete[] data_;
+        }
+      }
+
+      ~Array()
+      {
+        free();
+      }
+  };
 }
 
 #define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
@@ -242,20 +321,21 @@ namespace GPUUtils {
 
     return warp_mask;
   }
-
-  void copy_partition_to_gpu (CSRPartition& part, CSRPartition*& device_csr, CSR::Vertex*& device_vertex_array, CSR::Edge*& device_edge_array)
+  
+  void copy_partition_to_gpu(CSRPartition& part, GPUCSRPartition& gpuCSRPartition)
   {
-    CHK_CU (cudaMalloc (&device_csr, sizeof(CSRPartition)));
-    CHK_CU (cudaMalloc (&device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
-    CHK_CU (cudaMalloc (&device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
-    CHK_CU (cudaMemcpy (device_vertex_array, part.vertices, sizeof (CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
-    CHK_CU (cudaMemcpy (device_edge_array, part.edges, sizeof (CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_csr, sizeof(CSRPartition)));
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_vertex_array, part.vertices, sizeof(CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_edge_array, part.edges, sizeof(CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
 
-    CSRPartition device_csr_partition_value = CSRPartition (part.first_vertex_id,
-                                                            part.last_vertex_id, 
-                                                            part.first_edge_idx, part.last_edge_idx, 
-                                                            device_vertex_array, device_edge_array);
-    CHK_CU (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
+    CSRPartition device_csr_partition_value = CSRPartition(part.first_vertex_id,
+                                                           part.last_vertex_id, 
+                                                           part.first_edge_idx, part.last_edge_idx, 
+                                                           gpuCSRPartition.device_vertex_array, 
+                                                           gpuCSRPartition.device_edge_array);
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
   }
   
   __host__ __device__ int num_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 

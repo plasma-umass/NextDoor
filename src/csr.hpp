@@ -5,6 +5,7 @@
 
 typedef int32_t VertexID;
 typedef int32_t EdgePos_t;
+typedef VertexID VertexID_t;
 
 class VertexRange 
 {
@@ -340,6 +341,13 @@ public:
   //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);
   //   }
   // }
+};
+
+struct GPUCSRPartition
+{
+  CSRPartition* device_csr;
+  CSR::Vertex* device_vertex_array;
+  CSR::Edge* device_edge_array;
 };
 
 #ifdef USE_CONSTANT_MEM

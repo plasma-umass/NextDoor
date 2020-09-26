@@ -171,9 +171,3 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   }
 }
 
-__global__ void init_curand_states(curandState* states, size_t num_states)
-{
-  int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-  if (thread_id < num_states)
-    curand_init(1234, 0, 0, &states[thread_id]);
-}
