@@ -390,7 +390,7 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
   return nextDoorData.hFinalSamples;
 }
 
-int main(int argc, char* argv[])
+int nextdoor(int argc, char* argv[])
 {
   std::vector<Vertex> vertices;
 
@@ -429,7 +429,6 @@ int main(int argc, char* argv[])
   std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
       graph.get_vertices ().size () << " vertices " << std::endl; 
 
-  
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
 
   NextDoorData nextDoorData;
@@ -468,12 +467,4 @@ int main(int argc, char* argv[])
       std::cout << "]" << std::endl;
     }
   }
-  
-  // std::cout << "GPU Time: " << gpu_time << " secs" << std::endl;
-  
-  // std::cout << "Total " << N_HOPS << "-hop neighbors " << total_neighbors << std::endl;
-
-  // std::cout << "Results are correct? " <<check_result(csr, additions_sizes, neighbors) << std::endl;
-  // std::cout << "Time spent in GPU kernel execution " << kernelTotalTime << std::endl;
-  // std::cout << "Time spent in Streams " << total_stream_time << std::endl;
 }
