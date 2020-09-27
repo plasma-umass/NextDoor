@@ -6,7 +6,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
   //of the k-1th hop neighbors.
 
   //First create the adjacency matrix.
-
+  std::cout << "checking results" << std::endl;
   std::unordered_map<VertexID, std::unordered_set<VertexID>> adj_matrix;
 
   for (VertexID v : csr->iterate_vertices()) {
@@ -21,7 +21,6 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
   for (int step = 0; step < steps(); step++) {
-    printf("checking at step %d\n", step);
     if (step == 0) {
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
         const size_t sampleId = s/finalSampleSize;

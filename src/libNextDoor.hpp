@@ -4,13 +4,30 @@
 #include "sampler.cuh"
 #include "rand_num_gen.cuh"
 
-struct NextDoorData {
+#include <curand.h>
+#include <curand_kernel.h>
+#include <vector>
 
+#ifndef __NEXTDOOR_HPP__
+#define __NEXTDOOR_HPP__
+
+struct NextDoorData {
+  std::vector<VertexID_t> samples;
+  std::vector<VertexID_t> hFinalSamples;
+  VertexID_t* dSamplesToTransitMapKeys;
+  VertexID_t* dSamplesToTransitMapValues;
+  VertexID_t* dTransitToSampleMapKeys;
+  VertexID_t* dTransitToSampleMapValues;
+  EdgePos_t* dSampleInsertionPositions;
+  curandState* dCurandStates;
+  VertexID_t* dFinalSamples;
+  int INVALID_VERTEX;
 };
 
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format);
 GPUCSRPartition transferCSRToGPU(CSR* csr);
-// std::vector<VertexID_t> createInitialSamples(CSR* csr);
 bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data);
-bool doSampling(NextDoorData& data);
-std::vector<VertexID_t>* getFinalSamples(NextDoorData& data);
+bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& data);
+std::vector<VertexID_t>& getFinalSamples(NextDoorData& data);
+
+#endif

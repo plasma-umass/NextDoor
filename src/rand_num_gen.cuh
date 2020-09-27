@@ -1,3 +1,6 @@
+#ifndef __RAND_NUM_GEN_CUH__
+#define __RAND_NUM_GEN_CUH__
+
 class RandNumGen {
 private:
   float* rand_nums;
@@ -166,3 +169,5 @@ public:
     return d_ptr;
   }
 };
+
+#endif

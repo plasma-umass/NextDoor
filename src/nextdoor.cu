@@ -75,6 +75,7 @@ typedef VertexID VertexID_t;
 #include "pinned_memory_alloc.hpp"
 #include "sampler.cuh"
 #include "rand_num_gen.cuh"
+#include "libNextDoor.hpp"
 
 using namespace utils;
 using namespace GPUUtils;
@@ -193,7 +194,56 @@ __global__ void init_curand_states(curandState* states, size_t num_states)
     curand_init(1234, 0, 0, &states[thread_id]);
 }
 
-bool loadGraph(Graph& graph, AnyOption* opt) 
+CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format)
+{
+  CSR* csr;
+
+   //Load Graph
+   if (strcmp(graph_type, "adj-list") == 0) {
+    if (strcmp(graph_format, "text") == 0) {
+      graph.load_from_adjacency_list(graph_file);
+      //Convert graph to CSR format
+      csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
+      csr_from_graph (csr, graph);
+      return csr;
+    }
+    else {
+      printf ("graph_format '%s' not supported for graph_type '%s'\n", 
+              graph_format, graph_type);
+      return nullptr;
+    }
+  } else if (strcmp(graph_type, "edge-list") == 0) {
+    if (strcmp(graph_format, "binary") == 0) {
+      graph.load_from_edge_list_binary(graph_file, true);
+      csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
+      csr_from_graph (csr, graph);
+      return csr;
+    } else if (strcmp(graph_format, "text") == 0) {
+      FILE* fp = fopen (graph_file, "r");
+      if (fp == nullptr) {
+        std::cout << "File '" << graph_file << "' not found" << std::endl;
+        return nullptr;
+      }
+      graph.load_from_edge_list_txt(fp, true);
+      fclose (fp);
+      csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
+      csr_from_graph (csr, graph);
+      return csr;
+    } else {
+      printf ("graph_format '%s' not supported for graph_type '%s'\n", 
+              graph_format, graph_type);
+      return nullptr;
+    }
+  } else {
+    printf("Incorrect graph file type '%s'\n", graph_type);
+    return nullptr;
+  }
+
+  return nullptr;
+}
+
+
+CSR* loadGraph(Graph& graph, AnyOption* opt) 
 {
   char* graph_file = opt->getValue('g');
   char* graph_type = opt->getValue('t');
@@ -205,42 +255,139 @@ bool loadGraph(Graph& graph, AnyOption* opt)
     delete opt;
     return 0;
   }
+  
+  return loadGraph(graph, graph_file, graph_type, graph_format);
+}
 
-  //Load Graph
-  if (strcmp(graph_type, "adj-list") == 0) {
-    if (strcmp(graph_format, "text") == 0) {
-      graph.load_from_adjacency_list(graph_file);
-      return true;
-    }
-    else {
-      printf ("graph_format '%s' not supported for graph_type '%s'\n", 
-              graph_format, graph_type);
-      return false;
-    }
-  } else if (strcmp(graph_type, "edge-list") == 0) {
-    if (strcmp(graph_format, "binary") == 0) {
-      graph.load_from_edge_list_binary(graph_file, true);
-      return true;
-    } else if (strcmp(graph_format, "text") == 0) {
-      FILE* fp = fopen (graph_file, "r");
-      if (fp == nullptr) {
-        std::cout << "File '" << graph_file << "' not found" << std::endl;
-        return false;
-      }
-      graph.load_from_edge_list_txt(fp, true);
-      fclose (fp);
-      return true;
-    } else {
-      printf ("graph_format '%s' not supported for graph_type '%s'\n", 
-              graph_format, graph_type);
-      return false;
-    }
-  } else {
-    printf("Incorrect graph file type '%s'\n", graph_type);
-    return false;
+GPUCSRPartition transferCSRToGPU(CSR* csr)
+{
+  //Assume that whole graph can be stored in GPU Memory.
+  //Hence, only one Graph Partition is created.
+  CSRPartition full_partition = CSRPartition (0, csr->get_n_vertices () - 1, 0, csr->get_n_edges () - 1, 
+                                              csr->get_vertices (), csr->get_edges ());
+  
+  //Copy full graph to GPU
+  GPUCSRPartition gpuCSRPartition;
+  copy_partition_to_gpu(full_partition, gpuCSRPartition);
+
+  return gpuCSRPartition;
+}
+
+bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
+{
+  //Initially each sample contains only one vertex
+  //Allocate one sample for each vertex
+  for (auto vertex : csr->iterate_vertices()) {
+    data.samples.push_back(vertex);
+  }
+  
+  //Size of each sample output
+  size_t maxNeighborsToSample = 1;
+  for (int step = 0; step < steps(); step++) {
+    maxNeighborsToSample *= stepSize(step);
   }
 
-  return false;
+  size_t finalSampleSize = 0;
+  size_t neighborsToSampleAtStep = 1;
+  for (int step = 0; step < steps(); step++) {
+    neighborsToSampleAtStep *= stepSize(step);
+    finalSampleSize += neighborsToSampleAtStep;
+  }
+
+  //Allocate storage for final samples on GPU
+  data.hFinalSamples = std::vector<VertexID_t>(finalSampleSize*data.samples.size());
+
+  CHK_CU(cudaMalloc(&data.dFinalSamples, sizeof(VertexID_t)*data.hFinalSamples.size()));
+
+  //Samples to Transit Map
+  
+  CHK_CU(cudaMalloc(&data.dSamplesToTransitMapKeys, sizeof(VertexID_t)*data.hFinalSamples.size()));
+  CHK_CU(cudaMalloc(&data.dSamplesToTransitMapValues, sizeof(VertexID_t)*data.hFinalSamples.size()));
+
+  //Transit to Samples Map
+  
+  CHK_CU(cudaMalloc(&data.dTransitToSampleMapKeys, sizeof(VertexID_t)*data.hFinalSamples.size()));
+  CHK_CU(cudaMalloc(&data.dTransitToSampleMapValues, sizeof(VertexID_t)*data.hFinalSamples.size()));
+
+  //Same as initial values of samples for first iteration
+  CHK_CU(cudaMemcpy(data.dTransitToSampleMapKeys, &data.samples[0], sizeof(VertexID_t)*data.samples.size(), 
+                    cudaMemcpyHostToDevice));
+  CHK_CU(cudaMemcpy(data.dTransitToSampleMapValues, &data.samples[0], sizeof(VertexID_t)*data.samples.size(), 
+                    cudaMemcpyHostToDevice));
+
+  //Insertion positions per transit vertex for each sample
+  
+  CHK_CU(cudaMalloc(&data.dSampleInsertionPositions, sizeof(EdgePos_t)*data.samples.size()));
+
+  data.INVALID_VERTEX = csr->get_n_vertices();
+  
+  CHK_CU(cudaMalloc(&data.dCurandStates, maxNeighborsToSample*data.samples.size()*sizeof(curandState)));
+  init_curand_states<<<next_multiple(data.samples.size()*maxNeighborsToSample, 256), 256>>> (data.dCurandStates, data.samples.size()*maxNeighborsToSample);
+  CHK_CU(cudaDeviceSynchronize());
+}
+
+bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
+{
+    //Size of each sample output
+    size_t maxNeighborsToSample = 1;
+    for (int step = 0; step < steps(); step++) {
+      maxNeighborsToSample *= stepSize(step);
+    }
+  
+    size_t finalSampleSize = 0;
+    size_t neighborsToSampleAtStep = 1;
+    for (int step = 0; step < steps(); step++) {
+      neighborsToSampleAtStep *= stepSize(step);
+      finalSampleSize += neighborsToSampleAtStep;
+    }
+  
+    neighborsToSampleAtStep = 1;
+  
+    double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
+    for (int step = 0; step < steps(); step++) {
+      neighborsToSampleAtStep *= stepSize(step);
+      const size_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
+      
+      //Sample neighbors of transit vertices
+      samplingKernel<<<next_multiple(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                     (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                     totalThreads, nextDoorData.samples.size(),
+                     nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                     nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                     nextDoorData.dCurandStates);
+      CHK_CU(cudaGetLastError());
+      CHK_CU(cudaDeviceSynchronize());
+  
+      if (step != steps() - 1) {
+        //Invert sample->transit map by sorting samples based on the transit vertices
+        VertexID_t* d_temp_storage = nullptr;
+        size_t temp_storage_bytes = 0;
+        
+        //Check if the space runs out.
+        //TODO: Use DoubleBuffer version that requires O(P) space.
+        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                  nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
+                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, totalThreads);
+        
+        CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
+  
+        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                        nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
+                                        nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, totalThreads);
+      }
+    }
+  
+    double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());
+    
+  
+    
+    std::cout << "End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
+}
+
+std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
+{
+  CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamples[0], nextDoorData.dFinalSamples, nextDoorData.hFinalSamples.size()*sizeof(nextDoorData.hFinalSamples[0]), cudaMemcpyDeviceToHost));
+  return nextDoorData.hFinalSamples;
 }
 
 int main(int argc, char* argv[])
@@ -274,43 +421,24 @@ int main(int argc, char* argv[])
 
   //Load Graph
   Graph graph;
-  if (loadGraph(graph, opt) == false) {
+  CSR* csr;
+  if ((csr = loadGraph(graph, opt)) == nullptr) {
     return 1;
   }
 
   std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
       graph.get_vertices ().size () << " vertices " << std::endl; 
 
-  //Convert graph to CSR format
-  CSR* csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
-  csr_from_graph (csr, graph);
-
-  double total_stream_time = 0;
-
-  double_t kernelTotalTime = 0.0;
-  std::vector<CSRPartition> csr_partitions;
-
-  //Assume that whole graph can be stored in GPU Memory.
-  //Hence, only one Graph Partition is created.
-  CSRPartition full_partition = CSRPartition (0, csr->get_n_vertices () - 1, 0, csr->get_n_edges () - 1, 
-                                              csr->get_vertices (), csr->get_edges ());
-  csr_partitions.push_back (full_partition);
-
-  assert(csr_partitions.size() == 1);
   
-  //Copy full graph to GPU
-  GPUCSRPartition gpuCSRPartition;
-  copy_partition_to_gpu(csr_partitions[0], gpuCSRPartition);
+  GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
 
-  //Initially each sample contains only one vertex
-  std::vector<VertexID_t> samples;
-
-  //Allocate one sample for each vertex
-  for (auto vertex : csr->iterate_vertices()) {
-    samples.push_back(vertex);
-  }
+  NextDoorData nextDoorData;
+  allocNextDoorDataOnGPU(csr, nextDoorData);
   
-  //Size of each sample output
+  doSampling(gpuCSRPartition, nextDoorData);
+
+  std::vector<VertexID_t>& hFinalSamples = getFinalSamples(nextDoorData);
+
   size_t maxNeighborsToSample = 1;
   for (int step = 0; step < steps(); step++) {
     maxNeighborsToSample *= stepSize(step);
@@ -322,92 +450,17 @@ int main(int argc, char* argv[])
     neighborsToSampleAtStep *= stepSize(step);
     finalSampleSize += neighborsToSampleAtStep;
   }
-
-  //Allocate storage for final samples on GPU
-  std::vector<VertexID_t> hFinalSamples(finalSampleSize*samples.size());
-
-  VertexID_t* dFinalSamples;
-  CHK_CU(cudaMalloc(&dFinalSamples, sizeof(VertexID_t)*hFinalSamples.size()));
-
-  //Samples to Transit Map
-  VertexID_t* dSamplesToTransitMapKeys;
-  VertexID_t* dSamplesToTransitMapValues;
-  CHK_CU(cudaMalloc(&dSamplesToTransitMapKeys, sizeof(VertexID_t)*hFinalSamples.size()));
-  CHK_CU(cudaMalloc(&dSamplesToTransitMapValues, sizeof(VertexID_t)*hFinalSamples.size()));
-
-  //Transit to Samples Map
-  VertexID_t* dTransitToSampleMapKeys;
-  VertexID_t* dTransitToSampleMapValues;
-  CHK_CU(cudaMalloc(&dTransitToSampleMapKeys, sizeof(VertexID_t)*hFinalSamples.size()));
-  CHK_CU(cudaMalloc(&dTransitToSampleMapValues, sizeof(VertexID_t)*hFinalSamples.size()));
-
-  //Same as initial values of samples for first iteration
-  CHK_CU(cudaMemcpy(dTransitToSampleMapKeys, &samples[0], sizeof(VertexID_t)*samples.size(), 
-                    cudaMemcpyHostToDevice));
-  CHK_CU(cudaMemcpy(dTransitToSampleMapValues, &samples[0], sizeof(VertexID_t)*samples.size(), 
-                    cudaMemcpyHostToDevice));
-
-  //Insertion positions per transit vertex for each sample
-  EdgePos_t* dSampleInsertionPositions;
-  CHK_CU(cudaMalloc(&dSampleInsertionPositions, sizeof(EdgePos_t)*samples.size()));
-
-  const VertexID_t INVALID_VERTEX = graph.get_vertices().size();
   
-  curandState* dCurandStates;
-  
-  CHK_CU(cudaMalloc(&dCurandStates, maxNeighborsToSample*samples.size()*sizeof(curandState)));
-  init_curand_states<<<next_multiple(samples.size()*maxNeighborsToSample, 256), 256>>> (dCurandStates, samples.size()*maxNeighborsToSample);
-  CHK_CU(cudaDeviceSynchronize());
-
-  neighborsToSampleAtStep = 1;
-  
-  double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
-  for (int step = 0; step < steps(); step++) {
-    neighborsToSampleAtStep *= stepSize(step);
-    const size_t totalThreads = samples.size()*neighborsToSampleAtStep;
-    
-    //Sample neighbors of transit vertices
-    samplingKernel<<<next_multiple(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, INVALID_VERTEX,
-                   (const VertexID_t*)dTransitToSampleMapKeys, (const VertexID_t*)dTransitToSampleMapValues,
-                   totalThreads, samples.size(),
-                   dSamplesToTransitMapKeys, dSamplesToTransitMapValues,
-                   dFinalSamples, finalSampleSize, dSampleInsertionPositions,
-                   dCurandStates);
-    CHK_CU(cudaGetLastError());
-    CHK_CU(cudaDeviceSynchronize());
-
-    if (step != steps() - 1) {
-      //Invert sample->transit map by sorting samples based on the transit vertices
-      VertexID_t* d_temp_storage = nullptr;
-      size_t temp_storage_bytes = 0;
-      
-      //Check if the space runs out.
-      //TODO: Use DoubleBuffer version that requires O(P) space.
-      cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
-                                      dSamplesToTransitMapValues, dTransitToSampleMapKeys, dSamplesToTransitMapKeys, dTransitToSampleMapValues, totalThreads);
-      
-      CHK_CU (cudaMalloc(&d_temp_storage, temp_storage_bytes));
-
-      cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
-                                      dSamplesToTransitMapValues, dTransitToSampleMapKeys, dSamplesToTransitMapKeys, dTransitToSampleMapValues, totalThreads);
-    }
-  }
-
-  double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());
-  
-
-  CHK_CU(cudaMemcpy(&hFinalSamples[0], dFinalSamples, hFinalSamples.size()*sizeof(hFinalSamples[0]), cudaMemcpyDeviceToHost));
-
   size_t totalSampledVertices = 0;
   for (auto s : hFinalSamples) {
-    totalSampledVertices += (int)(s != INVALID_VERTEX);
+    totalSampledVertices += (int)(s != nextDoorData.INVALID_VERTEX);
   }
 
   std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
-  if (opt->getFlag('check-results'))
-    assert(check_result(csr, INVALID_VERTEX, samples, finalSampleSize, hFinalSamples));
+  if (opt->getFlag("check-results"))
+    assert(check_result(csr, nextDoorData.INVALID_VERTEX, nextDoorData.samples, finalSampleSize, hFinalSamples));
 
-  if (opt->getFlag('print-samples')) {
+  if (opt->getFlag("print-samples")) {
     for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
       std::cout << "Contents of sample " << s/finalSampleSize << " [";
       for(size_t v = s; v < s + finalSampleSize; v++)
@@ -417,7 +470,7 @@ int main(int argc, char* argv[])
   }
   
   // std::cout << "GPU Time: " << gpu_time << " secs" << std::endl;
-  std::cout << "End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
+  
   // std::cout << "Total " << N_HOPS << "-hop neighbors " << total_neighbors << std::endl;
 
   // std::cout << "Results are correct? " <<check_result(csr, additions_sizes, neighbors) << std::endl;
