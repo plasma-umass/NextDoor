@@ -23,23 +23,30 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
   for (int step = 0; step < steps(); step++) {
     if (step == 0) {
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
+        std::unordered_set<VertexID_t> uniqueNeighbors;
+
         const size_t sampleId = s/finalSampleSize;
         const VertexID_t initialVal = initialSamples[sampleId];
         size_t contentsLength = 0;
         for (size_t v = s + numNeighborsToSampleAtStep; v < s + stepSize(step); v++) {
           VertexID_t transit = finalSamples[v];
+          uniqueNeighbors.insert(transit);
           contentsLength += (int)(transit != INVALID_VERTEX);
 
           if (transit != INVALID_VERTEX &&
               adj_matrix[initialVal].count(transit) == 0) {
-            printf("Invalid '%d' in Sample '%d' at Step '%d'\n", transit, sampleId, step);
+            printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
             return false;
           }
         }
 
+
+        // if (uniqueNeighbors.size() < stepSize(step)) {
+        //   printf("uniqueneibhors %ld\n", uniqueNeighbors.size());
+        // }
         if (contentsLength == 0 && adj_matrix[initialVal].size() > 0) {
-          printf("'%d' vertices sampled for sample '%d' but sum of edges of all vertices in sample is '%d'\n", 
-                  contentsLength, sampleId, adj_matrix[initialVal].size());
+          printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
+                  step, contentsLength, sampleId, adj_matrix[initialVal].size());
           return false;
         }
       }
@@ -57,7 +64,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
         for (size_t v = s + numNeighborsToSampleAtStep; v < s + numNeighborsToSampleAtStep + numNeighborsToSampleAtStep*stepSize(step); v++) {
           VertexID_t transit = finalSamples[v];
           contentsLength += (int)(transit != INVALID_VERTEX);
-
+          
           bool found = false;
           if (transit != INVALID_VERTEX) {
             for (size_t v1 = s + numNeighborsSampledAtPrevStep; v1 < s + numNeighborsToSampleAtStep; v1++) {
@@ -68,7 +75,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
             }
 
             if (found == false) {
-              printf("Invalid '%d' in Sample '%d' at Step '%d'\n", transit, sampleId, step);
+              printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
               std::cout << "Contents of samples : [";
               for (size_t v2 = s; v2 < s + finalSampleSize; v2++) {
                 std::cout << finalSamples[v2] << ", ";
@@ -77,13 +84,12 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
               return false;
             }
           }
+        }
 
-          
-          if (contentsLength == 0 && sumEdgesOfNeighborsAtPrevStep > 0) {
-            printf("'%d' vertices sampled for sample '%d' but sum of edges of all vertices in sample is '%d'\n", 
-                    contentsLength, sampleId, sumEdgesOfNeighborsAtPrevStep);
-            return false;
-          }
+        if (contentsLength == 0 && sumEdgesOfNeighborsAtPrevStep > 0) {
+          printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
+                  step, contentsLength, sampleId, sumEdgesOfNeighborsAtPrevStep);
+          return false;
         }
       }
     }

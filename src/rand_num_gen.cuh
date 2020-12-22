@@ -140,7 +140,7 @@ public:
       EdgePos_t id =  (EdgePos_t)round(ff) - 1.0f;
 #ifndef NDEBUG
       if (!(0 <= id && id < num_edges))
-      printf ("vertex %d num_edges %ld id %ld ff %lf\n", vertex, num_edges, id, ff);
+      printf ("vertex %d num_edges %ld id %ld ff %lf\n", vertex, (long)num_edges, (long)id, ff);
         assert(0 <= id && id < num_edges);
 #endif
       return id;

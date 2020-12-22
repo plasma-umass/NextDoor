@@ -40,10 +40,23 @@ static PyObject* finalSamples(PyObject *self, PyObject *args)
   return result;
 }
 
+static PyObject* finalSampleLength(PyObject *self, PyObject *args)
+{
+  std::vector<VertexID_t>& final = getFinalSamples(nextDoorData);
+
+  return Py_BuildValue("i", final.size());
+}
+
+extern "C" int* finalSamplesArray()
+{
+  return &getFinalSamples(nextDoorData)[0];
+}
+
 static PyMethodDef NextDoorMethods[] = {
   {"initSampling",  initSampling, METH_VARARGS, "Initialize Sampling"},
   {"sample",  sample, METH_VARARGS, "Do Sampling on GPU"},
   {"finalSamples", finalSamples, METH_VARARGS, "Final Samples"},
+  {"finalSampleLength", finalSampleLength, METH_VARARGS, "Length of Final Samples Array"},
   {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 

@@ -34,7 +34,7 @@ public:
   void set_id (int _id) {id = _id;}
   int get_id () {return id;}
   int get_label () {return label;}
-  int set_label (int l) {label = l;}
+  void set_label (int l) {label = l;}
   void add_edge (int vertexID) {edges.push_back (vertexID);}
   void sort_edges () {std::sort (edges.begin(), edges.end ());}
   void update_edges (std::unordered_map <int, int>& prev_to_new_ids) 
@@ -104,28 +104,28 @@ public:
     fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    size_t max_vertex = 0;
     char *string = new char[fsize + 1];
-    fread(string, 1, fsize, fp);
+    if (fread(string, 1, fsize, fp) != (size_t)fsize) {
+      std::cout << "" << std::endl;
+      abort();
+    }
     std::cout << "graph string loaded " << std::endl;
 
     n_edges = 0;
-
-    // std::unordered_set<int> vertices_with_degree;
     
-    for (size_t s = 0; s < fsize; s += 12) {
+    for (size_t s = 0; s < (size_t)fsize; s += 12) {
       int src = *(int*)(string+s);
       int dst = *(int*)(string+s+4);
-      float weight = *(float*)(string+s+8);
+      //float weight = *(float*)(string+s+8);
 
-      if (src > vertices.size()) {
+      if ((size_t)src > vertices.size()) {
         vertices.resize(src+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
         // }
       }
 
-      if (dst > vertices.size()) {
+      if ((size_t)dst > vertices.size()) {
         vertices.resize(dst+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
@@ -158,7 +158,10 @@ public:
 
     for (int part = 0; part < 1; part++) {
       char *string = new char[fsize/1 + 1];
-      fread(string, 1, fsize/1, fp);
+      if (fread(string, 1, fsize/1, fp) != (size_t)fsize/1) {
+        std::cout<<"Error reading at "<<__FILE__<<":"<<__LINE__<<std::endl;
+        abort();
+      }
       std::cout << "graph string loaded " << std::endl;
       std::string ss = std::string(string)+"\n";
       std::stringstream iss(ss);
@@ -278,6 +281,18 @@ public:
       vertices.push_back(vertex);
     }
 
+    //Rename vertices so that each vertex is between [0, N]
+
+    std::unordered_map<int, int> origIDToNewID;
+
+    for (size_t i = 0; i < vertices.size(); i++) {
+      origIDToNewID[vertices[i].get_id()] = i;
+      vertices[i].set_id (i);
+    }
+
+    for (size_t i = 0; i < vertices.size (); i++) {
+       vertices[i].update_edges (origIDToNewID);
+    }
     //Sort vertices by number of edges
     // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
 

@@ -253,9 +253,9 @@ namespace utils {
         }
       }
 
-      T* data() {return data_;}
-      inline size_t nelems() {return nelems_;}
-      inline StorageLocationType location() {return storageLocationType_;}
+      T* data() const {return data_;}
+      inline size_t nelems() const {return nelems_;}
+      inline StorageLocationType location() const {return storageLocationType_;}
       T& operator[](size_t idx) 
       {
         assert(idx < nelems());
