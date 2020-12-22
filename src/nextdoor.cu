@@ -72,7 +72,7 @@ typedef VertexID VertexID_t;
 
 #include "csr.hpp"
 #include "utils.hpp"
-#include "pinned_memory_alloc.hpp"
+// #include "pinned_memory_alloc.hpp"
 #include "sampler.cuh"
 #include "rand_num_gen.cuh"
 #include "libNextDoor.hpp"
