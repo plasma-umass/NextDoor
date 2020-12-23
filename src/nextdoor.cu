@@ -26,6 +26,9 @@
 
 #include "sample.hpp"
 
+#ifndef __NEXTDOOR_CU__
+#define __NEXTDOOR_CU__
+
 typedef VertexID VertexID_t;
 
 //TODO-List:
@@ -94,17 +97,19 @@ const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
 const bool has_random = true;
-__host__ __device__ int steps();
+extern "C" {
+  __host__ __device__ int steps();
 
-__host__ __device__ 
-int stepSize(int k);
+  __host__ __device__ 
+  int stepSize(int k);
 
-__device__ inline
-VertexID next(int step, const VertexID transit, const VertexID sample, 
-              const CSR::Edge* transitEdges, const EdgePos_t numEdges,
-              const EdgePos_t neighbrID, 
-              curandState* state);
-__host__ __device__ int steps();
+  __device__ inline
+  VertexID next(int step, const VertexID transit, const VertexID sample, 
+                const CSR::Edge* transitEdges, const EdgePos_t numEdges,
+                const EdgePos_t neighbrID, 
+                curandState* state);
+  __host__ __device__ int steps();
+}
 
 // __host__ __device__ 
 // int stepSize(int k) {
@@ -350,13 +355,22 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
   
   CHK_CU(cudaMalloc(&data.dSampleInsertionPositions, sizeof(EdgePos_t)*data.samples.size()));
 
-  
-  
   CHK_CU(cudaMalloc(&data.dCurandStates, maxNeighborsToSample*data.samples.size()*sizeof(curandState)));
   init_curand_states<<<thread_block_size(data.samples.size()*maxNeighborsToSample, 256UL), 256UL>>> (data.dCurandStates, data.samples.size()*maxNeighborsToSample);
   CHK_CU(cudaDeviceSynchronize());
 
   return true;
+}
+
+void freeDeviceData(NextDoorData& data) 
+{
+  CHK_CU(cudaFree(data.dSamplesToTransitMapKeys));
+  CHK_CU(cudaFree(data.dSamplesToTransitMapValues));
+  CHK_CU(cudaFree(data.dTransitToSampleMapKeys));
+  CHK_CU(cudaFree(data.dTransitToSampleMapValues));
+  CHK_CU(cudaFree(data.dSampleInsertionPositions));
+  CHK_CU(cudaFree(data.dCurandStates));
+  CHK_CU(cudaFree(data.dFinalSamples));
 }
 
 bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
@@ -478,8 +492,11 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   }
 
   std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
+  freeDeviceData(nextDoorData);
   if (chk_results)
     return check_result(csr, nextDoorData.INVALID_VERTEX, nextDoorData.samples, finalSampleSize, hFinalSamples);
 
   return 0;
 }
+
+#endif

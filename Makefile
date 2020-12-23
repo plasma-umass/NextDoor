@@ -20,8 +20,12 @@ gpuRelease: src/nextdoor.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_m
 graphSageIntegration: src/nextDoorModule.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_memory_alloc.hpp src/sampler.cuh src/check_results.cu src/nextdoor.cu
 	nvcc --default-stream per-thread $< -I/usr/include/python2.7/ -std=c++11 -arch=compute_61 -I/mnt/homes/abhinav/cub-1.8.0 -IAnyOption/ AnyOption/anyoption.cpp -I./Heap-Layers -O3 -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
 
-test: src/tests/khopTests.cu src/nextdoor.cu
-	nvcc src/tests/khopTests.cu -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -o test
+test: khopTest uniformRandWalkTest
+	
+khopTest: src/tests/khopTests.cu src/nextdoor.cu src/tests/testBase.h
+	nvcc $< -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -o $@
 
+uniformRandWalkTest: src/tests/uniformRandWalk.cu src/nextdoor.cu src/tests/testBase.h
+	nvcc $< -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -o $@
 clean:
 	rm -rf cpu gpu *.h.gch *.o src/*.h.gch src/*.o src/*.o
