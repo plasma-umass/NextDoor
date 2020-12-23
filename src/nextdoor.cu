@@ -24,7 +24,6 @@
 #include <curand_kernel.h>
 #include <cuda.h>
 
-#include <anyoption.h>
 #include "sample.hpp"
 
 typedef VertexID VertexID_t;
@@ -95,25 +94,35 @@ const int ALL_NEIGHBORS = -1;
 
 //GraphSage 2-hop sampling
 const bool has_random = true;
-__host__ __device__ int steps() {return 2;}
+__host__ __device__ int steps();
 
 __host__ __device__ 
-int stepSize(int k) {
-  return ((k == 0) ? 5 : 2);
-}
+int stepSize(int k);
 
 __device__ inline
 VertexID next(int step, const VertexID transit, const VertexID sample, 
               const CSR::Edge* transitEdges, const EdgePos_t numEdges,
               const EdgePos_t neighbrID, 
-              curandState* state)
-{
-  EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-  // if (sample == 100 && transit == 100) {
-  //   printf("113: id %ld transitEdges[id] %d\n", (long)id, transitEdges[id]);
-  // }
-  return transitEdges[id];
-}
+              curandState* state);
+__host__ __device__ int steps();
+
+// __host__ __device__ 
+// int stepSize(int k) {
+//   return ((k == 0) ? 5 : 2);
+// }
+
+// __device__ inline
+// VertexID next(int step, const VertexID transit, const VertexID sample, 
+//               const CSR::Edge* transitEdges, const EdgePos_t numEdges,
+//               const EdgePos_t neighbrID, 
+//               curandState* state)
+// {
+//   EdgePos_t id = RandNumGen::rand_int(state, numEdges);
+//   // if (sample == 100 && transit == 100) {
+//   //   printf("113: id %ld transitEdges[id] %d\n", (long)id, transitEdges[id]);
+//   // }
+//   return transitEdges[id];
+// }
 
 /**********************/
 
@@ -280,23 +289,6 @@ CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_for
   return nullptr;
 }
 
-
-CSR* loadGraph(Graph& graph, AnyOption* opt) 
-{
-  char* graph_file = opt->getValue('g');
-  char* graph_type = opt->getValue('t');
-  char* graph_format = opt->getValue('f');
-
-  if (graph_file == nullptr || graph_type == nullptr || 
-      graph_format == nullptr) {
-    opt->printUsage();
-    delete opt;
-    return 0;
-  }
-  
-  return loadGraph(graph, graph_file, graph_type, graph_format);
-}
-
 GPUCSRPartition transferCSRToGPU(CSR* csr)
 {
   //Assume that whole graph can be stored in GPU Memory.
@@ -436,39 +428,14 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
   return nextDoorData.hFinalSamples;
 }
 
-int nextdoor(int argc, char* argv[])
+int nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, const bool chk_results, const bool print_samples)
 {
   std::vector<Vertex> vertices;
-
-  AnyOption *opt = new AnyOption();
-  opt->addUsage("usage: ");
-  opt->addUsage("");
-  opt->addUsage("-h --help        Prints this help");
-  opt->addUsage("-g --graph-file  File containing graph");
-  opt->addUsage("-t --graph-type <type> Format of graph file: 'adj-list' or 'edge-list'");
-  opt->addUsage("-f --format <format> Format of graph file: 'binary' or 'text'");
-  opt->addUsage("-chk --check-results Check results using an algorithm");
-  opt->addUsage("-p --print-samples Print Samples");
-
-  opt->setFlag("help", 'h');
-  opt->setOption("graph-file",  'g');
-  opt->setOption("graph-type", 't');
-  opt->setOption("graph-format", 'f');
-  opt->setFlag("print-samples", 'p');
-  opt->setFlag("check-results", 'c');
-
-  opt->processCommandArgs(argc, argv);
-
-  if (!opt->hasOptions()) {
-    opt->printUsage();
-    delete opt;
-    return 0;
-  }  
 
   //Load Graph
   Graph graph;
   CSR* csr;
-  if ((csr = loadGraph(graph, opt)) == nullptr) {
+  if ((csr = loadGraph(graph, (char*)graph_file, (char*)graph_type, (char*)graph_format)) == nullptr) {
     return 1;
   }
 
@@ -501,11 +468,7 @@ int nextdoor(int argc, char* argv[])
     totalSampledVertices += (int)(s != nextDoorData.INVALID_VERTEX);
   }
 
-  std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
-  if (opt->getFlag("check-results"))
-    assert(check_result(csr, nextDoorData.INVALID_VERTEX, nextDoorData.samples, finalSampleSize, hFinalSamples));
-
-  if (opt->getFlag("print-samples")) {
+  if (print_samples) {
     for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
       std::cout << "Contents of sample " << s/finalSampleSize << " [";
       for(size_t v = s; v < s + finalSampleSize; v++)
@@ -513,6 +476,10 @@ int nextdoor(int argc, char* argv[])
       std::cout << "]" << std::endl;
     }
   }
+
+  std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
+  if (chk_results)
+    return check_result(csr, nextDoorData.INVALID_VERTEX, nextDoorData.samples, finalSampleSize, hFinalSamples);
 
   return 0;
 }
