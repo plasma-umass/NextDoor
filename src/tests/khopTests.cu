@@ -21,9 +21,9 @@ extern "C" {
 
 }
 
-APP_TEST(KHop, Citeseer, GRAPH_PATH"/citeseer.graph")
-APP_TEST(KHop, Mico, GRAPH_PATH"/micro.graph")
-APP_TEST(KHop, Reddit, GRAPH_PATH"/reddit_sampled_matrix")
+APP_TEST(KHop, Citeseer, GRAPH_PATH"/citeseer.graph", 1)
+APP_TEST(KHop, Mico, GRAPH_PATH"/micro.graph", 1)
+APP_TEST(KHop, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 1)
 
 
 // TEST(KHop, Citeseer) {

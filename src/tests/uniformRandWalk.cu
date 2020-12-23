@@ -17,6 +17,6 @@ VertexID next(int step, const VertexID transit, const VertexID sample,
   return transitEdges[id];
 }
 
-APP_TEST(UniformRandWalk, Citeseer, GRAPH_PATH"/citeseer.graph")
-APP_TEST(UniformRandWalk, Mico, GRAPH_PATH"/micro.graph")
-APP_TEST(UniformRandWalk, Reddit, GRAPH_PATH"/reddit_sampled_matrix")
+APP_TEST(UniformRandWalk, Citeseer, GRAPH_PATH"/citeseer.graph", 10)
+APP_TEST(UniformRandWalk, Mico, GRAPH_PATH"/micro.graph", 10)
+APP_TEST(UniformRandWalk, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 10)

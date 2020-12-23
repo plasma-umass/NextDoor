@@ -27,7 +27,7 @@ struct NextDoorData {
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format);
 GPUCSRPartition transferCSRToGPU(CSR* csr);
 bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data);
-bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& data);
+bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& data, int nruns);
 std::vector<VertexID_t>& getFinalSamples(NextDoorData& data);
 
 #endif

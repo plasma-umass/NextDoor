@@ -74,7 +74,6 @@ typedef VertexID VertexID_t;
 
 #include "csr.hpp"
 #include "utils.hpp"
-// #include "pinned_memory_alloc.hpp"
 #include "sampler.cuh"
 #include "rand_num_gen.cuh"
 #include "libNextDoor.hpp"
@@ -131,8 +130,6 @@ extern "C" {
 
 /**********************/
 
-#include "check_results.cu"
-
 __host__ __device__
 EdgePos_t newNeighborsSize(int hop, EdgePos_t num_edges)
 {
@@ -153,9 +150,12 @@ EdgePos_t stepSizeAtStep(int step)
   return n;
 }
 
+
 __host__ __device__ int numberOfTransits(int step) {
   return stepSizeAtStep(step);
 }
+
+#include "check_results.cu"
 
 __global__ void samplingKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
                                const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
@@ -219,9 +219,12 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
   samplesToTransitKeys[transitIdx*stepSize(step) + transitNeighborIdx] = sample;
   samplesToTransitValues[transitIdx*stepSize(step) + transitNeighborIdx] = neighbor;
   
-  EdgePos_t insertionPos = sampleInsertionPositions[sample];
-  if (numberOfTransits(step) > 1)
+  EdgePos_t insertionPos = 0; 
+  if (numberOfTransits(step) > 1) {    
     insertionPos = utils::atomicAdd(&sampleInsertionPositions[sample], 1);
+  } else {
+    insertionPos = step;
+  }
 
   // if (insertionPos < finalSampleSize) {
   //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
@@ -438,11 +441,13 @@ bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
 
 std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
 {
-  CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamples[0], nextDoorData.dFinalSamples, nextDoorData.hFinalSamples.size()*sizeof(nextDoorData.hFinalSamples[0]), cudaMemcpyDeviceToHost));
+  CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamples[0], nextDoorData.dFinalSamples, 
+                    nextDoorData.hFinalSamples.size()*sizeof(nextDoorData.hFinalSamples[0]), cudaMemcpyDeviceToHost));
   return nextDoorData.hFinalSamples;
 }
 
-int nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, const bool chk_results, const bool print_samples)
+int nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, 
+             const int nruns, const bool chk_results, const bool print_samples)
 {
   std::vector<Vertex> vertices;
 
@@ -461,7 +466,8 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   NextDoorData nextDoorData;
   allocNextDoorDataOnGPU(csr, nextDoorData);
   
-  doSampling(gpuCSRPartition, nextDoorData);
+  for (int i = 0; i < nruns; i++)
+    doSampling(gpuCSRPartition, nextDoorData);
 
   std::vector<VertexID_t>& hFinalSamples = getFinalSamples(nextDoorData);
 

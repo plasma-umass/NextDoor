@@ -22,10 +22,10 @@ graphSageIntegration: src/nextDoorModule.cu src/csr.hpp src/utils.hpp src/graph.
 
 test: khopTest uniformRandWalkTest
 	
-khopTest: src/tests/khopTests.cu src/nextdoor.cu src/tests/testBase.h
+khopTest: src/tests/khopTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
 	nvcc $< -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -o $@
 
-uniformRandWalkTest: src/tests/uniformRandWalk.cu src/nextdoor.cu src/tests/testBase.h
+uniformRandWalkTest: src/tests/uniformRandWalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
 	nvcc $< -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -o $@
 clean:
 	rm -rf cpu gpu *.h.gch *.o src/*.h.gch src/*.o src/*.o

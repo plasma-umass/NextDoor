@@ -11,6 +11,7 @@ int main(int argc, char* argv[])
   opt->addUsage("-g --graph-file  File containing graph");
   opt->addUsage("-t --graph-type <type> Format of graph file: 'adj-list' or 'edge-list'");
   opt->addUsage("-f --format <format> Format of graph file: 'binary' or 'text'");
+  opt->addUsage("-n --nruns Number of runs");
   opt->addUsage("-chk --check-results Check results using an algorithm");
   opt->addUsage("-p --print-samples Print Samples");
 
@@ -18,6 +19,7 @@ int main(int argc, char* argv[])
   opt->setOption("graph-file",  'g');
   opt->setOption("graph-type", 't');
   opt->setOption("graph-format", 'f');
+  opt->setOption("nruns", "n");
   opt->setFlag("print-samples", 'p');
   opt->setFlag("check-results", 'c');
 
@@ -41,5 +43,5 @@ int main(int argc, char* argv[])
   }
 
   return nextdoor(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
-                  opt->getFlag("check-results"), opt->getFlag("print-samples"));
+                  opt->getValue('n'), opt->getFlag("check-results"), opt->getFlag("print-samples"));
 }

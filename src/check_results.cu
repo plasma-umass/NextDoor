@@ -1,3 +1,28 @@
+int numNeighborsSampledAtStep(int step)
+{
+  int n = 1;
+
+  if (step < 0) {
+    return 0;
+  }
+
+  if (stepSize(0) == 1) {
+    n = 1;
+  } else {
+    n = stepSize(0);
+  }
+
+  for(int i = 1; i <= step; i++) {
+    if (stepSize(i) == 1) {
+      n += stepSize(i);
+    } else {
+      n += n * stepSize(i);
+    }
+  }
+
+  return n;
+}
+
 bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
                   const size_t finalSampleSize, std::vector<VertexID_t>& finalSamples)
 {
@@ -20,6 +45,8 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
 
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
+  size_t numNeighborsSampledAtPrevStep = 0;
+
   for (int step = 0; step < steps(); step++) {
     if (step == 0) {
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
@@ -55,19 +82,24 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
         const size_t sampleId = s/finalSampleSize;
         size_t contentsLength = 0;
         size_t sumEdgesOfNeighborsAtPrevStep = 0;
-        const size_t numNeighborsSampledAtPrevStep = (step - 1 == 0) ? 0 : numNeighborsToSampleAtStep/stepSize(step);
         
-        for (size_t v = s + numNeighborsSampledAtPrevStep; v < s + numNeighborsToSampleAtStep; v++) {
+        for (size_t v = s + numNeighborsSampledAtStep(step-2); v < s + numNeighborsSampledAtStep(step-1); v++) {
           sumEdgesOfNeighborsAtPrevStep +=  adj_matrix[finalSamples[v]].size();
         }
-
-        for (size_t v = s + numNeighborsToSampleAtStep; v < s + numNeighborsToSampleAtStep + numNeighborsToSampleAtStep*stepSize(step); v++) {
+        
+        // if (sampleId == 48) {
+        //   printf("step %d start %d end %d\n", step, numNeighborsSampledAtStep(step-1),
+        //          ((step == steps() - 1) ? finalSampleSize : numNeighborsSampledAtStep(step)));
+        // }
+        for (size_t v = s + numNeighborsSampledAtStep(step-1); 
+             v < s + ((step == steps() - 1) ? finalSampleSize : numNeighborsSampledAtStep(step)); v++) {
           VertexID_t transit = finalSamples[v];
           contentsLength += (int)(transit != INVALID_VERTEX);
-          
+
           bool found = false;
           if (transit != INVALID_VERTEX) {
-            for (size_t v1 = s + numNeighborsSampledAtPrevStep; v1 < s + numNeighborsToSampleAtStep; v1++) {
+
+            for (size_t v1 = s + numNeighborsSampledAtStep(step-2); v1 < s + numNeighborsSampledAtStep(step-1); v1++) {
               if (adj_matrix[finalSamples[v1]].count(transit) > 0) {
                 found = true;
                 break;
@@ -76,7 +108,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
 
             if (found == false) {
               printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
-              std::cout << "Contents of samples : [";
+              std::cout << "Contents of sample : [";
               for (size_t v2 = s; v2 < s + finalSampleSize; v2++) {
                 std::cout << finalSamples[v2] << ", ";
               }
@@ -94,8 +126,8 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
       }
     }
 
-    if (step == 0) numNeighborsToSampleAtStep = stepSize(step);
-    else numNeighborsToSampleAtStep *= stepSize(step);
+    numNeighborsToSampleAtStep = stepSizeAtStep(step);
+    numNeighborsSampledAtPrevStep = stepSizeAtStep(step-1);
   }
 
   return true;
