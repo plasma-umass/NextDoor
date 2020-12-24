@@ -17,6 +17,8 @@ VertexID next(int step, const VertexID transit, const VertexID sample,
   return transitEdges[id];
 }
 
-APP_TEST(UniformRandWalk, Citeseer, GRAPH_PATH"/citeseer.graph", 10)
-APP_TEST(UniformRandWalk, Mico, GRAPH_PATH"/micro.graph", 10)
-APP_TEST(UniformRandWalk, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 10)
+//nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
+
+APP_TEST(UniformRandWalk, Citeseer, GRAPH_PATH"/citeseer.graph", 10) //SP: 0.5 ms
+APP_TEST(UniformRandWalk, Mico, GRAPH_PATH"/micro.graph", 10) //SP: 1.05 ms
+APP_TEST(UniformRandWalk, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 10) //SP: 1.43 ms

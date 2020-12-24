@@ -396,6 +396,17 @@ bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
                   cudaMemcpyHostToDevice));
   CHK_CU(cudaMemcpy(nextDoorData.dTransitToSampleMapValues, &nextDoorData.samples[0], sizeof(VertexID_t)*nextDoorData.samples.size(), 
                   cudaMemcpyHostToDevice));
+  VertexID_t* d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  
+  //Check if the space runs out.
+  //TODO: Use DoubleBuffer version that requires O(P) space.
+  cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+            nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
+            nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, nextDoorData.hFinalSamples.size());
+  
+  CHK_CU(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
@@ -413,17 +424,6 @@ bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
 
     if (step != steps() - 1) {
       //Invert sample->transit map by sorting samples based on the transit vertices
-      VertexID_t* d_temp_storage = nullptr;
-      size_t temp_storage_bytes = 0;
-      
-      //Check if the space runs out.
-      //TODO: Use DoubleBuffer version that requires O(P) space.
-      cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
-                nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
-                nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, totalThreads);
-      
-      CHK_CU(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-
       cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
                                       nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
                                       nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, totalThreads);
