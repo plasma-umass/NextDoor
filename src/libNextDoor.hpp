@@ -22,6 +22,7 @@ struct NextDoorData {
   curandState* dCurandStates;
   VertexID_t* dFinalSamples;
   int INVALID_VERTEX;
+  int maxBits;
 };
 
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format);

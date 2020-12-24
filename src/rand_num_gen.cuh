@@ -117,7 +117,7 @@ public:
   __device__ __forceinline__
   static EdgePos_t rand_int(curandState* state, const EdgePos_t n) {
     float ff = curand_uniform(state)*n;
-    EdgePos_t id =  min ((EdgePos_t)ff, n-1);//(EdgePos_t)round(ff) - 1.0f;
+    EdgePos_t id =  min((EdgePos_t)ff, n-1);//(EdgePos_t)round(ff) - 1.0f;
     return id;
   }
 

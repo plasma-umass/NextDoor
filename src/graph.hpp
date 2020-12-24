@@ -9,8 +9,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
+#include <set>
 #include <tuple>
 #include <iterator>
+#include <utility>
 
 #ifndef __GRAPH_HPP__
 #define __GRAPH_HPP__
@@ -21,26 +23,23 @@ class Vertex
 {
 private:
   int id;
-  int label;
-  std::vector <int> edges;
+  std::vector <std::pair<int, float>> edges;
 
 public:
-  Vertex (int _id, int _label) : label(_label), id (_id)
+  Vertex (int _id) : id (_id)
   {
   }
 
-  Vertex ():label(-1),id(-1){}
+  Vertex ():id(-1){}
 
   void set_id (int _id) {id = _id;}
   int get_id () {return id;}
-  int get_label () {return label;}
-  void set_label (int l) {label = l;}
-  void add_edge (int vertexID) {edges.push_back (vertexID);}
+  void add_edge (int vertexID, float weight) {edges.push_back (std::make_pair(vertexID, weight));}
   void sort_edges () {std::sort (edges.begin(), edges.end ());}
   void update_edges (std::unordered_map <int, int>& prev_to_new_ids) 
   {
     for (size_t i = 0; i < edges.size (); i++) {
-      edges[i] = prev_to_new_ids[edges[i]];
+      edges[i].first = prev_to_new_ids[edges[i].first];
     }
 
     sort_edges ();
@@ -48,17 +47,17 @@ public:
 
   void remove_duplicate_edges () 
   {
-    std::unordered_set <int> set_edges = std::unordered_set<int> (edges.begin(), edges.end ());
-    edges = std::vector<int> (set_edges.begin (), set_edges.end ());
+    std::set<std::pair<int,float>> set_edges = std::set<std::pair<int,float>> (edges.begin(), edges.end ());
+    edges = std::vector<std::pair<int,float>> (set_edges.begin (), set_edges.end ());
     //sort_edges ();
   }
 
-  std::vector <int>& get_edges () {return edges;}
+  std::vector <std::pair<int, float>>& get_edges () {return edges;}
   void print (std::ostream& os)
   {
-    os << id << " " << label << " ";
+    os << id << " " << " ";
     for (auto edge : edges) {
-      os << edge << " ";
+      os << edge.first << " " << edge.second << " ";
     }
 
     os << std::endl;
@@ -132,7 +131,7 @@ public:
         // }
       }
 
-      vertices[src].add_edge(dst);
+      vertices[src].add_edge(dst, 0.0f);
 
       n_edges++;
     }
@@ -197,7 +196,7 @@ public:
           //   vertices.push_back(Vertex(i, i));
           // }
         }
-        vertices[src].add_edge(dst);
+        vertices[src].add_edge(dst, 0.0f);
         max_vertex = max(src, max_vertex);
         max_vertex = max(dst, max_vertex);
         n_edges++;
@@ -257,25 +256,28 @@ public:
         break;
       }
 
-      int id, label;
-      int bytes_read;
+      int id;
+      int vars_filled;
 
-      bytes_read = sscanf(line, "%d %d", &id, &label);
-      Vertex vertex(id, label);
-      char* _line = line + chars_in_int(id) + chars_in_int(label);
+      vars_filled = sscanf(line, "%d", &id);
+      Vertex vertex(id);
+      char* _line = line + chars_in_int(id);
       do {
         int num;
+        float weight;
+        int chars_read = 0;
 
-        bytes_read = sscanf(_line, "%d", &num);
-        if (bytes_read > 0) {
-          vertex.add_edge(num);
-          _line += chars_in_int(num);
+        vars_filled = sscanf(_line, "%d %f%n", &num, &weight, &chars_read);
+        //printf("_line '%s' vars_filled %d chars_read %d\n", _line, vars_filled, chars_read);
+        if (vars_filled == 2) {
+          vertex.add_edge(num, weight);
+          _line += chars_read;//chars_in_int(num);
           n_edges++;
         }
 
-      } while (bytes_read > 0);
+      } while (vars_filled == 2);
 
-      //vertex.remove_duplicate_edges ();
+      //vertex.remove_duplicate_edges (); 
 
       vertex.sort_edges();
       vertices.push_back(vertex);

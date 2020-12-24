@@ -45,6 +45,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
 
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
+  size_t numNeighborsSampledAtPrevStep = 0;
 
   for (int step = 0; step < steps(); step++) {
     if (step == 0) {

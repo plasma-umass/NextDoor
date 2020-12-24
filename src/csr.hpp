@@ -49,14 +49,12 @@ public:
   struct Vertex
 {
   VertexID id;
-  int label;
   EdgePos_t start_edge_id;
   EdgePos_t end_edge_id;
   __host__ __device__
   Vertex ()
   {
     id = -1;
-    label = -1;
     start_edge_id = -1;
     end_edge_id = -1;
   }
@@ -64,7 +62,6 @@ public:
   void set_from_graph_vertex (::Vertex& vertex)
   {
     id = vertex.get_id ();
-    label = vertex.get_label ();
   }
 
   __host__ __device__ EdgePos_t get_start_edge_idx () {return start_edge_id;}
@@ -78,6 +75,7 @@ typedef VertexID Edge;
 
   CSR::Vertex* vertices;
   CSR::Edge* edges;
+  float* weights;
   int n_vertices;
   EdgePos_t n_edges;
 
@@ -88,16 +86,17 @@ public:
     n_edges = _n_edges;
     //TODO: Can we allocate it in pinned memory?
     edges = new CSR::Edge[n_edges];
+    weights = new float[n_edges];
     vertices = new CSR::Vertex[n_vertices];
   }
 
   void print (std::ostream& os) const 
   {
     for (int i = 0; i < n_vertices; i++) {
-      os << vertices[i].id << " " << vertices[i].label << " ";
+      os << vertices[i].id << " ";
       for (EdgePos_t edge_iter = vertices[i].start_edge_id;
            edge_iter <= vertices[i].end_edge_id; edge_iter++) {
-        os << edges[edge_iter] << " ";
+        os << edges[edge_iter] << " " << weights[edge_iter] << " ";
       }
       os << std::endl;
     }
@@ -364,7 +363,8 @@ void csr_from_graph (CSR* csr, Graph& graph)
     csr->vertices[i].set_from_graph_vertex (graph_vertices[i]);
     csr->vertices[i].set_start_edge_id (edge_iterator);
     for (auto edge : vertex.get_edges ()) {
-      csr->edges[edge_iterator] = edge;
+      csr->edges[edge_iterator] = edge.first;
+      csr->weights[edge_iterator] = edge.second;
       edge_iterator++;
     }
 

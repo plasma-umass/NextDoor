@@ -216,8 +216,8 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
 
   EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
 
-  samplesToTransitKeys[transitIdx*stepSize(step) + transitNeighborIdx] = sample;
-  samplesToTransitValues[transitIdx*stepSize(step) + transitNeighborIdx] = neighbor;
+  samplesToTransitKeys[threadId] = sample;
+  samplesToTransitValues[threadId] = neighbor;
   
   EdgePos_t insertionPos = 0; 
   if (numberOfTransits(step) > 1) {    
@@ -256,6 +256,7 @@ CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_for
    //Load Graph
    if (strcmp(graph_type, "adj-list") == 0) {
     if (strcmp(graph_format, "text") == 0) {
+      printf("load from adj list\n");
       graph.load_from_adjacency_list(graph_file);
       //Convert graph to CSR format
       csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
@@ -321,6 +322,13 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
     maxV = (maxV < vertex) ? vertex : maxV;
   }
   
+  int maxBits = 0;
+  while ((maxV >> maxBits) == 0) {
+    maxBits++;
+  }
+  
+  data.maxBits = maxBits + 1;
+
   //Size of each sample output
   size_t maxNeighborsToSample = 1;
   for (int step = 0; step < steps(); step++) {
@@ -426,7 +434,8 @@ bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
       //Invert sample->transit map by sorting samples based on the transit vertices
       cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
                                       nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
-                                      nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, totalThreads);
+                                      nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, 
+                                      totalThreads, 0, nextDoorData.maxBits);
     }
   }
 
@@ -461,6 +470,7 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
       graph.get_vertices ().size () << " vertices " << std::endl; 
 
+  //graph.print(std::cout);
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
 
   NextDoorData nextDoorData;
