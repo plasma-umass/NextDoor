@@ -141,6 +141,11 @@ public:
   }
   __host__ __device__
   const CSR::Edge* get_edges () const  {return &edges[0];}
+  __host__ __device__
+  const float* get_weights () const 
+  {
+    return weights;
+  }
 
   __host__ __device__
   const CSR::Vertex* get_vertices () const  {return &vertices[0];}
@@ -192,11 +197,13 @@ public:
   const EdgePos_t last_edge_idx;
   const CSR::Vertex *vertices;
   const CSR::Edge *edges;
+  const float* weights;
 
    __host__
-  CSRPartition (int _start, int _end, EdgePos_t _edge_start_idx, EdgePos_t _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges) : 
+  CSRPartition (int _start, int _end, EdgePos_t _edge_start_idx, EdgePos_t _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges,
+                const float* _weights) : 
                 first_vertex_id (_start), last_vertex_id(_end), vertices(_vertices), edges(_edges), 
-                first_edge_idx(_edge_start_idx), last_edge_idx (_edge_end_idx)
+                first_edge_idx(_edge_start_idx), last_edge_idx (_edge_end_idx), weights(_weights)
   {
     
   }
@@ -222,6 +229,13 @@ public:
   {
     assert (idx >= first_edge_idx && idx <= last_edge_idx);
     return edges[idx - first_edge_idx];
+  }
+
+  __host__ __device__
+  float get_weight(EdgePos_t idx) const 
+  {
+    assert (idx >= first_edge_idx && idx <= last_edge_idx);
+    return weights[idx - first_edge_idx];
   }
 
   VertexID get_vertex_for_edge_idx (EdgePos_t idx) const 
@@ -257,9 +271,21 @@ public:
   }
 
   __host__ __device__
+  const float* get_weights () const 
+  {
+    return weights;
+  }
+
+  __host__ __device__
   const CSR::Edge* get_edges (VertexID v) const 
   {
     return &edges[get_start_edge_idx(v) - first_edge_idx];
+  }
+
+  __host__ __device__
+  const float* get_weights (VertexID v) const 
+  {
+    return &weights[get_start_edge_idx(v) - first_edge_idx];
   }
 
   __host__ __device__
@@ -347,6 +373,7 @@ struct GPUCSRPartition
   CSRPartition* device_csr;
   CSR::Vertex* device_vertex_array;
   CSR::Edge* device_edge_array;
+  float* device_weights_array;
 };
 
 #ifdef USE_CONSTANT_MEM

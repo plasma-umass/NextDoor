@@ -256,7 +256,6 @@ CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_for
    //Load Graph
    if (strcmp(graph_type, "adj-list") == 0) {
     if (strcmp(graph_format, "text") == 0) {
-      printf("load from adj list\n");
       graph.load_from_adjacency_list(graph_file);
       //Convert graph to CSR format
       csr = new CSR(graph.get_vertices().size(), graph.get_n_edges());
@@ -302,12 +301,12 @@ GPUCSRPartition transferCSRToGPU(CSR* csr)
 {
   //Assume that whole graph can be stored in GPU Memory.
   //Hence, only one Graph Partition is created.
-  CSRPartition full_partition = CSRPartition (0, csr->get_n_vertices () - 1, 0, csr->get_n_edges () - 1, 
-                                              csr->get_vertices (), csr->get_edges ());
+  CSRPartition full_partition = CSRPartition (0, csr->get_n_vertices() - 1, 0, csr->get_n_edges() - 1, 
+                                              csr->get_vertices(), csr->get_edges(), csr->get_weights());
   
   //Copy full graph to GPU
   GPUCSRPartition gpuCSRPartition;
-  copy_partition_to_gpu(full_partition, gpuCSRPartition);
+  copyPartitionToGPU(full_partition, gpuCSRPartition);
 
   return gpuCSRPartition;
 }

@@ -322,19 +322,22 @@ namespace GPUUtils {
     return warp_mask;
   }
   
-  void copy_partition_to_gpu(CSRPartition& part, GPUCSRPartition& gpuCSRPartition)
+  void copyPartitionToGPU(CSRPartition& part, GPUCSRPartition& gpuCSRPartition)
   {
     CHK_CU(cudaMalloc(&gpuCSRPartition.device_csr, sizeof(CSRPartition)));
     CHK_CU(cudaMalloc(&gpuCSRPartition.device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
     CHK_CU(cudaMalloc(&gpuCSRPartition.device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_weights_array, sizeof(float)*part.get_n_edges ()));
     CHK_CU(cudaMemcpy(gpuCSRPartition.device_vertex_array, part.vertices, sizeof(CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
     CHK_CU(cudaMemcpy(gpuCSRPartition.device_edge_array, part.edges, sizeof(CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_weights_array, part.edges, sizeof(float)*part.get_n_edges (), cudaMemcpyHostToDevice));
 
     CSRPartition device_csr_partition_value = CSRPartition(part.first_vertex_id,
                                                            part.last_vertex_id, 
                                                            part.first_edge_idx, part.last_edge_idx, 
                                                            gpuCSRPartition.device_vertex_array, 
-                                                           gpuCSRPartition.device_edge_array);
+                                                           gpuCSRPartition.device_edge_array,
+                                                           gpuCSRPartition.device_weights_array);
     CHK_CU(cudaMemcpy(gpuCSRPartition.device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
   }
   
