@@ -23,7 +23,7 @@ class Vertex
 {
 private:
   int id;
-  std::vector <std::pair<int, float>> edges;
+  std::vector<std::pair<int, float>> edges;
 
 public:
   Vertex (int _id) : id (_id)
@@ -66,6 +66,17 @@ public:
   static bool compare_vertex (Vertex& v1, Vertex& v2) 
   {
     return v1.edges.size () < v2.edges.size ();
+  }
+
+  float max_weight()
+  {
+    float w = 0.0f;
+
+    for (auto p : edges) {
+      w = max(w, p.second);
+    }
+
+    return w;
   }
 };
 

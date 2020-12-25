@@ -11,9 +11,9 @@ extern "C" {
 
   __device__ inline
   VertexID next(int step, const VertexID transit, const VertexID sample, 
-                const CSR::Edge* transitEdges, const EdgePos_t numEdges,
-                const EdgePos_t neighbrID, 
-                curandState* state)
+                const float max_weight,
+                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
   {
     EdgePos_t id = RandNumGen::rand_int(state, numEdges);
     return transitEdges[id];

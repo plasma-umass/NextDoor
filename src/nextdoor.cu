@@ -104,8 +104,9 @@ extern "C" {
 
   __device__ inline
   VertexID next(int step, const VertexID transit, const VertexID sample, 
-                const CSR::Edge* transitEdges, const EdgePos_t numEdges,
-                const EdgePos_t neighbrID, 
+                const float maxWeight,
+                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
                 curandState* state);
   __host__ __device__ int steps();
 }
@@ -184,12 +185,15 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
     assert(graph.device_csr->has_vertex(transit));
 
     EdgePos_t numTransitEdges = graph.device_csr->get_n_edges_for_vertex(transit);
-    const CSR::Edge* transitEdges = graph.device_csr->get_edges(transit);
-
+    
     if (numTransitEdges != 0) {
+      const CSR::Edge* transitEdges = graph.device_csr->get_edges(transit);
+      const float* transitEdgeWeights = graph.device_csr->get_weights(transit);
+      const float maxWeight = graph.device_csr->get_max_weight(transit);
+
       curandState* randState = &randStates[threadId];
-      neighbor = next(step, transit, sample, transitEdges, numTransitEdges, 
-                      transitNeighborIdx, randState);
+      neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
+                      numTransitEdges, transitNeighborIdx, randState);
 #if 0
       //search if neighbor has already been selected.
       //we can do that in register if required

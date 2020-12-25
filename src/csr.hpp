@@ -47,31 +47,35 @@ class CSR
 {
 public:
   struct Vertex
-{
-  VertexID id;
-  EdgePos_t start_edge_id;
-  EdgePos_t end_edge_id;
-  __host__ __device__
-  Vertex ()
   {
-    id = -1;
-    start_edge_id = -1;
-    end_edge_id = -1;
-  }
+    VertexID id;
+    EdgePos_t start_edge_id;
+    EdgePos_t end_edge_id;
+    float max_weight;
+    __host__ __device__
+    Vertex ()
+    {
+      id = -1;
+      start_edge_id = -1;
+      end_edge_id = -1;
+      max_weight = -1;
+    }
 
-  void set_from_graph_vertex (::Vertex& vertex)
-  {
-    id = vertex.get_id ();
-  }
+    void set_from_graph_vertex (::Vertex& vertex)
+    {
+      id = vertex.get_id ();
+    }
 
-  __host__ __device__ EdgePos_t get_start_edge_idx () {return start_edge_id;}
-  __host__ __device__ EdgePos_t get_end_edge_idx () {return end_edge_id;}
-  __host__ __device__ VertexID get_id () {return id;}
-  __host__ __device__ void set_start_edge_id (EdgePos_t start) {start_edge_id = start;}
-  __host__ __device__ void set_end_edge_id (EdgePos_t end) {end_edge_id = end;}
-};
+    __host__ __device__ EdgePos_t get_start_edge_idx () {return start_edge_id;}
+    __host__ __device__ EdgePos_t get_end_edge_idx () {return end_edge_id;}
+    __host__ __device__ float get_max_weight() {return max_weight;}
+    __host__ __device__ VertexID get_id () {return id;}
+    __host__ __device__ void set_start_edge_id (EdgePos_t start) {start_edge_id = start;}
+    __host__ __device__ void set_end_edge_id (EdgePos_t end) {end_edge_id = end;}
+    __host__ __device__ void set_max_weight(float w) {max_weight = w;}
+  };
 
-typedef VertexID Edge;
+  typedef VertexID Edge;
 
   CSR::Vertex* vertices;
   CSR::Edge* edges;
@@ -222,6 +226,13 @@ public:
   {
     assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
     return vertices[vertex_id - first_vertex_id].end_edge_id;
+  }
+
+  __host__ __device__
+  float get_max_weight (int vertex_id) const 
+  {
+    assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
+    return vertices[vertex_id - first_vertex_id].max_weight;
   }
   
   __host__ __device__
@@ -389,6 +400,7 @@ void csr_from_graph (CSR* csr, Graph& graph)
     ::Vertex& vertex = graph_vertices[i];
     csr->vertices[i].set_from_graph_vertex (graph_vertices[i]);
     csr->vertices[i].set_start_edge_id (edge_iterator);
+    csr->vertices[i].set_max_weight(vertex.max_weight());
     for (auto edge : vertex.get_edges ()) {
       csr->edges[edge_iterator] = edge.first;
       csr->weights[edge_iterator] = edge.second;
