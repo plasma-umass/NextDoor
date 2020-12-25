@@ -246,6 +246,86 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
   //wich can be accessed based on sample and transitIdx.
 }
 
+
+__global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
+                               const size_t NumSamples,
+                               VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
+                               curandState* randStates)
+{
+  //TODO: Following code assumes Random Walk
+
+  int threadId = threadIdx.x + blockDim.x * blockIdx.x;
+  //__shared__ VertexID newNeigbhors[N_THREADS];
+
+  if (threadId >= NumSamples)
+    return;
+  
+  VertexID_t sample = threadId;
+  VertexID_t transit = (step == 0) ? sample : finalSamples[sample*finalSampleSize + step - 1];
+  VertexID_t neighbor = invalidVertex;
+  
+  if (transit == invalidVertex) {
+    return;
+  }
+  assert(graph.device_csr->has_vertex(transit));
+
+  EdgePos_t numTransitEdges = graph.device_csr->get_n_edges_for_vertex(transit);
+  
+  if (numTransitEdges != 0) {
+    const CSR::Edge* transitEdges = graph.device_csr->get_edges(transit);
+    const float* transitEdgeWeights = graph.device_csr->get_weights(transit);
+    const float maxWeight = graph.device_csr->get_max_weight(transit);
+
+    curandState* randState = &randStates[threadId];
+    neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
+                    numTransitEdges, 0, randState);
+#if 0
+    //search if neighbor has already been selected.
+    //we can do that in register if required
+    newNeigbhors[threadIdx.x] = neighbor;
+
+    bool found = false;
+    for (int i = 0; i < N_THREADS; i++) {
+      if (newNeigbhors[i] == neighbor) {
+        found = true;
+        // break;
+      }
+    }
+
+    __syncwarp();
+    if (found) {
+      neighbor = next(step, transit, sample, transitEdges, numTransitEdges, 
+        transitNeighborIdx, randState);;
+    }
+#endif
+  }
+
+  EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);  
+  
+  EdgePos_t insertionPos = 0; 
+
+  if (numberOfTransits(step) > 1) {    
+    insertionPos = utils::atomicAdd(&sampleInsertionPositions[sample], 1);
+  } else {
+    insertionPos = step;
+  }
+
+  // if (insertionPos < finalSampleSize) {
+  //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
+  // }
+  assert(finalSampleSize > 0);
+  if (insertionPos >= finalSampleSize) {
+    printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
+  }
+  assert(insertionPos < finalSampleSize);
+  finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+  // if (sample == 100) {
+  //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
+  // }
+  //TODO: We do not need atomic instead store indices of transit in another array,
+  //wich can be accessed based on sample and transitIdx.
+}
+
 __global__ void init_curand_states(curandState* states, size_t num_states)
 {
   int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
@@ -387,7 +467,7 @@ void freeDeviceData(NextDoorData& data)
   CHK_CU(cudaFree(data.dFinalSamples));
 }
 
-bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
+bool doTransitParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
 {
   //Size of each sample output
   size_t maxNeighborsToSample = 1;
@@ -447,9 +527,51 @@ bool doSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
 
   CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(EdgePos_t)*nextDoorData.samples.size()));
 
-  std::cout << "End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
+  std::cout << "Transit Parallel: End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
   return true;
 }
+
+bool doSampleParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
+{
+  //Size of each sample output
+  size_t maxNeighborsToSample = 1;
+  for (int step = 0; step < steps(); step++) {
+    maxNeighborsToSample *= stepSize(step);
+  }
+
+  size_t finalSampleSize = 0;
+  size_t neighborsToSampleAtStep = 1;
+  for (int step = 0; step < steps(); step++) {
+    neighborsToSampleAtStep *= stepSize(step);
+    finalSampleSize += neighborsToSampleAtStep;
+  }
+  
+  neighborsToSampleAtStep = 1;
+  
+  double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
+  for (int step = 0; step < steps(); step++) {
+    neighborsToSampleAtStep *= stepSize(step);
+    const size_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
+    
+    //Sample neighbors of transit vertices
+    sampleParallelKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                    nextDoorData.samples.size(), nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                    nextDoorData.dCurandStates);
+
+                    
+    CHK_CU(cudaGetLastError());
+    CHK_CU(cudaDeviceSynchronize());
+  }
+
+  double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());
+  
+
+  CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(EdgePos_t)*nextDoorData.samples.size()));
+
+  std::cout << "SampleParallel: End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
+  return true;
+}
+
 
 std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
 {
@@ -459,7 +581,8 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
 }
 
 int nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, 
-             const int nruns, const bool chk_results, const bool print_samples)
+             const int nruns, const bool chk_results, const bool print_samples,
+             const char* kernelType)
 {
   std::vector<Vertex> vertices;
 
@@ -479,8 +602,15 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   NextDoorData nextDoorData;
   allocNextDoorDataOnGPU(csr, nextDoorData);
   
-  for (int i = 0; i < nruns; i++)
-    doSampling(gpuCSRPartition, nextDoorData);
+  for (int i = 0; i < nruns; i++) {
+    if (strcmp(kernelType, "TransitParallel") == 0)
+      doTransitParallelSampling(gpuCSRPartition, nextDoorData);
+    else if (strcmp(kernelType, "SampleParallel") == 0)
+      doSampleParallelSampling(gpuCSRPartition, nextDoorData);
+    else
+      abort();
+  }
+    
 
   std::vector<VertexID_t>& hFinalSamples = getFinalSamples(nextDoorData);
 

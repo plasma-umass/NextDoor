@@ -43,5 +43,6 @@ int main(int argc, char* argv[])
   }
 
   return nextdoor(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
-                  opt->getValue('n'), opt->getFlag("check-results"), opt->getFlag("print-samples"));
+                  opt->getValue('n'), opt->getFlag("check-results"), opt->getFlag("print-samples"),
+                "");
 }
