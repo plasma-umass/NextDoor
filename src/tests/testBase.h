@@ -5,11 +5,10 @@
 #define __TEST_BASE_H__
 
 #define GRAPH_PATH "../GPUesque-for-eval/input/"
-#define CHECK_RESULTS true 
 
-#define APP_TEST(App,Graph,Path,Runs,KernelType) \
+#define APP_TEST(App,Graph,Path,Runs,CheckResults,KernelType) \
   TEST(App, Graph) { \
-  EXPECT_TRUE(nextdoor(Path, "adj-list", "text", Runs, CHECK_RESULTS, false, KernelType));\
+  EXPECT_TRUE(nextdoor(Path, "adj-list", "text", Runs, CheckResults, false, KernelType));\
 }
 
 // TEST(KHop, Mico) {

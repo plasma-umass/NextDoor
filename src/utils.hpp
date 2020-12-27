@@ -10,7 +10,7 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
-#define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {abort();}
+#define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {assert(false);}
 
 namespace utils {
 
