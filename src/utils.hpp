@@ -378,12 +378,55 @@ namespace GPUUtils {
 
     return device_rand;
   }
+
+
+  template<typename T>
+  void printDeviceArray(T* array, int nelems, char sep)
+  {
+    T* tmp = new T[nelems];
+
+    CHK_CU(cudaMemcpy(tmp, array, nelems*sizeof(T), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < nelems; i++) {
+      std::cout << tmp[i] << sep;
+    }
+
+    std::cout << std::endl;
+
+    delete tmp;
+  }
+
+  template<typename T1, typename T2>
+  void printDeviceKeyValuePairs(T1* keys, T2* values, int nelems, char sep)
+  {
+    T1* tmp1 = new T1[nelems];
+    T2* tmp2 = new T2[nelems];
+
+    CHK_CU(cudaMemcpy(tmp1, keys, nelems*sizeof(T1), cudaMemcpyDeviceToHost));
+    CHK_CU(cudaMemcpy(tmp2, values, nelems*sizeof(T2), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < nelems; i++) {
+      std::cout << "[" << tmp1[i] << ", " << tmp2[i] << "]" << sep;
+    }
+
+    std::cout << std::endl;
+    delete tmp1;
+    delete tmp2;
+  }
+
+  template<typename T>
+  T* copyDeviceMemToHostMem(T* devPtr, size_t nelems)
+  {
+    T* hPtr = new T[nelems];
+
+    CHK_CU(cudaMemcpy(hPtr, devPtr, nelems*sizeof(T), cudaMemcpyDeviceToHost));
+
+    return hPtr;
+  }
 }
 
 namespace LoadBalancing {
   enum LoadBalancingThreshold{
-    GridLevel = 32,
-    BlockLevel = 0,
+    GridLevel = 256,
+    BlockLevel = 32,
     SubWarpLevel = 0,
   };
 
@@ -434,6 +477,7 @@ namespace LoadBalancing {
       }
     }
   }
+
 };
 
 #endif

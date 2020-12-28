@@ -18,12 +18,11 @@ extern "C" {
     EdgePos_t id = RandNumGen::rand_int(state, numEdges);
     return transitEdges[id];
   }
-
 }
 
-APP_TEST(KHop, Citeseer, GRAPH_PATH"/citeseer.graph", 1)
-APP_TEST(KHop, Mico, GRAPH_PATH"/micro.graph", 1)
-APP_TEST(KHop, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 1)
+APP_TEST(KHop, Citeseer, GRAPH_PATH"/citeseer.graph", 1, true, "TransitParallel")
+APP_TEST(KHop, Mico, GRAPH_PATH"/micro.graph", 1, false, "TransitParallel")
+APP_TEST(KHop, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 1, false, "TransitParallel")
 
 
 // TEST(KHop, Citeseer) {

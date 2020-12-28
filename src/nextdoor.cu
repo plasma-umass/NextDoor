@@ -475,7 +475,40 @@ void freeDeviceData(NextDoorData& data)
   CHK_CU(cudaFree(data.gpuCSRPartition.device_weights_array));
 }
 
-bool doTransitParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData)
+
+void printKernelTypes(VertexID_t* dUniqueTransits, VertexID_t* dUniqueTransitsCounts, size_t* dUniqueTransitsNumRuns)
+{
+  size_t* hUniqueTransitsNumRuns = GPUUtils::copyDeviceMemToHostMem(dUniqueTransitsNumRuns, 1);
+  VertexID_t* hUniqueTransits = GPUUtils::copyDeviceMemToHostMem(dUniqueTransits, *hUniqueTransitsNumRuns);
+  VertexID_t* hUniqueTransitsCounts = GPUUtils::copyDeviceMemToHostMem(dUniqueTransitsCounts, *hUniqueTransitsNumRuns);
+
+  size_t subWarpLevelTransits = 0, subWarpLevelSamples = 0;
+  size_t threadBlockLevelTransits = 0, threadBlockLevelSamples = 0;
+  size_t gridLevelTransits = 0, gridLevelSamples = 0;
+  
+  for (size_t tr = 0; tr < *hUniqueTransitsNumRuns; tr++) {
+    if (hUniqueTransitsCounts[tr] <= LoadBalancing::LoadBalancingThreshold::BlockLevel) {
+      subWarpLevelTransits++;
+      subWarpLevelSamples += hUniqueTransitsCounts[tr];
+    } else if (hUniqueTransitsCounts[tr] > LoadBalancing::LoadBalancingThreshold::BlockLevel && 
+               hUniqueTransitsCounts[tr] <= LoadBalancing::LoadBalancingThreshold::GridLevel) {
+      threadBlockLevelTransits++;
+      threadBlockLevelSamples += hUniqueTransitsCounts[tr];
+    } else {
+      gridLevelTransits++;
+      gridLevelSamples += hUniqueTransitsCounts[tr];
+    }
+  }
+
+  printf("SubWarpLevelTransits: %ld, SubWarpLevelSamples: %ld\n ThreadBlockLevelTransits: %ld, ThreadBlockLevelSamples: %ld\nGridLevelTransits: %ld, GridLevelSamples: %ld\n", 
+         subWarpLevelTransits, subWarpLevelSamples, threadBlockLevelTransits, threadBlockLevelSamples, gridLevelTransits, gridLevelSamples);
+
+  delete hUniqueTransits;
+  delete hUniqueTransitsCounts;
+  delete hUniqueTransitsNumRuns;
+}
+
+bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData& nextDoorData, bool enableLoadBalancing)
 {
   //Size of each sample output
   size_t maxNeighborsToSample = 1;
@@ -497,7 +530,10 @@ bool doTransitParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& ne
                   cudaMemcpyHostToDevice));
   VertexID_t* d_temp_storage = nullptr;
   size_t temp_storage_bytes = 0;
-  
+  VertexID_t* dUniqueTransits = nullptr;
+  VertexID_t* dUniqueTransitsCounts = nullptr;
+  size_t* dUniqueTransitsNumRuns = nullptr;
+
   //Check if the space runs out.
   //TODO: Use DoubleBuffer version that requires O(P) space.
   //TODO: hFinalSamples.size() is wrong.
@@ -505,36 +541,90 @@ bool doTransitParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& ne
             nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
             nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, 
             nextDoorData.samples.size()*maxNeighborsToSample);
+
+  CHK_CU(cudaMalloc(&dUniqueTransits, (csr->get_n_vertices() + 1)*sizeof(VertexID_t)));
+  CHK_CU(cudaMalloc(&dUniqueTransitsCounts, (csr->get_n_vertices() + 1)*sizeof(VertexID_t)));
+  CHK_CU(cudaMalloc(&dUniqueTransitsNumRuns, sizeof(size_t)));
   
+  if (temp_storage_bytes < nextDoorData.samples.size()*maxNeighborsToSample) {
+    temp_storage_bytes = nextDoorData.samples.size()*maxNeighborsToSample;
+  }
   size_t free = 0, total = 0;
   CHK_CU(cudaMemGetInfo(&free, &total));
-  printf("free memory %ld temp_storage_bytes %ld\n", free, temp_storage_bytes);
+  // printf("free memory %ld temp_storage_bytes %ld nextDoorData.samples.size() %ld maxNeighborsToSample %ld\n", free, temp_storage_bytes, nextDoorData.samples.size(), maxNeighborsToSample);
   CHK_CU(cudaMalloc(&d_temp_storage, temp_storage_bytes));
 
+  double loadBalancingTime = 0;
+  double inversionTime = 0;
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
     const size_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
     
-    //Sample neighbors of transit vertices
-    samplingKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                    (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                    totalThreads, nextDoorData.samples.size(),
-                    nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                    nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                    nextDoorData.dCurandStates);
-    CHK_CU(cudaGetLastError());
-    CHK_CU(cudaDeviceSynchronize());
+    if (!enableLoadBalancing) {
+      //When not doing load balancing call baseline transit parallel
+      samplingKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                      (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                      totalThreads, nextDoorData.samples.size(),
+                      nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                      nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                      nextDoorData.dCurandStates);
+      CHK_CU(cudaGetLastError());
+      CHK_CU(cudaDeviceSynchronize());
+    } else {
+
+      if (step > 0) {
+        double loadBalancingT1 = convertTimeValToDouble(getTimeOfDay ());
+        void* dRunLengthEncodeTmpStorage = nullptr;
+        size_t dRunLengthEncodeTmpStorageSize = 0;
+
+        cub::DeviceRunLengthEncode::Encode(dRunLengthEncodeTmpStorage, dRunLengthEncodeTmpStorageSize, 
+                                          nextDoorData.dTransitToSampleMapKeys,
+                                          dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns, totalThreads);
+
+        assert(dRunLengthEncodeTmpStorageSize < temp_storage_bytes);
+        dRunLengthEncodeTmpStorage = d_temp_storage;
+        cub::DeviceRunLengthEncode::Encode(dRunLengthEncodeTmpStorage, dRunLengthEncodeTmpStorageSize, 
+                                          nextDoorData.dTransitToSampleMapKeys,
+                                          dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns, totalThreads);
+
+        CHK_CU(cudaGetLastError());
+        CHK_CU(cudaDeviceSynchronize());
+        
+        // printKernelTypes(dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
+        // size_t uniqueTransitsNumRuns;
+        // CHK_CU(cudaMemcpy(&uniqueTransitsNumRuns, dUniqueTransitsNumRuns, sizeof(size_t), cudaMemcpyDeviceToHost));
+        // //printf("uniqueTransitsNumRuns %ld dRunLengthEncodeTmpStorage %ld\n", uniqueTransitsNumRuns, dRunLengthEncodeTmpStorageSize);
+        // GPUUtils::printDeviceKeyValuePairs(dUniqueTransits, dUniqueTransitsCounts, uniqueTransitsNumRuns, ',');
+        // char x;
+        // scanf("%s\n", &x);
+        double loadBalancingT2 = convertTimeValToDouble(getTimeOfDay ());
+        loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
+      }
+
+      samplingKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+        (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+        totalThreads, nextDoorData.samples.size(),
+        nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+        nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+        nextDoorData.dCurandStates);
+      CHK_CU(cudaGetLastError());
+      CHK_CU(cudaDeviceSynchronize());
+    }
 
     if (step != steps() - 1) {
+      double inversionT1 = convertTimeValToDouble(getTimeOfDay ());
       //Invert sample->transit map by sorting samples based on the transit vertices
       cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
                                       nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
                                       nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, 
                                       totalThreads, 0, nextDoorData.maxBits);
-      #if 0
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
+      double inversionT2 = convertTimeValToDouble(getTimeOfDay ());
+      inversionTime += (inversionT2 - inversionT1);
+
+      #if 0
       VertexID_t* hTransitToSampleMapKeys = new VertexID_t[totalThreads];
       VertexID_t* hTransitToSampleMapValues = new VertexID_t[totalThreads];
       VertexID_t* hSampleToTransitMapKeys = new VertexID_t[totalThreads];
@@ -569,7 +659,11 @@ bool doTransitParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& ne
   CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(EdgePos_t)*nextDoorData.samples.size()));
 
   std::cout << "Transit Parallel: End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
+  std::cout << "InversionTime: " << inversionTime <<", " << "LoadBalancingTime: " << loadBalancingTime << std::endl;
   CHK_CU(cudaFree(d_temp_storage));
+  CHK_CU(cudaFree(dUniqueTransits));
+  CHK_CU(cudaFree(dUniqueTransitsCounts));
+  CHK_CU(cudaFree(dUniqueTransitsNumRuns));
   return true;
 }
 
@@ -624,7 +718,7 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData& nextDoorData)
 
 int nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, 
              const int nruns, const bool chk_results, const bool print_samples,
-             const char* kernelType)
+             const char* kernelType, const bool enableLoadBalancing)
 {
   std::vector<Vertex> vertices;
 
@@ -647,7 +741,7 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   
   for (int i = 0; i < nruns; i++) {
     if (strcmp(kernelType, "TransitParallel") == 0)
-      doTransitParallelSampling(gpuCSRPartition, nextDoorData);
+      doTransitParallelSampling(csr, gpuCSRPartition, nextDoorData, enableLoadBalancing);
     else if (strcmp(kernelType, "SampleParallel") == 0)
       doSampleParallelSampling(gpuCSRPartition, nextDoorData);
     else
