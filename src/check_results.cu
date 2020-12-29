@@ -95,7 +95,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
              v < s + ((step == steps() - 1) ? finalSampleSize : numNeighborsSampledAtStep(step)); v++) {
           VertexID_t transit = finalSamples[v];
           contentsLength += (int)(transit != INVALID_VERTEX);
-
+          
           bool found = false;
           if (transit != INVALID_VERTEX) {
 
@@ -121,6 +121,12 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
         if (contentsLength == 0 && sumEdgesOfNeighborsAtPrevStep > 0) {
           printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
                   step, contentsLength, sampleId, sumEdgesOfNeighborsAtPrevStep);
+          std::cout << "Contents of sample : [";
+          for (size_t v2 = s; v2 < s + finalSampleSize; v2++) {
+            std::cout << finalSamples[v2] << ", ";
+          }
+          std::cout << "]" << std::endl;
+          return false;
           return false;
         }
       }

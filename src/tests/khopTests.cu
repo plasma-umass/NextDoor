@@ -2,7 +2,7 @@
 
 extern "C" {
 
-  __host__ __device__ int steps() {return 2;}
+  __host__ __device__ int steps() {return 10;}
 
   __host__ __device__ 
   int stepSize(int k) {
