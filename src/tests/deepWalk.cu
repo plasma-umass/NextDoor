@@ -28,6 +28,27 @@ VertexID next(int step, const VertexID transit, const VertexID sample,
   return transitEdges[x];
 }
 
+__device__ inline
+VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
+              const float maxWeight,
+              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
+              curandState* state, VertexID_t* cachedEdges, float* cachedWeights)
+{
+  if (numEdges == 1) {
+    return transitEdges[0];
+  }
+  
+  EdgePos_t x = RandNumGen::rand_int(state, numEdges);
+  float y = curand_uniform(state)*max_weight;
+
+  while (y > transitEdgeWeights[x]) {
+    x = RandNumGen::rand_int(state, numEdges);
+    y = curand_uniform(state)*max_weight;
+  }
+}
+
+
 /*
   float2 randNums = curand_normal2(state);
   EdgePos_t x =  min((EdgePos_t)(randNums.x*numEdges), numEdges-1);
@@ -54,8 +75,8 @@ APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "Tra
 //APP_TEST(DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
 APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 10, true, "TransitParallel", true)
 APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", 10, true, "TransitParallel", true)
+APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", true)
 // APP_TEST(DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
 APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, true, "TransitParallel", true)
+APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", true)
 // APP_TEST(DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
