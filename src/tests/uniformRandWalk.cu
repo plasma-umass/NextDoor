@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 100;}
+__host__ __device__ int steps() {return 10;}
 
 __host__ __device__ 
 int stepSize(int k) {
@@ -17,21 +17,20 @@ VertexID next(int step, const VertexID transit, const VertexID sample,
   return transitEdges[id];
 }
 
+template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
 __device__ inline
 VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
-              const float maxWeight,
+              const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-              curandState* state, VertexID_t* cachedEdges, float* cachedWeights)
+              curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
+              bool* globalLoadBV)
 {
-  EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-  if (cachedEdges[id] != -1) {
-    return cachedEdges[id];
-  } else {
-    VertexID_t e = transitEdges[id];
-    cachedEdges[id] = e;
-    return e;
-  }
+  EdgePos_t x = threadIdx.x%numEdges;//RandNumGen::rand_int(state, numEdges);
+  if (CACHE_EDGES)
+    return setAndGet<CACHE_SIZE>(x, transitEdges, cachedEdges);
+  else 
+    return transitEdges[x];
 }
 
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
@@ -49,5 +48,5 @@ APP_TEST(UniformRandWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 10, true
 // APP_TEST(UniformRandWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
 // APP_TEST(UniformRandWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(UniformRandWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, true, "TransitParallel", true)
+// APP_TEST(UniformRandWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 1, false, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)

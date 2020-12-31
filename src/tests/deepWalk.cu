@@ -7,23 +7,6 @@ int stepSize(int k) {
   return 1;
 }
 
-template<int CACHE_SIZE, typename T>
-__device__ inline VertexID_t setAndGet(EdgePos_t id, const T* transitEdges, T* cachedEdges)
-{
-  VertexID_t e;
-
-  if (id >= CACHE_SIZE)
-    return transitEdges[id];
-  
-  e = cachedEdges[id];
-  if (e == -1) {
-    e = transitEdges[id];
-    cachedEdges[id] = e;
-  }
-
-  return e;
-}
-
 __device__ inline
 VertexID next(int step, const VertexID transit, const VertexID sample, 
               const float max_weight,
