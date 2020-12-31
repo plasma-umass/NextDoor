@@ -1,10 +1,25 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 100;}
+__host__ __device__ int steps() {return 3;}
 
 __host__ __device__ 
 int stepSize(int k) {
   return 1;
+}
+
+template<int CACHE_SIZE, typename T>
+__device__ inline VertexID_t setAndGet(EdgePos_t id, const T* transitEdges, T* cachedEdges)
+{
+  if (id >= CACHE_SIZE)
+    return transitEdges[id];
+    
+  if (cachedEdges[id] != -1) {
+    return cachedEdges[id];
+  } else {
+    VertexID_t e = transitEdges[id];
+    cachedEdges[id] = e;
+    return e;
+  }
 }
 
 __device__ inline
@@ -28,24 +43,39 @@ VertexID next(int step, const VertexID transit, const VertexID sample,
   return transitEdges[x];
 }
 
+template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS>
 __device__ inline
 VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
-              const float maxWeight,
+              const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, 
               curandState* state, VertexID_t* cachedEdges, float* cachedWeights)
 {
   if (numEdges == 1) {
+    if (CACHE_EDGES)
+      return setAndGet<CACHE_SIZE>(0, transitEdges, cachedEdges);
     return transitEdges[0];
   }
   
   EdgePos_t x = RandNumGen::rand_int(state, numEdges);
   float y = curand_uniform(state)*max_weight;
+  float weight;
+  if (CACHE_WEIGHTS) {
+    weight = setAndGet<CACHE_SIZE>(x, transitEdgeWeights, cachedWeights);
+  }
 
-  while (y > transitEdgeWeights[x]) {
+  while (y > weight) {
     x = RandNumGen::rand_int(state, numEdges);
     y = curand_uniform(state)*max_weight;
+    if (CACHE_WEIGHTS) {
+      weight = setAndGet<CACHE_SIZE>(x, transitEdgeWeights, cachedWeights);
+    }
   }
+
+  if (CACHE_EDGES)
+    return setAndGet<CACHE_SIZE>(x, transitEdges, cachedEdges);
+  else 
+    return transitEdges[x];
 }
 
 
@@ -65,18 +95,19 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
+#define RUNS 1
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
 // APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
+// APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
 //APP_TEST(DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
-APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 10, true, "TransitParallel", true)
-APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", true)
-// APP_TEST(DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
-APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", true)
+APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, true, "TransitParallel", true)
+// APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
+APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, true, "TransitParallel", true)
 // APP_TEST(DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
+// APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
+APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, true, "TransitParallel", true)
+// APP_TEST(DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)

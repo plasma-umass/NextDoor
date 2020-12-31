@@ -102,26 +102,25 @@ enum TransitKernelTypes {
 
 //GraphSage 2-hop sampling
 const bool has_random = true;
-extern "C" {
-  __host__ __device__ int steps();
+__host__ __device__ int steps();
 
-  __host__ __device__ 
-  int stepSize(int k);
+__host__ __device__ 
+int stepSize(int k);
 
-  __device__ inline
-  VertexID next(int step, const VertexID transit, const VertexID sample, 
-                const float maxWeight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state);
-  __device__ inline
-  VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
-                const float maxWeight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state, VertexID_t* cachedEdges, float* cachedWeights);
-  __host__ __device__ int steps();
-}
+__device__ inline
+VertexID next(int step, const VertexID transit, const VertexID sample, 
+              const float maxWeight,
+              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
+              curandState* state);
+template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS>
+__device__ inline
+VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
+              const float maxWeight,
+              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
+              curandState* state, VertexID_t* cachedEdges, float* cachedWeights);
+__host__ __device__ int steps();
 
 // __host__ __device__ 
 // int stepSize(int k) {
@@ -357,7 +356,7 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
   //wich can be accessed based on sample and transitIdx.
 }
 
-template<int MAX_EDGES_IN_SHMEM, bool HAS_WEIGHTS>
+template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, int TRANSITS_PER_THREAD>
 __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
                            const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
                            const size_t transitToSamplesSize, const size_t NumSamples,
@@ -366,126 +365,108 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
                            curandState* randStates, const int* kernelTypeForTransit, const VertexID_t* gridKernelTBPositions, 
                            const EdgePos_t gridKernelTBPositionsNum)
 {
-  __shared__ CSR::Edge edgesInShMem[MAX_EDGES_IN_SHMEM > 0 ? MAX_EDGES_IN_SHMEM : 1];
-  __shared__ float edgeWeightsInShMem[MAX_EDGES_IN_SHMEM > 0 && HAS_WEIGHTS ? MAX_EDGES_IN_SHMEM : 1];
+  __shared__ CSR::Edge edgesInShMem[CACHE_EDGES ? CACHE_SIZE : 1];
+  __shared__ float edgeWeightsInShMem[CACHE_WEIGHTS ? CACHE_SIZE : 1];
   __shared__ VertexID_t numEdgesInShMem;
   __shared__ VertexID_t transitForTB;
   
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
   //__shared__ VertexID newNeigbhors[N_THREADS];
   //if (threadIdx.x == 0) printf("blockIdx.x %d\n", blockIdx.x);
-  EdgePos_t transitIdx = gridKernelTBPositions[blockIdx.x] + threadIdx.x; //threadId/stepSize(step);
-  if (transitIdx >= NumSamples) //TODO: Correct this for k-hop
-    return;
-  
-  EdgePos_t transitNeighborIdx = 0;//threadId % stepSize(step); //TODO: Correct this for k-hop
-
-  VertexID_t transit = transitToSamplesKeys[transitIdx];
-  if (threadIdx.x == 0) {
-    transitForTB = transit;
-  }
-
-  __syncthreads();
-
-  bool edgesCachedInShMem = false;
-
-  if (threadIdx.x == 0) {
-    numEdgesInShMem = graph.device_csr->get_n_edges_for_vertex(transitForTB);
-  }
-  
-  __syncthreads();
-  
-  for (int i = 0; i < numEdgesInShMem; i++) {
-    edgesInShMem[i] = -1;
-  }
-  
   curandState randState = randStates[threadId];
 
-  if (transit == transitForTB) {
-    if (kernelTypeForTransit[transit] != TransitKernelTypes::GridKernel) {
-      printf("transit %d\n", transit);
+  for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
+    EdgePos_t transitIdx = gridKernelTBPositions[TRANSITS_PER_THREAD * blockIdx.x + transitI] + threadIdx.x; //threadId/stepSize(step);
+    
+    EdgePos_t transitNeighborIdx = 0;//threadId % stepSize(step); //TODO: Correct this for k-hop
+
+    VertexID_t transit = (transitIdx >= NumSamples) ? invalidVertex : transitToSamplesKeys[transitIdx];
+    if (threadIdx.x == 0) {
+      transitForTB = transit;
     }
-    assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
 
-    VertexID_t sample = transitToSamplesValues[transitIdx];
+    __syncthreads();
 
-    assert(sample < NumSamples);
-    VertexID_t neighbor = invalidVertex;
-
-    if (transit != invalidVertex) {
-      // if (graph.device_csr->has_vertex(transit) == false)
-      //   printf("transit %d\n", transit);
-      assert(graph.device_csr->has_vertex(transit));
-
-      const EdgePos_t numTransitEdges = numEdgesInShMem;
-      
-      if (numTransitEdges != 0) {
-        const CSR::Edge* transitEdges = graph.device_csr->get_edges(transit);
-        const float* transitEdgeWeights =  graph.device_csr->get_weights(transit);
-        const float maxWeight = graph.device_csr->get_max_weight(transit);
-        
-        if (edgesCachedInShMem) {
-          neighbor = nextCached(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
-                          numTransitEdges, transitNeighborIdx, &randState,
-                          (MAX_EDGES_IN_SHMEM && edgesCachedInShMem) ? &edgesInShMem[0] : nullptr,
-                          (MAX_EDGES_IN_SHMEM && HAS_WEIGHTS && edgesCachedInShMem) ? &edgeWeightsInShMem[0] : nullptr);
-        } else {
-          neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
-                           numTransitEdges, transitNeighborIdx, &randState);
-        }
-  #if 0
-        //search if neighbor has already been selected.
-        //we can do that in register if required
-        newNeigbhors[threadIdx.x] = neighbor;
-
-        bool found = false;
-        for (int i = 0; i < N_THREADS; i++) {
-          if (newNeigbhors[i] == neighbor) {
-            found = true;
-            // break;
-          }
-        }
-
-        __syncwarp();
-        if (found) {
-          neighbor = next(step, transit, sample, transitEdges, numTransitEdges, 
-            transitNeighborIdx, randState);;
-        }
-  #endif
+    if (threadIdx.x == 0) {
+      numEdgesInShMem = graph.device_csr->get_n_edges_for_vertex(transitForTB);
+    }
+    
+    __syncthreads();
+    
+    if (CACHE_EDGES) {
+      for (int i = 0; i < min(CACHE_SIZE, numEdgesInShMem); i++) {
+        edgesInShMem[i] = -1;
       }
     }
 
-    __syncwarp();
-
-    EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
-
-    if (step != steps() - 1) {
-      //No need to store at last step
-      samplesToTransitKeys[transitIdx] = sample; //TODO: Update this for khop to transitIdx + transitNeighborIdx
-      samplesToTransitValues[transitIdx] = neighbor;
-    }
-    
-    EdgePos_t insertionPos = 0; 
-    if (numberOfTransits(step) > 1) {    
-      insertionPos = utils::atomicAdd(&sampleInsertionPositions[sample], 1);
-    } else {
-      insertionPos = step;
+    if (CACHE_WEIGHTS) {
+      for (int i = 0; i < min(CACHE_SIZE, numEdgesInShMem); i++) {
+        edgeWeightsInShMem[i] = -1;
+      }
     }
 
-    // if (insertionPos < finalSampleSize) {
-    //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
-    // }
-    assert(finalSampleSize > 0);
-    if (insertionPos >= finalSampleSize) {
-      printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
+    if (transit == transitForTB) {
+      if (kernelTypeForTransit[transit] != TransitKernelTypes::GridKernel) {
+        printf("transit %d\n", transit);
+      }
+      assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
+
+      VertexID_t sample = transitToSamplesValues[transitIdx];
+
+      assert(sample < NumSamples);
+      VertexID_t neighbor = invalidVertex;
+
+      if (transit != invalidVertex) {
+        // if (graph.device_csr->has_vertex(transit) == false)
+        //   printf("transit %d\n", transit);
+        assert(graph.device_csr->has_vertex(transit));
+
+        const EdgePos_t numTransitEdges = numEdgesInShMem;
+        
+        if (numTransitEdges != 0) {
+          const CSR::Edge* transitEdges = graph.device_csr->get_edges(transit);
+          const float* transitEdgeWeights =  graph.device_csr->get_weights(transit);
+          const float maxWeight = graph.device_csr->get_max_weight(transit);
+          
+          neighbor = nextCached<CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS>(step, transit, sample, maxWeight, 
+                                                                        transitEdges, transitEdgeWeights, 
+                                                                        numTransitEdges, transitNeighborIdx, &randState,
+                                                                        &edgesInShMem[0], &edgeWeightsInShMem[0]);
+        }
+      }
+
+      //__syncwarp();
+
+      EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
+
+      if (step != steps() - 1) {
+        //No need to store at last step
+        samplesToTransitKeys[transitIdx] = sample; //TODO: Update this for khop to transitIdx + transitNeighborIdx
+        samplesToTransitValues[transitIdx] = neighbor;
+      }
+      
+      EdgePos_t insertionPos = 0; 
+      if (numberOfTransits(step) > 1) {    
+        insertionPos = utils::atomicAdd(&sampleInsertionPositions[sample], 1);
+      } else {
+        insertionPos = step;
+      }
+
+      // if (insertionPos < finalSampleSize) {
+      //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
+      // }
+      assert(finalSampleSize > 0);
+      if (insertionPos >= finalSampleSize) {
+        printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
+      }
+      assert(insertionPos < finalSampleSize);
+      finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+      // if (sample == 100) {
+      //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
+      // }
+      //TODO: We do not need atomic instead store indices of transit in another array,
+      //wich can be accessed based on sample and transitIdx.
     }
-    assert(insertionPos < finalSampleSize);
-    finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
-    // if (sample == 100) {
-    //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
-    // }
-    //TODO: We do not need atomic instead store indices of transit in another array,
-    //wich can be accessed based on sample and transitIdx.
   }
 }
 
@@ -890,6 +871,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
   double loadBalancingTime = 0;
   double inversionTime = 0;
+  double gridKernelTime = 0;
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
@@ -959,8 +941,10 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         nextDoorData.dCurandStates, dKernelTypeForTransit);
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-
-      gridKernel<3*1024-3,0><<<(*gridKernelTransitsNum), 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      
+      const int perThreadSamples = 2;
+      double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
+      gridKernel<3*1024-3,0,0,perThreadSamples><<<(*gridKernelTransitsNum)/perThreadSamples, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
@@ -968,6 +952,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum);
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
+      double gridKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
+      gridKernelTime += (gridKernelTimeT2 - gridKernelTimeT1);
 
       // atomicPointerInc<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(atomicPtrTest);
       // CHK_CU(cudaGetLastError());
@@ -1021,7 +1007,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(EdgePos_t)*nextDoorData.samples.size()));
 
   std::cout << "Transit Parallel: End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
-  std::cout << "InversionTime: " << inversionTime <<", " << "LoadBalancingTime: " << loadBalancingTime << std::endl;
+  std::cout << "InversionTime: " << inversionTime <<", " << "LoadBalancingTime: " << loadBalancingTime << ", " << "GridKernelTime: " << gridKernelTime << std::endl;
   CHK_CU(cudaFree(d_temp_storage));
   CHK_CU(cudaFree(dUniqueTransits));
   CHK_CU(cudaFree(dUniqueTransitsCounts));
