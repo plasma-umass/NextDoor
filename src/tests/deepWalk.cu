@@ -28,13 +28,14 @@ VertexID next(int step, const VertexID transit, const VertexID sample,
   return transitEdges[x];
 }
 
-template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS>
+template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
 __device__ inline
 VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
               const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-              curandState* state, VertexID_t* cachedEdges, float* cachedWeights)
+              curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
+              bool* globalLoadBV)
 {
   if (numEdges == 1) {
     if (CACHE_EDGES)
@@ -63,7 +64,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 
   if (CACHE_EDGES)
     return setAndGet<CACHE_SIZE>(x, transitEdges, cachedEdges);
-  else 
+  else
     return transitEdges[x];
 }
 
@@ -84,7 +85,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
-#define RUNS 1
+#define RUNS 10
 #define CHECK_RESULTS false
 
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
@@ -95,7 +96,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
 // APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
 //APP_TEST(DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
-// APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
+//APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
 APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)

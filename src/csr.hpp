@@ -195,6 +195,7 @@ public:
 class CSRPartition
 {
 public:
+  ~CSRPartition() {}
   const VertexID first_vertex_id;
   const VertexID last_vertex_id;
   const EdgePos_t first_edge_idx;
@@ -212,7 +213,7 @@ public:
     
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   EdgePos_t get_start_edge_idx (int vertex_id) const  {
     if (!(vertex_id <= last_vertex_id && first_vertex_id <= vertex_id)) {
       printf ("vertex_id %d, end_vertex %d, start_vertex %d\n", vertex_id, last_vertex_id, first_vertex_id);
@@ -221,28 +222,28 @@ public:
     return vertices[vertex_id - first_vertex_id].start_edge_id;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   EdgePos_t get_end_edge_idx (int vertex_id) const 
   {
     assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
     return vertices[vertex_id - first_vertex_id].end_edge_id;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   float get_max_weight (int vertex_id) const 
   {
     assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
     return vertices[vertex_id - first_vertex_id].max_weight;
   }
   
-  __host__ __device__
+  __host__ __device__ __forceinline__
   CSR::Edge get_edge (EdgePos_t idx)  const 
   {
     assert (idx >= first_edge_idx && idx <= last_edge_idx);
     return edges[idx - first_edge_idx];
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   float get_weight(EdgePos_t idx) const 
   {
     assert (idx >= first_edge_idx && idx <= last_edge_idx);
@@ -270,60 +271,60 @@ public:
     return VertexRange(0, get_n_vertices()-1);
   }
 
-  __host__ __device__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
+  __host__ __device__ __forceinline__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
   {
     return (get_end_edge_idx (v) != -1) ? (get_end_edge_idx(v) - get_start_edge_idx (v) + 1) : 0;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   const CSR::Edge* get_edges () const 
   {
     return edges;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   const float* get_weights () const 
   {
     return weights;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   const CSR::Edge* get_edges (VertexID v) const 
   {
     return &edges[get_start_edge_idx(v) - first_edge_idx];
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   const float* get_weights (VertexID v) const 
   {
     return &weights[get_start_edge_idx(v) - first_edge_idx];
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   const CSR::Vertex* get_vertices () const 
   {
     return vertices; 
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   VertexID get_n_vertices () const 
   {
     return last_vertex_id - first_vertex_id + 1;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   EdgePos_t get_n_edges () const 
   {
     return last_edge_idx - first_edge_idx + 1;
   }
 
-  __host__ __device__ 
+  __host__ __device__  __forceinline__
   bool has_vertex (int v) const 
   {
     return v >= first_vertex_id && v <= last_vertex_id;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   bool has_edge (VertexID src, VertexID dst) const 
   {
     for (EdgePos_t i = get_start_edge_idx(src); i <= get_end_edge_idx(src); i++) {
@@ -335,7 +336,7 @@ public:
     return false;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   bool has_edge_logn (VertexID src, VertexID dst) const 
   {
     EdgePos_t l = get_start_edge_idx(src);
@@ -354,14 +355,14 @@ public:
     return false;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   VertexID get_vertex_idx(VertexID v) const
   {
     assert (has_vertex (v));
     return v - first_vertex_id;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   VertexID get_invalid_vertex() const 
   {
 #ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM

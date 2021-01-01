@@ -323,10 +323,9 @@ namespace GPUUtils {
     return warp_mask;
   }
   
-  void copyPartitionToGPU(CSRPartition& part, GPUCSRPartition& gpuCSRPartition)
+  CSRPartition copyPartitionToGPU(CSRPartition& part, GPUCSRPartition& gpuCSRPartition)
   {
-    //TODO: Store gpuCSRPartition in Constant Memory
-    CHK_CU(cudaMalloc(&gpuCSRPartition.device_csr, sizeof(CSRPartition)));
+    //TODO: Store gpuCSRPartition in Constant Memory  
     CHK_CU(cudaMalloc(&gpuCSRPartition.device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
     CHK_CU(cudaMalloc(&gpuCSRPartition.device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
     CHK_CU(cudaMalloc(&gpuCSRPartition.device_weights_array, sizeof(float)*part.get_n_edges ()));
@@ -340,7 +339,7 @@ namespace GPUUtils {
                                                            gpuCSRPartition.device_vertex_array, 
                                                            gpuCSRPartition.device_edge_array,
                                                            gpuCSRPartition.device_weights_array);
-    CHK_CU(cudaMemcpy(gpuCSRPartition.device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
+    return device_csr_partition_value;
   }
   
   __host__ __device__ int num_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 

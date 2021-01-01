@@ -26,7 +26,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
               curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
               bool* globalLoadBV)
 {
-  EdgePos_t x = threadIdx.x%numEdges;//RandNumGen::rand_int(state, numEdges);
+  EdgePos_t x = RandNumGen::rand_int(state, numEdges);
   if (CACHE_EDGES)
     return setAndGet<CACHE_SIZE>(x, transitEdges, cachedEdges);
   else 
@@ -42,11 +42,11 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 // APP_TEST(UniformRandWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(UniformRandWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
 // APP_TEST(UniformRandWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
-APP_TEST(UniformRandWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 10, true, "TransitParallel", true)
+// APP_TEST(UniformRandWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 1, true, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel")
 // APP_TEST(UniformRandWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
 // APP_TEST(UniformRandWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
 // APP_TEST(UniformRandWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-// APP_TEST(UniformRandWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 1, false, "TransitParallel", true)
+APP_TEST(UniformRandWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 1, false, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
