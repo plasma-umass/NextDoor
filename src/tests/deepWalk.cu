@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 10;}
+__host__ __device__ int steps() {return 100;}
 
 __host__ __device__ 
 int stepSize(int k) {
@@ -86,7 +86,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
 #define RUNS 10
-#define CHECK_RESULTS false
+#define CHECK_RESULTS true
 
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
 // APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 

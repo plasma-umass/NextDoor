@@ -378,9 +378,9 @@ __device__ inline VertexID_t setAndGet(EdgePos_t id, const T* transitEdges, T* c
   return e;
 }
 
-#define COALESCE_CURAND_LOAD
+#define MAX(x,y) (((x)<(y))?(y):(x))
 
-template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, int TRANSITS_PER_THREAD>
+template<int THREADS, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, int TRANSITS_PER_THREAD, bool COALESCE_CURAND_LOAD>
 __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
                            const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
                            const size_t transitToSamplesSize, const size_t NumSamples,
@@ -389,8 +389,12 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
                            curandState* randStates, const int* kernelTypeForTransit, const VertexID_t* gridKernelTBPositions, 
                            const EdgePos_t gridKernelTBPositionsNum)
 {
-  __shared__ CSR::Edge edgesInShMem[CACHE_EDGES ? CACHE_SIZE : 1];
-  __shared__ float edgeWeightsInShMem[CACHE_WEIGHTS ? CACHE_SIZE : 1];
+  #define EDGE_CACHE_SIZE (CACHE_EDGES ? CACHE_SIZE*sizeof(CSR::Edge) : 0)
+  #define WEIGHT_CACHE_SIZE (CACHE_WEIGHTS ? CACHE_SIZE*sizeof(float) : 0)
+  #define CURAND_SHMEM_SIZE (sizeof(curandState)*THREADS)
+
+  __shared__ unsigned char shMemAlloc[MAX(EDGE_CACHE_SIZE+WEIGHT_CACHE_SIZE, CURAND_SHMEM_SIZE)];
+  
   __shared__ bool globalLoadBV[1];
   __shared__ VertexID_t numEdgesInShMem;
   __shared__ bool invalidateCache;
@@ -399,27 +403,32 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   __shared__ float* glTransitEdgeWeights;
   __shared__ float maxWeight;
   __shared__ EdgePos_t mapStartPos;
-  //__shared__ float randNums[256];
+
+  CSR::Edge* edgesInShMem = CACHE_EDGES ? (CSR::Edge*)&shMemAlloc[0] : nullptr;
+  float* edgeWeightsInShMem = CACHE_WEIGHTS ? (float*)&shMemAlloc[EDGE_CACHE_SIZE] : nullptr;
   
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
+  
+  curandState* curandSrcPtr;
 
-#ifdef COALESCE_CURAND_LOAD
-  const int intsInRandState = sizeof(curandState)/sizeof(int);
-  __shared__ int shStateBuff[intsInRandState*256];
+  if (COALESCE_CURAND_LOAD) {
+    const int intsInRandState = sizeof(curandState)/sizeof(int);
+    int* shStateBuff = (int*)&shMemAlloc[0];
 
-  int* randStatesAsInts = (int*)randStates;
-  int warpId = threadIdx.x/warpSize;
-  int laneId = threadIdx.x%warpSize;
-  for (int i = threadIdx.x; i < intsInRandState*256; i += blockDim.x) {
-    shStateBuff[i] = randStatesAsInts[i + blockDim.x*blockIdx.x];
+    int* randStatesAsInts = (int*)randStates;
+  
+    for (int i = threadIdx.x; i < intsInRandState*blockDim.x; i += blockDim.x) {
+      shStateBuff[i] = randStatesAsInts[i + blockDim.x*blockIdx.x];
+    }
+
+    __syncthreads();
+    curandSrcPtr = (curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
+  } else {
+    curandSrcPtr = &randStates[threadId];
   }
 
-  __syncthreads();
+  curandState localRandState = *curandSrcPtr;
 
-  curandState localRandState = *(curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
-#else
-  curandState localRandState = randStates[threadId];
-#endif
   //__shared__ VertexID newNeigbhors[N_THREADS];
   //if (threadIdx.x == 0) printf("blockIdx.x %d\n", blockIdx.x);
   //shRandStates[threadIdx.x] = randStates[threadId];  
@@ -488,7 +497,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         neighbor = nextCached<CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sample, maxWeight, 
                                                                       glTransitEdges, glTransitEdgeWeights, 
                                                                       numTransitEdges, transitNeighborIdx, &localRandState,
-                                                                      &edgesInShMem[0], &edgeWeightsInShMem[0],
+                                                                      edgesInShMem, edgeWeightsInShMem,
                                                                       &globalLoadBV[0]);
       }
 
@@ -1004,7 +1013,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       const int perThreadSamples = 4;
       double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       int threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamples);
-      gridKernel<3*1024-3,0,0,perThreadSamples><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      gridKernel<256,3*1024-3,0,0,perThreadSamples,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
