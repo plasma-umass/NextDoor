@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 10;}
+__host__ __device__ int steps() {return 3;}
 
 __host__ __device__ 
 int stepSize(int k) {
@@ -28,7 +28,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 {
   EdgePos_t x = RandNumGen::rand_int(state, numEdges);
   if (CACHE_EDGES)
-    return setAndGet<CACHE_SIZE>(x, transitEdges, cachedEdges);
+    return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdges, cachedEdges, globalLoadBV);
   else 
     return transitEdges[x];
 }
@@ -42,11 +42,11 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 // APP_TEST(UniformRandWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(UniformRandWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
 // APP_TEST(UniformRandWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
-// APP_TEST(UniformRandWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 1, true, "TransitParallel", true)
+//APP_TEST(UniformRandWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", 1, true, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel")
 // APP_TEST(UniformRandWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
 // APP_TEST(UniformRandWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
 // APP_TEST(UniformRandWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(UniformRandWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 1, false, "TransitParallel", true)
+APP_TEST(UniformRandWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 1, true, "TransitParallel", true)
 // APP_TEST(UniformRandWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
