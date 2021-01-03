@@ -39,7 +39,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 {
   if (numEdges == 1) {
     if (CACHE_EDGES)
-      return setAndGet<CACHE_SIZE>(0, transitEdges, cachedEdges);
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(0, transitEdges, cachedEdges, globalLoadBV);
     return transitEdges[0];
   }
   
@@ -47,7 +47,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
   float y = curand_uniform(state)*max_weight;
   float weight;
   if (CACHE_WEIGHTS) {
-    weight = setAndGet<CACHE_SIZE>(x, transitEdgeWeights, cachedWeights);
+    weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
   } else {
     weight = transitEdgeWeights[x];
   }
@@ -56,14 +56,14 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
     x = RandNumGen::rand_int(state, numEdges);
     y = curand_uniform(state)*max_weight;
     if (CACHE_WEIGHTS) {
-      weight = setAndGet<CACHE_SIZE>(x, transitEdgeWeights, cachedWeights);
+      weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
     } else {
       weight = transitEdgeWeights[x];
     }
   }
 
   if (CACHE_EDGES)
-    return setAndGet<CACHE_SIZE>(x, transitEdges, cachedEdges);
+    return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdges, cachedEdges, globalLoadBV);
   else
     return transitEdges[x];
 }
@@ -85,7 +85,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
-#define RUNS 10
+#define RUNS 1
 #define CHECK_RESULTS false
 
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
@@ -98,7 +98,7 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 //APP_TEST(DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
 //APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-//APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
+// APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
 // APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
 APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
