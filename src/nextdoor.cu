@@ -486,14 +486,14 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
     __syncthreads();
 
     if (CACHE_EDGES && invalidateCache) {
-      for (int i = 0; i < min(CACHE_SIZE, numEdgesInShMem); i++) {
-        edgesInShMem[i] = -1;
+      for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
+        edgesInShMem[i] = -1;//glTransitEdges[i];
       }
     }
   
     if (CACHE_WEIGHTS && invalidateCache) {
-      for (int i = 0; i < min(CACHE_SIZE, numEdgesInShMem); i++) {
-        edgeWeightsInShMem[i] = -1;
+      for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
+        edgeWeightsInShMem[i] = -1;//glTransitEdgeWeights[i];
       }
     }
 
@@ -546,7 +546,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         //((uint64_t*)finalSamples)[(sample*finalSampleSize)/2 + threadIdx.x] = (uint64_t)(((uint64_t)transit) | (((uint64_t)neighbor) << 32));
       }
 
-      finalSamples[sample*finalSampleSize + threadIdx.x] = neighbor;
+      //finalSamples[sample*finalSampleSize + threadIdx.x] = neighbor;
       // if (sample == 100) {
       //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
       // }
@@ -1040,7 +1040,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       const int perThreadSamples = 4;
       double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       int threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamples);
-      gridKernel<256,3*1024-3,false,false,false,perThreadSamples,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      gridKernel<256,3*1024-3,false,true,false,perThreadSamples,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
