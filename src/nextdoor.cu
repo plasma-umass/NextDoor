@@ -546,7 +546,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         //((uint64_t*)finalSamples)[(sample*finalSampleSize)/2 + threadIdx.x] = (uint64_t)(((uint64_t)transit) | (((uint64_t)neighbor) << 32));
       }
 
-      //finalSamples[sample*finalSampleSize + threadIdx.x] = neighbor;
+      finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
       // if (sample == 100) {
       //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
       // }
@@ -642,7 +642,8 @@ __global__ void partitionTransitsInKernels(EdgePos_t* uniqueTransits, EdgePos_t*
                                            int* kernelTypeForTransit) 
 {
   //__shared__ EdgePos_t insertionPosOfThread[TB_THREADS];
-  __shared__ EdgePos_t shGridTransits[8192];
+  const int SHMEM_SIZE = 4096;
+  __shared__ EdgePos_t shGridTransits[SHMEM_SIZE];
   __shared__ EdgePos_t gridTotalTBs;
   __shared__ EdgePos_t gridInsertionPos;
   __shared__ EdgePos_t gridKernelTransitsIter;
@@ -662,21 +663,43 @@ __global__ void partitionTransitsInKernels(EdgePos_t* uniqueTransits, EdgePos_t*
 
   int kernelType = -1;
 
-  if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel) {
-    EdgePos_t numThreadBlocks = (trCount + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
-    EdgePos_t insertionPos = ::atomicAdd(&gridTotalTBs, numThreadBlocks);
-    if (gridTotalTBs >= 8192) {
-      printf("gridTotalTBs %ld\n", gridTotalTBs);
-    }
-    assert(gridTotalTBs < 8192);
-    for (int tb = 0; tb < numThreadBlocks; tb++) {
-      shGridTransits[insertionPos + tb] = trPos + LoadBalancing::LoadBalancingThreshold::GridLevel * tb;
-    }
-    
+  if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
     kernelType = TransitKernelTypes::GridKernel;
-  }
-  else {
+  } else {
     kernelType = TransitKernelTypes::SubWarpKernel;
+  }
+
+  //Get all grid kernel transits
+  EdgePos_t numThreadBlocks = (trCount + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
+  EdgePos_t insertionPos = -1;
+  if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel)
+    insertionPos = ::atomicAdd(&gridTotalTBs, numThreadBlocks);
+  
+  __syncthreads();
+
+  if (threadIdx.x == 0) {
+    gridInsertionPos = ::atomicAdd(gridKernelTransitsNum, gridTotalTBs);
+  }
+
+  bool done = false;
+  int threadBlocksDone = 0;
+
+  for (int shMemIter = 0; shMemIter < gridTotalTBs; shMemIter += SHMEM_SIZE) {
+    if (!done && insertionPos - shMemIter + numThreadBlocks < SHMEM_SIZE && kernelType == TransitKernelTypes::GridKernel) {
+      for (int tb = threadBlocksDone; tb < numThreadBlocks; tb++) {
+        shGridTransits[insertionPos - shMemIter + tb] = trPos + LoadBalancing::LoadBalancingThreshold::GridLevel * tb;
+        threadBlocksDone++;
+      }
+      done = true;
+    }
+
+    __syncthreads();
+
+    for (EdgePos_t m = threadIdx.x; m < min(min(SHMEM_SIZE - shMemIter, SHMEM_SIZE), gridTotalTBs); m += blockDim.x) {
+      gridKernelTransits[gridInsertionPos + m + shMemIter] = shGridTransits[m];
+    }
+
+    __syncthreads();
   }
 
   if (threadId < uniqueTransitCountsNum && transit != invalidVertex) {
@@ -685,15 +708,9 @@ __global__ void partitionTransitsInKernels(EdgePos_t* uniqueTransits, EdgePos_t*
 
   __syncthreads();
 
-  if (threadIdx.x == 0) {
-    gridInsertionPos = ::atomicAdd(gridKernelTransitsNum, gridTotalTBs);
-  }
+  
 
-  __syncthreads();
 
-  for (EdgePos_t m = threadIdx.x; m < gridTotalTBs; m += blockDim.x) {
-    gridKernelTransits[gridInsertionPos + m] = shGridTransits[m];
-  }
   // if (shGridTrCount[threadIdx.x] >= 0 and shGridTrPos[threadIdx.x] >= 0) {
   //   EdgePos_t numThreadBlocks = (shGridTrCount[threadIdx.x] + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
   //   for (EdgePos_t i = 0; i < numThreadBlocks; i += 1) {
@@ -849,27 +866,43 @@ void freeDeviceData(NextDoorData& data)
   CHK_CU(cudaFree(data.gpuCSRPartition.device_weights_array));
 }
 
-
 void printKernelTypes(CSR* csr, VertexID_t* dUniqueTransits, VertexID_t* dUniqueTransitsCounts, EdgePos_t* dUniqueTransitsNumRuns)
 {
   EdgePos_t* hUniqueTransitsNumRuns = GPUUtils::copyDeviceMemToHostMem(dUniqueTransitsNumRuns, 1);
   VertexID_t* hUniqueTransits = GPUUtils::copyDeviceMemToHostMem(dUniqueTransits, *hUniqueTransitsNumRuns);
   VertexID_t* hUniqueTransitsCounts = GPUUtils::copyDeviceMemToHostMem(dUniqueTransitsCounts, *hUniqueTransitsNumRuns);
 
-  size_t subWarpLevelTransits = 0, subWarpLevelSamples = 0;
-  size_t threadBlockLevelTransits = 0, threadBlockLevelSamples = 0;
+  size_t identityKernelTransits = 0, identityKernelSamples = 0, maxEdgesOfIdentityTransits = 0;
+  size_t subWarpLevelTransits = 0, subWarpLevelSamples = 0, maxEdgesOfSubWarpTransits = 0, subWarpTransitsWithEdgesLessThan384 = 0, subWarpTransitsWithEdgesMoreThan384 = 0;
+  size_t threadBlockLevelTransits = 0, threadBlockLevelSamples = 0, tbVerticesWithEdgesLessThan3K = 0, tbVerticesWithEdgesMoreThan3K = 0;
   size_t gridLevelTransits = 0, gridLevelSamples = 0, gridVerticesWithEdgesLessThan10K = 0, gridVerticesWithEdgesMoreThan10K = 0;
   EdgePos_t maxEdgesOfGridTransits = 0;
 
   for (size_t tr = 0; tr < *hUniqueTransitsNumRuns; tr++) {
-    if (tr == 0) {printf("%s:%d hUniqueTransitsCounts[0] is %d\n", __FILE__, __LINE__, hUniqueTransitsCounts[tr]);}
-    if (hUniqueTransitsCounts[tr] <= LoadBalancing::LoadBalancingThreshold::BlockLevel) {
+    // if (tr == 0) {printf("%s:%d hUniqueTransitsCounts[0] is %d\n", __FILE__, __LINE__, hUniqueTransitsCounts[tr]);}
+    if (hUniqueTransitsCounts[tr] < 8) {
+      identityKernelTransits++;
+      identityKernelSamples += hUniqueTransitsCounts[tr];
+      maxEdgesOfIdentityTransits = max(maxEdgesOfIdentityTransits, (size_t)csr->n_edges_for_vertex(tr));
+    } else if (hUniqueTransitsCounts[tr] <= LoadBalancing::LoadBalancingThreshold::BlockLevel && 
+               hUniqueTransitsCounts[tr] >= 8) {
       subWarpLevelTransits++;
       subWarpLevelSamples += hUniqueTransitsCounts[tr];
+      maxEdgesOfSubWarpTransits = max(maxEdgesOfSubWarpTransits, (size_t)csr->n_edges_for_vertex(tr));
+      if (csr->n_edges_for_vertex(tr) <= 384) {
+        subWarpTransitsWithEdgesLessThan384 += 1;
+      } else {
+        subWarpTransitsWithEdgesMoreThan384 += 1;
+      }
     } else if (hUniqueTransitsCounts[tr] > LoadBalancing::LoadBalancingThreshold::BlockLevel && 
                hUniqueTransitsCounts[tr] <= LoadBalancing::LoadBalancingThreshold::GridLevel) {
       threadBlockLevelTransits++;
       threadBlockLevelSamples += hUniqueTransitsCounts[tr];
+      if (csr->n_edges_for_vertex(tr) <= 3*1024) {
+        tbVerticesWithEdgesLessThan3K += 1;
+      } else {
+        tbVerticesWithEdgesMoreThan3K += 1;
+      }
     } else {
       gridLevelTransits++;
       gridLevelSamples += hUniqueTransitsCounts[tr];
@@ -882,8 +915,12 @@ void printKernelTypes(CSR* csr, VertexID_t* dUniqueTransits, VertexID_t* dUnique
     }
   }
 
-  printf("SubWarpLevelTransits: %ld, SubWarpLevelSamples: %ld\n ThreadBlockLevelTransits: %ld, ThreadBlockLevelSamples: %ld\nGridLevelTransits: %ld, GridLevelSamples: %ld, VerticesWithEdges > 10K: %ld, VerticesWithEdges < 10K: %ld, MaxEdgesOfTransit: %d\n", 
-         subWarpLevelTransits, subWarpLevelSamples, threadBlockLevelTransits, threadBlockLevelSamples, gridLevelTransits, gridLevelSamples, gridVerticesWithEdgesMoreThan10K, gridVerticesWithEdgesLessThan10K, maxEdgesOfGridTransits);
+  printf("IdentityKernelTransits: %ld, IdentityKernelSamples: %ld, MaxEdgesOfIdentityTransits: %ld\n SubWarpLevelTransits: %ld, SubWarpLevelSamples: %ld, MaxEdgesOfSubWarpTranits: %ld, VerticesWithEdges > 384: %ld, VerticesWithEdges <= 384: %ld\n ThreadBlockLevelTransits: %ld, ThreadBlockLevelSamples: %ld, VerticesWithEdges > 3K: %ld, VerticesWithEdges < 3K: %ld\nGridLevelTransits: %ld, GridLevelSamples: %ld, VerticesWithEdges > 10K: %ld, VerticesWithEdges < 10K: %ld, MaxEdgesOfTransit: %d\n", 
+         identityKernelTransits, identityKernelSamples, maxEdgesOfIdentityTransits, 
+         subWarpLevelTransits, subWarpLevelSamples, maxEdgesOfSubWarpTransits, 
+            subWarpTransitsWithEdgesMoreThan384, subWarpTransitsWithEdgesLessThan384,
+         threadBlockLevelTransits, threadBlockLevelSamples, tbVerticesWithEdgesMoreThan3K, tbVerticesWithEdgesLessThan3K,
+         gridLevelTransits, gridLevelSamples, gridVerticesWithEdgesMoreThan10K, gridVerticesWithEdgesLessThan10K, maxEdgesOfGridTransits);
 
   delete hUniqueTransits;
   delete hUniqueTransitsCounts;
@@ -967,6 +1004,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   double loadBalancingTime = 0;
   double inversionTime = 0;
   double gridKernelTime = 0;
+  double subWarpKernelTime = 0;
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
@@ -1027,7 +1065,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       // getchar();
       double loadBalancingT2 = convertTimeValToDouble(getTimeOfDay ());
       loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
-
+      
+      double subWarpKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       subWarpKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
@@ -1036,7 +1075,9 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         nextDoorData.dCurandStates, dKernelTypeForTransit);
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-      
+      double subWarpKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
+      subWarpKernelTime += (subWarpKernelTimeT2 - subWarpKernelTimeT1);
+
       const int perThreadSamples = 4;
       double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       int threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamples);
@@ -1093,7 +1134,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(EdgePos_t)*nextDoorData.samples.size()));
 
   std::cout << "Transit Parallel: End to end time " << (end_to_end_t2 - end_to_end_t1) << " secs" << std::endl;
-  std::cout << "InversionTime: " << inversionTime <<", " << "LoadBalancingTime: " << loadBalancingTime << ", " << "GridKernelTime: " << gridKernelTime << std::endl;
+  std::cout << "InversionTime: " << inversionTime <<", " << "LoadBalancingTime: " << loadBalancingTime << ", " << "GridKernelTime: " << gridKernelTime << ", SubWarpKernelTime: " << subWarpKernelTime << std::endl;
   CHK_CU(cudaFree(d_temp_storage));
   CHK_CU(cudaFree(dUniqueTransits));
   CHK_CU(cudaFree(dUniqueTransitsCounts));
