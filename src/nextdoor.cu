@@ -636,14 +636,18 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, cons
 }
 
 template<int TB_THREADS>
-__global__ void partitionTransitsInKernels(EdgePos_t* uniqueTransits, EdgePos_t* uniqueTransitCounts, EdgePos_t* transitPositions,
+__global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, EdgePos_t* uniqueTransitCounts, EdgePos_t* transitPositions,
                                            EdgePos_t uniqueTransitCountsNum, VertexID_t invalidVertex,
                                            EdgePos_t* gridKernelTransits, EdgePos_t* gridKernelTransitsNum,
                                            int* kernelTypeForTransit) 
 {
   //__shared__ EdgePos_t insertionPosOfThread[TB_THREADS];
   const int SHMEM_SIZE = 4096;
-  __shared__ EdgePos_t shGridTransits[SHMEM_SIZE];
+  // __shared__ EdgePos_t trThreadBlocks[TB_THREADS];
+  // __shared__ EdgePos_t trStartPos[TB_THREADS];
+  typedef cub::BlockScan<int, TB_THREADS> BlockScan;
+  __shared__ typename BlockScan::TempStorage temp_storage;
+  __shared__ EdgePos_t shGridKernelTransits[SHMEM_SIZE];
   __shared__ EdgePos_t gridTotalTBs;
   __shared__ EdgePos_t gridInsertionPos;
   __shared__ EdgePos_t gridKernelTransitsIter;
@@ -655,6 +659,10 @@ __global__ void partitionTransitsInKernels(EdgePos_t* uniqueTransits, EdgePos_t*
     gridKernelTransitsIter = 0;
   }
 
+  for (int i = threadIdx.x; i < SHMEM_SIZE; i+= blockDim.x) {
+    shGridKernelTransits[i] = 0;
+  }
+
   __syncthreads();
   
   VertexID_t transit = uniqueTransits[threadId];
@@ -662,59 +670,82 @@ __global__ void partitionTransitsInKernels(EdgePos_t* uniqueTransits, EdgePos_t*
   EdgePos_t trPos = (threadId >= uniqueTransitCountsNum || transit == invalidVertex) ? -1: transitPositions[threadId];
 
   int kernelType = -1;
-
+  EdgePos_t numThreadBlocks = 0;
   if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
     kernelType = TransitKernelTypes::GridKernel;
+    numThreadBlocks = (trCount + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
+    // trThreadBlocks[threadIdx.x] = numThreadBlocks;
+    // trStartPos[threadIdx.x] = trPos;
   } else {
     kernelType = TransitKernelTypes::SubWarpKernel;
+    numThreadBlocks = 0;
+    // trThreadBlocks[threadIdx.x] = 0;
+    // trStartPos[threadIdx.x] = -1;
   }
-
-  //Get all grid kernel transits
-  EdgePos_t numThreadBlocks = (trCount + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
-  EdgePos_t insertionPos = -1;
-  if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel)
-    insertionPos = ::atomicAdd(&gridTotalTBs, numThreadBlocks);
   
-  __syncthreads();
-
-  if (threadIdx.x == 0) {
-    gridInsertionPos = ::atomicAdd(gridKernelTransitsNum, gridTotalTBs);
-  }
-
-  bool done = false;
-  int threadBlocksDone = 0;
-
-  for (int shMemIter = 0; shMemIter < gridTotalTBs; shMemIter += SHMEM_SIZE) {
-    if (!done && insertionPos - shMemIter + numThreadBlocks < SHMEM_SIZE && kernelType == TransitKernelTypes::GridKernel) {
-      for (int tb = threadBlocksDone; tb < numThreadBlocks; tb++) {
-        shGridTransits[insertionPos - shMemIter + tb] = trPos + LoadBalancing::LoadBalancingThreshold::GridLevel * tb;
-        threadBlocksDone++;
-      }
-      done = true;
-    }
-
-    __syncthreads();
-
-    for (EdgePos_t m = threadIdx.x; m < min(min(SHMEM_SIZE - shMemIter, SHMEM_SIZE), gridTotalTBs); m += blockDim.x) {
-      gridKernelTransits[gridInsertionPos + m + shMemIter] = shGridTransits[m];
-    }
-
-    __syncthreads();
-  }
-
   if (threadId < uniqueTransitCountsNum && transit != invalidVertex) {
     kernelTypeForTransit[transit] = kernelType;
   }
 
+  //Get all grid kernel transits
+  EdgePos_t prefixSumThreadData = 0;
+  BlockScan(temp_storage).ExclusiveSum(numThreadBlocks, prefixSumThreadData);
+  
   __syncthreads();
 
+  if (threadIdx.x == blockDim.x - 1) {
+    gridTotalTBs = prefixSumThreadData + numThreadBlocks;
+    gridInsertionPos = ::atomicAdd(gridKernelTransitsNum, gridTotalTBs);
+  }
   
+  __syncthreads();
+
+  int done = 0;
+  int startCopyingIteration = prefixSumThreadData/SHMEM_SIZE;
+  int endCopyingIteration = (prefixSumThreadData + numThreadBlocks)/SHMEM_SIZE;
+  // if (numThreadBlocks != 0) {
+  //   printf("blockIdx.x %d prefixSumThreadData %d numThreadBlocks %d startCopyingIteration %d\n", blockIdx.x, prefixSumThreadData, numThreadBlocks, startCopyingIteration);
+  // }
+
+  __syncthreads();
 
 
-  // if (shGridTrCount[threadIdx.x] >= 0 and shGridTrPos[threadIdx.x] >= 0) {
-  //   EdgePos_t numThreadBlocks = (shGridTrCount[threadIdx.x] + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
-  //   for (EdgePos_t i = 0; i < numThreadBlocks; i += 1) {
-  //     gridKernelTransits[gridInsertionPos + i + insertionPosOfThread[threadIdx.x]] = shGridTrPos[threadIdx.x] + LoadBalancing::LoadBalancingThreshold::GridLevel * i;
+  for (int tbs = 0; tbs < gridTotalTBs; tbs += SHMEM_SIZE) {
+    if (trPos >= 0 && numThreadBlocks > 0 && done < numThreadBlocks && tbs/SHMEM_SIZE >= startCopyingIteration && tbs/SHMEM_SIZE <= endCopyingIteration) {
+      int todo;
+      for (todo = 0; todo < min(numThreadBlocks-done, SHMEM_SIZE); todo++) {
+        int idx = prefixSumThreadData + done - tbs + todo;
+        if (idx >= SHMEM_SIZE) {
+          break;
+        }
+        if (idx < 0 || idx >= SHMEM_SIZE) {
+          printf("idx %d prefixSum %d done %d tbs %d todo %d\n", idx, prefixSumThreadData, done, tbs, todo);
+        }
+        shGridKernelTransits[idx] = trPos + LoadBalancing::LoadBalancingThreshold::GridLevel*(todo+done);
+      }
+      done += todo;
+    }
+
+    __syncthreads();
+
+    // if (blockIdx.x == 0) {
+    //   printf("%d tbs %d\n", blockIdx.x, tbs);
+    // }
+    __syncthreads();
+    // if (threadIdx.x == 0) {
+    //   for (EdgePos_t i = 0; i < SHMEM_SIZE; i+=1) {
+    //     printf("%d %d, %d\n", blockIdx.x, i, shGridKernelTransits[i]);
+    //   }
+    // }
+    for (EdgePos_t i = threadIdx.x; i < min(SHMEM_SIZE, gridTotalTBs - tbs); i+=blockDim.x) {
+      gridKernelTransits[gridInsertionPos + tbs + i] = shGridKernelTransits[i];
+    }
+    __syncthreads();
+  }
+
+  // if (threadIdx.x == 0) {
+  //   for (EdgePos_t i = 0; i < gridTotalTBs; i+=1) {
+  //     printf("%d %d, %d\n", blockIdx.x, i, gridKernelTransits[gridInsertionPos + i]);
   //   }
   // }
 }
@@ -1055,7 +1086,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       //printKernelTypes(csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
 
       CHK_CU(cudaMemset(dGridKernelTransitsNum, 0, sizeof(EdgePos_t)));
-      partitionTransitsInKernels<1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(dUniqueTransits, dUniqueTransitsCounts, 
+      partitionTransitsInKernels<1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
           dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, dKernelTypeForTransit);
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
