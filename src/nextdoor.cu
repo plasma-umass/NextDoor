@@ -635,6 +635,14 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, cons
   //wich can be accessed based on sample and transitIdx.
 }
 
+struct functor 
+{
+  __device__ __host__ int operator()(int& a, int &b) 
+  {
+    return max(a, b);
+  }
+};
+
 template<int TB_THREADS>
 __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, EdgePos_t* uniqueTransitCounts, EdgePos_t* transitPositions,
                                            EdgePos_t uniqueTransitCountsNum, VertexID_t invalidVertex,
@@ -642,12 +650,15 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
                                            int* kernelTypeForTransit) 
 {
   //__shared__ EdgePos_t insertionPosOfThread[TB_THREADS];
-  const int SHMEM_SIZE = 4096;
+  const int SHMEM_SIZE = 8000;
   // __shared__ EdgePos_t trThreadBlocks[TB_THREADS];
   // __shared__ EdgePos_t trStartPos[TB_THREADS];
   typedef cub::BlockScan<int, TB_THREADS> BlockScan;
   __shared__ typename BlockScan::TempStorage temp_storage;
   __shared__ EdgePos_t shGridKernelTransits[SHMEM_SIZE];
+  __shared__ EdgePos_t warpsLastThreadVals;
+  __shared__ EdgePos_t threadToTransitPrefixSum[TB_THREADS];
+  __shared__ EdgePos_t threadToTransitPos[TB_THREADS];
   __shared__ EdgePos_t gridTotalTBs;
   __shared__ EdgePos_t gridInsertionPos;
   __shared__ EdgePos_t gridKernelTransitsIter;
@@ -674,11 +685,11 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
   if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
     kernelType = TransitKernelTypes::GridKernel;
     numThreadBlocks = (trCount + LoadBalancing::LoadBalancingThreshold::GridLevel-1)/LoadBalancing::LoadBalancingThreshold::GridLevel;
-    // trThreadBlocks[threadIdx.x] = numThreadBlocks;
-    // trStartPos[threadIdx.x] = trPos;
+    threadToTransitPos[threadIdx.x] = trPos;
   } else {
     kernelType = TransitKernelTypes::SubWarpKernel;
     numThreadBlocks = 0;
+    threadToTransitPos[threadIdx.x] = 0;
     // trThreadBlocks[threadIdx.x] = 0;
     // trStartPos[threadIdx.x] = -1;
   }
@@ -699,48 +710,124 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
   }
   
   __syncthreads();
+  
+  if (true) {
+    if (numThreadBlocks != 0 and blockIdx.x == 0) {
+      printf("blockIdx.x %d threadIdx.x %d transit %d prefixSumThreadData %d numThreadBlocks %d trPos %d trCount %d\n", blockIdx.x, threadIdx.x, transit, prefixSumThreadData, numThreadBlocks, trPos, trCount);
+    }
 
-  int done = 0;
-  int startCopyingIteration = prefixSumThreadData/SHMEM_SIZE;
-  int endCopyingIteration = (prefixSumThreadData + numThreadBlocks)/SHMEM_SIZE;
-  // if (numThreadBlocks != 0) {
-  //   printf("blockIdx.x %d prefixSumThreadData %d numThreadBlocks %d startCopyingIteration %d\n", blockIdx.x, prefixSumThreadData, numThreadBlocks, startCopyingIteration);
-  // }
+    assert(gridTotalTBs < SHMEM_SIZE);
 
-  __syncthreads();
+    if (numThreadBlocks > 0)
+      shGridKernelTransits[prefixSumThreadData] = threadIdx.x;
+    
+    threadToTransitPrefixSum[threadIdx.x] = prefixSumThreadData + numThreadBlocks;
+    __syncthreads();
+    if (prefixSumThreadData == 6402) {
+      printf("728: tbs %d shGridKernelTransits[tbs] %d threadIdx.x %d numThreadBlocks %d\n", prefixSumThreadData, shGridKernelTransits[prefixSumThreadData], threadIdx.x, numThreadBlocks);
+    }
 
-
-  for (int tbs = 0; tbs < gridTotalTBs; tbs += SHMEM_SIZE) {
-    if (trPos >= 0 && numThreadBlocks > 0 && done < numThreadBlocks && tbs/SHMEM_SIZE >= startCopyingIteration && tbs/SHMEM_SIZE <= endCopyingIteration) {
-      int todo;
-      for (todo = 0; todo < min(numThreadBlocks-done, SHMEM_SIZE); todo++) {
-        int idx = prefixSumThreadData + done - tbs + todo;
-        if (idx >= SHMEM_SIZE) {
-          break;
-        }
-        if (idx < 0 || idx >= SHMEM_SIZE) {
-          printf("idx %d prefixSum %d done %d tbs %d todo %d\n", idx, prefixSumThreadData, done, tbs, todo);
-        }
-        shGridKernelTransits[idx] = trPos + LoadBalancing::LoadBalancingThreshold::GridLevel*(todo+done);
+    for (int tbs = threadIdx.x; tbs < DIVUP(gridTotalTBs, TB_THREADS)*TB_THREADS; tbs += blockDim.x) {
+      int warpId = threadIdx.x/warpSize;
+      int d;
+      if (tbs < TB_THREADS) {
+        d = (tbs < gridTotalTBs) ? shGridKernelTransits[tbs] : 0;
+      } else if (threadIdx.x == 0) {
+        d = (tbs < gridTotalTBs) ? max(shGridKernelTransits[tbs], shGridKernelTransits[tbs-1]): 0;
+      } else {
+        d = (tbs < gridTotalTBs) ? shGridKernelTransits[tbs] : 0;
       }
-      done += todo;
+      
+      __syncthreads();
+      BlockScan(temp_storage).InclusiveScan(d, d, cub::Max());
+      __syncthreads();
+
+      shGridKernelTransits[tbs] = d;
+      __syncthreads();
+
+      int previousTrPrefixSum = (shGridKernelTransits[tbs] - 1 >= 0) ? threadToTransitPrefixSum[shGridKernelTransits[tbs] - 1] : 0;
+      if (tbs >= 6402 && tbs < 6405) {
+        printf("747: tbs %d shGridKernelTransits[tbs] %d previousTrPrefixSum %d\n", tbs, shGridKernelTransits[tbs], previousTrPrefixSum);
+      }
+
+      #if 0
+      int d2;
+      if (threadIdx.x == 0 and tbs < blockDim.x) d = 0;
+      else if (threadIdx.x == 0 and tbs >= blockDim.x) {
+        int eq = (int) (shGridKernelTransits[tbs] == shGridKernelTransits[tbs - 1]);
+        d = eq + warpsLastThreadVals;
+      } else {
+        d = (int) (shGridKernelTransits[tbs] == shGridKernelTransits[tbs - 1]);
+        // if (threadIdx.x == 1) printf("threadIdx.x %d tbs %d d %d\n", threadIdx.x, tbs, d);
+      }
+      if (tbs == 6403) printf("threadIdx.x %d tbs %d d %d\n", threadIdx.x, tbs, d);
+      __syncthreads();
+      BlockScan(temp_storage).InclusiveSum(d, d2);
+      __syncthreads();
+      if (tbs == 6403) {
+        // d = (int) (shGridKernelTransits[tbs] == shGridKernelTransits[tbs - 1]) + warpsLastThreadVals[TB_THREADS/warpSize-1];
+
+        printf("751: threadIdx.x %d shGridKernelTransits[tbs] %d tbs %d d %d d2 %d previousTrPrefixSum %d d3 %d\n", threadIdx.x, shGridKernelTransits[tbs], tbs, d, d2, previousTrPrefixSum, d2 - previousTrPrefixSum);
+      }
+      d = d2;
+      if (threadIdx.x == blockDim.x-1) {
+        warpsLastThreadVals = d;
+      }
+      #endif
+      __syncthreads();
+      if (tbs < gridTotalTBs)
+        gridKernelTransits[gridInsertionPos + tbs] = threadToTransitPos[shGridKernelTransits[tbs]] + 256*(tbs - previousTrPrefixSum);
+        //gridKernelTransits[gridInsertionPos + tbs] = (tbs - previousTrPrefixSum);
     }
 
     __syncthreads();
 
-    // if (blockIdx.x == 0) {
-    //   printf("%d tbs %d\n", blockIdx.x, tbs);
+    if (threadIdx.x == 0 and blockIdx.x == 0) {
+      for (EdgePos_t i = 0; i < gridTotalTBs; i+=1) {
+        printf("%d %d, %d gridTotalTBs %d\n", blockIdx.x, i, gridKernelTransits[gridInsertionPos+i], gridTotalTBs);
+      }
+    }
+    // if (threadIdx.x < gridTotalTBs) {
+    //   //for (EdgePos_t i = 0; i < gridTotalTBs; i+=1) {
+    //     printf("%d %d, %d gridTotalTBs %d\n", blockIdx.x, threadIdx.x, shGridKernelTransits[threadIdx.x] + 256*d, gridTotalTBs);
+    //   //}
     // }
-    __syncthreads();
+    //   __syncthreads();
     // if (threadIdx.x == 0) {
-    //   for (EdgePos_t i = 0; i < SHMEM_SIZE; i+=1) {
-    //     printf("%d %d, %d\n", blockIdx.x, i, shGridKernelTransits[i]);
+    //   for (EdgePos_t i = 0; i < gridTotalTBs; i+=1) {
+    //     printf("%d %d, %d\n", blockIdx.x, i, gridKernelTransits[gridInsertionPos + i]);
     //   }
     // }
-    for (EdgePos_t i = threadIdx.x; i < min(SHMEM_SIZE, gridTotalTBs - tbs); i+=blockDim.x) {
-      gridKernelTransits[gridInsertionPos + tbs + i] = shGridKernelTransits[i];
-    }
+  } else {
+    int done = 0;
+    int startCopyingIteration = prefixSumThreadData/SHMEM_SIZE;
+    int endCopyingIteration = (prefixSumThreadData + numThreadBlocks)/SHMEM_SIZE;
+
     __syncthreads();
+
+    for (int tbs = 0; tbs < gridTotalTBs; tbs += SHMEM_SIZE) {
+      if (trPos >= 0 && numThreadBlocks > 0 && done < numThreadBlocks && tbs/SHMEM_SIZE >= startCopyingIteration && tbs/SHMEM_SIZE <= endCopyingIteration) {
+        int todo;
+        for (todo = 0; todo < min(numThreadBlocks-done, SHMEM_SIZE); todo++) {
+          int idx = prefixSumThreadData + done - tbs + todo;
+          if (idx >= SHMEM_SIZE) {
+            break;
+          }
+          if (idx < 0 || idx >= SHMEM_SIZE) {
+            printf("idx %d prefixSum %d done %d tbs %d todo %d\n", idx, prefixSumThreadData, done, tbs, todo);
+          }
+          shGridKernelTransits[idx] = trPos + LoadBalancing::LoadBalancingThreshold::GridLevel*(todo+done);
+        }
+        done += todo;
+      }
+
+      __syncthreads();
+
+      for (EdgePos_t i = threadIdx.x; i < min(SHMEM_SIZE, gridTotalTBs - tbs); i+=blockDim.x) {
+        gridKernelTransits[gridInsertionPos + tbs + i] = shGridKernelTransits[i];
+      }
+      __syncthreads();
+    }
   }
 
   // if (threadIdx.x == 0) {

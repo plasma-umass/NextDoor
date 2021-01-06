@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 100;}
+__host__ __device__ int steps() {return 3;}
 
 __host__ __device__ 
 int stepSize(int k) {
@@ -103,3 +103,109 @@ APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 
 // APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
  APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
