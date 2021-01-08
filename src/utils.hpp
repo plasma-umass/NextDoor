@@ -427,7 +427,8 @@ namespace LoadBalancing {
   enum LoadBalancingThreshold{
     GridLevel = 256,
     BlockLevel = 32,
-    SubWarpLevel = 0,
+    SubWarpLevel = 8,
+    IdentityKernel = 0
   };
 
   enum LoadBalancingTBSizes {
