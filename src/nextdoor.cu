@@ -652,10 +652,10 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
                                            EdgePos_t* threadBlockKernelTransits, EdgePos_t* threadBlockKernelTransitsNum,
                                            EdgePos_t* subWarpKernelTransits, EdgePos_t* subWarpKernelTransitsNum,
                                            EdgePos_t* identityKernelTransits, EdgePos_t* identityKernelTransitsNum,
-                                           int* kernelTypeForTransit) 
+                                           int* kernelTypeForTransit, VertexID_t* transitToSamplesKeys) 
 {
   //__shared__ EdgePos_t insertionPosOfThread[TB_THREADS];
-  const int SHMEM_SIZE = 8000;
+  const int SHMEM_SIZE = 4096;
   // __shared__ EdgePos_t trThreadBlocks[TB_THREADS];
   // __shared__ EdgePos_t trStartPos[TB_THREADS];
   typedef cub::BlockScan<int, TB_THREADS> BlockScan;
@@ -664,6 +664,7 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
   __shared__ EdgePos_t warpsLastThreadVals;
   __shared__ EdgePos_t threadToTransitPrefixSum[TB_THREADS];
   __shared__ EdgePos_t threadToTransitPos[TB_THREADS];
+  __shared__ VertexID_t threadToTransit[TB_THREADS];
   __shared__ EdgePos_t totalThreadGroups;
   __shared__ EdgePos_t threadGroupsInsertionPos;
   __shared__ EdgePos_t gridKernelTransitsIter;
@@ -686,22 +687,20 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
   EdgePos_t trPos = (threadId >= uniqueTransitCountsNum || transit == invalidVertex) ? -1: transitPositions[threadId];
 
   int kernelType = -1;
-  EdgePos_t numThreadBlocks = 0;
+  EdgePos_t numThreadGroups = 0;
   if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
     kernelType = TransitKernelTypes::GridKernel;
-    numThreadBlocks = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::GridLevel-1);
-    threadToTransitPos[threadIdx.x] = trPos;
   } else if (trCount >= LoadBalancing::LoadBalancingThreshold::BlockLevel) {
     kernelType = TransitKernelTypes::ThreadBlockKernel;
-    numThreadBlocks = 0;
+    numThreadGroups = 0;
     threadToTransitPos[threadIdx.x] = 0;
   } else if (trCount >= LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
     kernelType = TransitKernelTypes::SubWarpKernel;
-    numThreadBlocks = 0;
+    numThreadGroups = 0;
     threadToTransitPos[threadIdx.x] = 0;
   } else {
     kernelType = TransitKernelTypes::IdentityKernel;
-    numThreadBlocks = 0;
+    numThreadGroups = 0;
     threadToTransitPos[threadIdx.x] = 0;
   }
   
@@ -709,84 +708,140 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
     kernelTypeForTransit[transit] = kernelType;
   }
 
-  //Get all grid kernel transits
-  EdgePos_t prefixSumThreadData = 0;
-  BlockScan(temp_storage).ExclusiveSum(numThreadBlocks, prefixSumThreadData);
-  
-  __syncthreads();
+  for (int kTy = 1; kTy < TransitKernelTypes::NumKernelTypes + 1; kTy++) {
+    EdgePos_t* glKernelTransitsNum, *glKernelTransits;
 
-  if (threadIdx.x == blockDim.x - 1) {
-    totalThreadGroups = prefixSumThreadData + numThreadBlocks;
-    threadGroupsInsertionPos = ::atomicAdd(gridKernelTransitsNum, totalThreadGroups);
-  }
-  
-  __syncthreads();
-  
-  assert(totalThreadGroups < SHMEM_SIZE);
-
-  if (numThreadBlocks > 0)
-    shGridKernelTransits[prefixSumThreadData] = threadIdx.x;
-  
-  threadToTransitPrefixSum[threadIdx.x] = prefixSumThreadData;
-  __syncthreads();
-
-  for (int tbs = threadIdx.x; tbs < DIVUP(totalThreadGroups, TB_THREADS)*TB_THREADS; tbs += blockDim.x) {
-    int warpId = threadIdx.x/warpSize;
-    int d;
-    if (tbs < TB_THREADS) {
-      d = (tbs < totalThreadGroups) ? shGridKernelTransits[tbs] : 0;
-    } else if (threadIdx.x == 0) {
-      d = (tbs < totalThreadGroups) ? max(shGridKernelTransits[tbs], shGridKernelTransits[tbs-1]): 0;
+    if (kTy == TransitKernelTypes::GridKernel) {
+      if (kernelType == TransitKernelTypes::GridKernel) {
+        numThreadGroups = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::GridLevel);
+        threadToTransitPos[threadIdx.x] = trPos;
+        threadToTransit[threadIdx.x] = transit;
+      } else {
+        numThreadGroups = 0;
+        threadToTransitPos[threadIdx.x] = 0;
+        threadToTransit[threadIdx.x] = -1;
+      } 
+      glKernelTransitsNum = gridKernelTransitsNum;
+      glKernelTransits = gridKernelTransits;
+    } else if (kTy == TransitKernelTypes::ThreadBlockKernel) {
+      if (kernelType == TransitKernelTypes::GridKernel) {
+        numThreadGroups = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::BlockLevel);
+        threadToTransitPos[threadIdx.x] = trPos;
+      } else {
+        numThreadGroups = 0;
+        threadToTransitPos[threadIdx.x] = 0;
+      }       
+      glKernelTransitsNum = threadBlockKernelTransitsNum;
+      glKernelTransits = threadBlockKernelTransits;
+      continue;
+    } else if (kTy == TransitKernelTypes::SubWarpKernel) {
+      if (kernelType == TransitKernelTypes::GridKernel) {
+        numThreadGroups = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
+        threadToTransitPos[threadIdx.x] = trPos;
+      } else {
+        numThreadGroups = 0;
+        threadToTransitPos[threadIdx.x] = 0;
+      }       
+      glKernelTransitsNum = subWarpKernelTransitsNum;
+      glKernelTransits = subWarpKernelTransits;
+      continue;
     } else {
-      d = (tbs < totalThreadGroups) ? shGridKernelTransits[tbs] : 0;
+      continue;
+    }
+
+    //Get all grid kernel transits
+    EdgePos_t prefixSumThreadData = 0;
+    BlockScan(temp_storage).ExclusiveSum(numThreadGroups, prefixSumThreadData);
+    
+    __syncthreads();
+
+    if (threadIdx.x == blockDim.x - 1) {
+      totalThreadGroups = prefixSumThreadData + numThreadGroups;
+      threadGroupsInsertionPos = ::atomicAdd(glKernelTransitsNum, totalThreadGroups);
+    }
+
+    threadToTransitPrefixSum[threadIdx.x] = prefixSumThreadData;
+    
+    __syncthreads();
+    
+    if (totalThreadGroups != 0 and numThreadGroups != 0) {
+      printf("threadIdx.x %d blockIdx.x %d tr %d trPos %d numThreadGroups %d totalThreadGroups %d prefixSumThreadData %d\n", threadIdx.x, blockIdx.x, transit, trPos, numThreadGroups, totalThreadGroups, prefixSumThreadData);
     }
     
-    __syncthreads();
-    BlockScan(temp_storage).InclusiveScan(d, d, cub::Max());
-    __syncthreads();
-
-    if (tbs < totalThreadGroups)
-      shGridKernelTransits[tbs] = d;
-      
-    __syncthreads();
-
+    for (int tgIter = 0; tgIter < totalThreadGroups; tgIter += SHMEM_SIZE) {
+      for (int i = threadIdx.x; i < SHMEM_SIZE; i+= blockDim.x) {
+        shGridKernelTransits[i] = 0;
+      }
     
-    int previousTrPrefixSum = (tbs < totalThreadGroups && shGridKernelTransits[tbs] >= 0) ? threadToTransitPrefixSum[shGridKernelTransits[tbs]] : 0;
+      __syncthreads();
+      
+      int prefixSumIndex = prefixSumThreadData - tgIter;
+      if (prefixSumIndex < 0 && prefixSumIndex + numThreadGroups > 0) {
+        prefixSumIndex = 0;
+      }
+      if (numThreadGroups > 0) {
+        if (prefixSumIndex >= 0 && prefixSumIndex < SHMEM_SIZE)
+          shGridKernelTransits[prefixSumIndex] = threadIdx.x;
+      }
+      
+      __syncthreads();
 
-    if (tbs < totalThreadGroups)
-      gridKernelTransits[threadGroupsInsertionPos + tbs] = threadToTransitPos[shGridKernelTransits[tbs]] + 256*(tbs - previousTrPrefixSum);
+      for (int tbs = threadIdx.x; tbs < DIVUP(min(SHMEM_SIZE, totalThreadGroups - tgIter), TB_THREADS)*TB_THREADS; tbs += blockDim.x) {
+        int d;
+        if (tbs < TB_THREADS) {
+          d = (tbs < totalThreadGroups) ? shGridKernelTransits[tbs] : 0;
+        } else if (threadIdx.x == 0) {
+          d = (tbs < totalThreadGroups) ? max(shGridKernelTransits[tbs], shGridKernelTransits[tbs-1]): 0;
+        } else {
+          d = (tbs < totalThreadGroups) ? shGridKernelTransits[tbs] : 0;
+        }
+        
+        __syncthreads();
+        BlockScan(temp_storage).InclusiveScan(d, d, cub::Max());
+        __syncthreads();
+
+        if (tbs < totalThreadGroups)
+          shGridKernelTransits[tbs] = d;
+          
+        __syncthreads();
+
+        
+        int previousTrPrefixSum = (tbs < totalThreadGroups && shGridKernelTransits[tbs] >= 0) ? threadToTransitPrefixSum[shGridKernelTransits[tbs]] : 0;
+
+        if (tbs + tgIter < totalThreadGroups) {
+          // if (step == 1) {
+          //   printf("blockIdx.x %d shGridKernelTransits[tbs] %d tbs %d\n", blockIdx.x, shGridKernelTransits[tbs], tbs);
+          // }
+          EdgePos_t startPos = threadToTransitPos[shGridKernelTransits[tbs]];
+          EdgePos_t pos = startPos + 256*(tbs  + tgIter - previousTrPrefixSum);
+          VertexID_t transit = threadToTransit[shGridKernelTransits[tbs]];
+          glKernelTransits[threadGroupsInsertionPos + tbs + tgIter] = pos;
+          if (transitToSamplesKeys[pos] != transit) {
+            printf("blockIdx.x %d shGridKernelTransits[tbs] %d tbs %d tgIter %d startPos %d pos %d expectedTr %d threadTr %d\n", blockIdx.x, shGridKernelTransits[tbs], tbs, tgIter, startPos, pos, transitToSamplesKeys[pos], transit);
+          }
+          //assert(transitToSamplesKeys[pos] == transit);
+        }
+      }
+
+      __syncthreads();
+    }
+
+    if (threadIdx.x==0){
+      for (int i = 0; i < totalThreadGroups; i++) {
+       // printf("blockIdx.x %d gridKernelTransits[%d] %d step %d\n", blockIdx.x, i, gridKernelTransits[threadGroupsInsertionPos + i], step);
+      }
+    }
+
+    __syncthreads();
   }
 
-  __syncthreads();
-
-  EdgePos_t numSubWarps = 0;
-  if (kernelType == TransitKernelTypes::SubWarpKernel) {
-    threadToTransitPos[threadIdx.x] = trPos;
-    numSubWarps = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
-    // printf("trCount %d numSubWarps %d\n", trCount, numSubWarps);
-  }
-
-  //Get all grid kernel transits
-  prefixSumThreadData = 0;
-  BlockScan(temp_storage).ExclusiveSum(numSubWarps, prefixSumThreadData);
-  
-  __syncthreads();
-
-  if (threadIdx.x == blockDim.x - 1) {
-    totalThreadGroups = prefixSumThreadData + numSubWarps;
-    threadGroupsInsertionPos = ::atomicAdd(subWarpKernelTransitsNum, totalThreadGroups);
-  }
-  
-  __syncthreads();
-
-  assert(totalThreadGroups < SHMEM_SIZE);
-  if (threadIdx.x + blockIdx.x*blockDim.x == 0) {
-    printf("subWarpKernelTransitsNum %d\n", *subWarpKernelTransitsNum);
-  }
+  // if (threadIdx.x+blockIdx.x*blockDim.x==0) {
+  //   printf("glKernelTransitsNum %d\n", *gridKernelTransitsNum);
+  // }
   #if 0
   int done = 0;
   int startCopyingIteration = prefixSumThreadData/SHMEM_SIZE;
-  int endCopyingIteration = (prefixSumThreadData + numThreadBlocks)/SHMEM_SIZE;
+  int endCopyingIteration = (prefixSumThreadData + numThreadGroups)/SHMEM_SIZE;
 
   __syncthreads();
 
@@ -1093,6 +1148,10 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     sizeof(VertexID_t)*nextDoorData.samples.size()));
   CHK_CU(cudaMalloc(&dGridKernelTransits, 
                     sizeof(VertexID_t)*nextDoorData.samples.size()*maxNeighborsToSample));
+  CHK_CU(cudaMalloc(&dThreadBlockKernelTransits, 
+                    sizeof(VertexID_t)*nextDoorData.samples.size()*maxNeighborsToSample));
+  CHK_CU(cudaMalloc(&dSubWarpKernelTransits,
+                    sizeof(VertexID_t)*nextDoorData.samples.size()*maxNeighborsToSample));
 
   CHK_CU(cudaMalloc(&dKernelTransitNums, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
   CHK_CU(cudaMemset(dKernelTransitNums, 0, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
@@ -1186,7 +1245,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       CHK_CU(cudaMemset(dKernelTransitNums, 0, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
       partitionTransitsInKernels<1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
           dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, 
-          dThreadBlockKernelTransits, dThreadBlockKernelTransitsNum, dSubWarpKernelTransits, dSubWarpKernelTransitsNum, nullptr, nullptr, dKernelTypeForTransit);
+          dThreadBlockKernelTransits, dThreadBlockKernelTransitsNum, dSubWarpKernelTransits, dSubWarpKernelTransitsNum, nullptr, nullptr, dKernelTypeForTransit,
+          nextDoorData.dTransitToSampleMapKeys);
 
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
