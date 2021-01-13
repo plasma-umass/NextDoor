@@ -24,7 +24,7 @@ int numNeighborsSampledAtStep(int step)
 }
 
 bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
-                  const size_t finalSampleSize, std::vector<VertexID_t>& finalSamples)
+                  const size_t finalSampleSize, std::vector<VertexID_t>& finalSamples, int maxSteps)
 {
   //Check result by traversing all sampled neighbors and making
   //sure that if neighbors at kth-hop is an adjacent vertex of one
@@ -47,7 +47,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
   size_t numNeighborsToSampleAtStep = 0;
   size_t numNeighborsSampledAtPrevStep = 0;
 
-  for (int step = 0; step < steps(); step++) {
+  for (int step = 0; step < min(maxSteps, steps()); step++) {
     if (step == 0) {
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
         std::unordered_set<VertexID_t> uniqueNeighbors;

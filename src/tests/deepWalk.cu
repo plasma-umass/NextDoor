@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 4;}
+__host__ __device__ int steps() {return 100;}
 
 __host__ __device__ 
 int stepSize(int k) {
