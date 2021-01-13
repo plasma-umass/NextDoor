@@ -10,6 +10,7 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 #define DIVUP(x,y) (((x) + ((y) - 1))/(y))
+#define FULL_WARP_MASK 0xffffffff
 
 #define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {assert(false);}
 

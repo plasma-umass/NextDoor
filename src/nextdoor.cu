@@ -349,8 +349,6 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   //wich can be accessed based on sample and transitIdx.
 }
 
-#define FULL_MASK 0xffffffff
-
 template<int THREADS, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool COALESCE_GL_LOADS, int TRANSITS_PER_THREAD, bool COALESCE_CURAND_LOAD>
 __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
                               const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
@@ -384,19 +382,24 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
 
   curandState localRandState = *curandSrcPtr;
 
-  int subWarpIdx = threadId / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
   int subWarpThreadIdx = threadId % LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  int subWarp = threadId / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
 
   for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
     //TODO:*********************THIS**********************************
-    EdgePos_t transitIdx = subWarpKernelTBPositions[subWarpIdx] + subWarpThreadIdx;
+    EdgePos_t transitIdx = 0;
+    EdgePos_t subWarpIdx = TRANSITS_PER_THREAD * subWarp + transitI;
+    if (subWarpIdx >= subWarpKernelTBPositionsNum) {
+      continue;
+    }
+    transitIdx = subWarpKernelTBPositions[subWarpIdx] + subWarpThreadIdx;
     EdgePos_t transitNeighborIdx = 0;
     VertexID_t transit = transitToSamplesKeys[transitIdx];
-    VertexID_t firstThreadTransit = __shfl_sync(FULL_MASK, transit, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
+    VertexID_t firstThreadTransit = __shfl_sync(FULL_WARP_MASK, transit, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
     __syncwarp();
 
     if (firstThreadTransit != transit)
-      return;
+      continue;
 
     // int kernelTy = kernelTypeForTransit[transit];
     // if (kernelTy != TransitKernelTypes::SubWarpKernel) {
@@ -448,7 +451,7 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
 
     // __syncwarp();
 
-    EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
+    //EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
 
     if (step != steps() - 1) {
       //No need to store at last step
@@ -1400,12 +1403,12 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       double identityKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
       identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
       
-      const int perThreadSamples = 4;
-      int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamples), N_THREADS);
+      const int perThreadSamplesForSubWarpKernel = 2;
+      int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamplesForSubWarpKernel), N_THREADS);
       //std::cout << "subWarpKernelTransitsNum " << *subWarpKernelTransitsNum << " threadBlocks " << threadBlocks << std::endl;
       double subWarpKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       if (useSubWarpKernel) {
-        subWarpKernel<N_THREADS,3*1024-3,false,true,false,perThreadSamples,true><<<threadBlocks, N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+        subWarpKernel<N_THREADS,3*1024-3,false,true,false,perThreadSamplesForSubWarpKernel,true><<<threadBlocks, N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
           (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
           totalThreads, nextDoorData.samples.size(),
           nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
@@ -1417,10 +1420,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       double subWarpKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
       subWarpKernelTime += (subWarpKernelTimeT2 - subWarpKernelTimeT1);
 
+      const int perThreadSamplesForGridKernel = 4;
       double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-      threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamples);
+      threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
       if (useGridKernel) {
-        gridKernel<256,3*1024-3,false,true,false,perThreadSamples,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+        gridKernel<256,3*1024-3,false,true,false,perThreadSamplesForGridKernel,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
           (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
           totalThreads, nextDoorData.samples.size(),
           nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
