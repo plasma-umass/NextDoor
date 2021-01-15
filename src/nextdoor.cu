@@ -358,7 +358,12 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
                               curandState* randStates, const int* kernelTypeForTransit, const VertexID_t* subWarpKernelTBPositions, 
                               const EdgePos_t subWarpKernelTBPositionsNum)
 {  
-  __shared__ unsigned char shMemAlloc[sizeof(curandState)*THREADS];
+  // __shared__ unsigned char shMemAlloc[sizeof(curandState)*THREADS];
+  // __shared__ EdgePos_t shSubWarpPositions[SUBWARPS_IN_TB*TRANSITS_PER_THREAD];
+  const int SUBWARPS_IN_TB = THREADS/LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+
+  union unionShMem {EdgePos_t shSubWarpPositions[SUBWARPS_IN_TB*TRANSITS_PER_THREAD]; unsigned char shMemAlloc[sizeof(curandState)*THREADS];};
+  __shared__ unionShMem shMem;
 
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
   //__shared__ VertexID newNeigbhors[N_THREADS];
@@ -366,7 +371,7 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
 
   if (COALESCE_CURAND_LOAD) {
     const int intsInRandState = sizeof(curandState)/sizeof(int);
-    int* shStateBuff = (int*)&shMemAlloc[0];
+    int* shStateBuff = (int*)&shMem.shMemAlloc[0];
 
     int* randStatesAsInts = (int*)randStates;
   
@@ -382,18 +387,39 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
 
   curandState localRandState = *curandSrcPtr;
 
-  int subWarpThreadIdx = threadId % LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
-  int subWarp = threadId / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  const int subWarpThreadIdx = threadId % LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  const int subWarp = threadId / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  const int laneid = threadIdx.x % WARP_SIZE;
+  const int warpIdInBlock = threadIdx.x / WARP_SIZE;
+  const int WARPS_IN_TB = THREADS/WARP_SIZE;
+  const int numSubWarpsInWarp = WARP_SIZE/LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  const int subWarpIdxInTB = threadIdx.x/LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  const int startSubWarpIdxInTB = (blockIdx.x*blockDim.x)/LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+  const int lastSubWarpIdxInTB = startSubWarpIdxInTB + blockDim.x/LoadBalancing::LoadBalancingThreshold::SubWarpLevel - 1;
+  
+  for (int _subWarpIdx = threadIdx.x; _subWarpIdx < SUBWARPS_IN_TB * TRANSITS_PER_THREAD; _subWarpIdx += blockDim.x) {
+    if (_subWarpIdx + startSubWarpIdxInTB * TRANSITS_PER_THREAD >= subWarpKernelTBPositionsNum) {
+      continue;
+    }
+    shMem.shSubWarpPositions[_subWarpIdx] = subWarpKernelTBPositions[_subWarpIdx + startSubWarpIdxInTB * TRANSITS_PER_THREAD];
+  }
 
+  __syncthreads();
+  
   for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
-    //TODO:*********************THIS**********************************
     EdgePos_t transitIdx = 0;
     EdgePos_t subWarpIdx = TRANSITS_PER_THREAD * subWarp + transitI;
     if (subWarpIdx >= subWarpKernelTBPositionsNum) {
       continue;
     }
-    transitIdx = subWarpKernelTBPositions[subWarpIdx] + subWarpThreadIdx;
+
+    EdgePos_t transitStartPos = shMem.shSubWarpPositions[subWarpIdxInTB * TRANSITS_PER_THREAD + transitI];
+    transitIdx = transitStartPos + subWarpThreadIdx;
+    if (transitIdx >= NumSamples)
+      continue;
     EdgePos_t transitNeighborIdx = 0;
+    assert(transitIdx < NumSamples);
+    assert(transitIdx >= 0);
     VertexID_t transit = transitToSamplesKeys[transitIdx];
     VertexID_t firstThreadTransit = __shfl_sync(FULL_WARP_MASK, transit, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
     __syncwarp();
