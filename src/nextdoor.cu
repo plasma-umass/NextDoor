@@ -431,12 +431,17 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
     VertexID_t firstThreadTransit = __shfl_sync(FULL_WARP_MASK, transit, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
     __syncwarp();
     
-    //TODO: do only one access within a subwarp
     CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
-    const EdgePos_t numTransitEdges = csr->get_n_edges_for_vertex(firstThreadTransit);
-    const CSR::Edge* glTransitEdges = csr->get_edges(firstThreadTransit);
-    const float* glTransitEdgeWeights = csr->get_weights(firstThreadTransit);
-    const float maxWeight = csr->get_max_weight(firstThreadTransit);
+
+    //TODO: Combine all following accesses in one GL memory load across subwarp
+    const EdgePos_t firstThreadNumTransitEdges = (subWarpThreadIdx == 0) ? csr->get_n_edges_for_vertex(firstThreadTransit) : 0;
+    const EdgePos_t numTransitEdges = __shfl_sync(FULL_WARP_MASK, firstThreadNumTransitEdges, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
+    const uint64_t firstThreadGlTransitEdges = (uint64_t) ((subWarpThreadIdx == 0) ? csr->get_edges(firstThreadTransit) : nullptr);
+    const CSR::Edge* glTransitEdges = (CSR::Edge*)__shfl_sync(FULL_WARP_MASK, (uint64_t)firstThreadGlTransitEdges, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
+    const uint64_t firstThreadGlTransitEdgeWeights = (uint64_t)((subWarpThreadIdx == 0) ? csr->get_weights(firstThreadTransit) : 0);
+    const float* glTransitEdgeWeights = (float*)__shfl_sync(FULL_WARP_MASK, firstThreadGlTransitEdgeWeights, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
+    const float firstThreadMaxWeight = (subWarpThreadIdx == 0) ? csr->get_max_weight(firstThreadTransit) : 0;
+    const float maxWeight = __shfl_sync(FULL_WARP_MASK, firstThreadMaxWeight, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
 
     if (CACHE_EDGES) {
       for (int e = subWarpThreadIdx; e < min((EdgePos_t)(EDGE_CACHE_SIZE_PER_SUBWARP/sizeof(CSR::Edge)), numTransitEdges); e += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
@@ -475,9 +480,6 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
                                                                                                             numTransitEdges, transitNeighborIdx, &localRandState,
                                                                                                             edgesInShMem, edgeWeightsInShMem,
                                                                                                             globalLoadBV);
-        if (neighbor < 0) {
-          printf("neighbor %d threadIdx.x %d blockIdx.x %d edgesInShMem %p\n", neighbor, threadIdx.x, blockIdx.x, edgesInShMem);
-        }
       }
     }
 
@@ -1435,11 +1437,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
       
       const int perThreadSamplesForSubWarpKernel = 2;
-      int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamplesForSubWarpKernel), N_THREADS);
+      int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamplesForSubWarpKernel), 256);
       //std::cout << "subWarpKernelTransitsNum " << *subWarpKernelTransitsNum << " threadBlocks " << threadBlocks << std::endl;
       double subWarpKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       if (useSubWarpKernel) {
-        subWarpKernel<N_THREADS,3*1024,false,false,false,perThreadSamplesForSubWarpKernel,true><<<threadBlocks, N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+        subWarpKernel<256,3*1024,false,true,false,perThreadSamplesForSubWarpKernel,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
           (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
           totalThreads, nextDoorData.samples.size(),
           nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
