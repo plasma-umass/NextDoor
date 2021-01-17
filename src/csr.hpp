@@ -148,7 +148,7 @@ public:
   __host__ __device__
   const float* get_weights () const 
   {
-    return weights;
+    return &weights[0];
   }
 
   __host__ __device__
@@ -372,7 +372,8 @@ public:
     return get_n_vertices()+1;
   }
 
-
+  __device__ __host__ 
+  const CSR::Vertex* get_vertex(VertexID id) const {return &vertices[id];} 
   // static struct HasVertex {
   //   bool operator () (CSRPartition& partition, const VertexID& v) const {
   //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);
