@@ -93,7 +93,7 @@ const size_t N_THREADS = 256;
 const int ALL_NEIGHBORS = -1;
 
 const bool useGridKernel = true;
-const bool useSubWarpKernel = true;
+const bool useSubWarpKernel = false;
 const bool useThreadBlockKernel = true;
 
 enum TransitKernelTypes {
@@ -248,7 +248,7 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
   //wich can be accessed based on sample and transitIdx.
 }
 
-
+template<int THREADS, bool COALESCE_CURAND_LOAD>
 __global__ void identityKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
                                const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
                                const size_t transitToSamplesSize, const size_t NumSamples,
@@ -256,8 +256,30 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
                                VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
                                curandState* randStates, const int* kernelTypeForTransit)
 {
-  
+  unsigned char shMemCuRand[sizeof(curandState)*THREADS];
+
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
+
+  curandState* curandSrcPtr;
+
+  if (COALESCE_CURAND_LOAD) {
+    const int intsInRandState = sizeof(curandState)/sizeof(int);
+    int* shStateBuff = (int*)&shMemCuRand[0];
+
+    int* randStatesAsInts = (int*)randStates;
+  
+    for (int i = threadIdx.x; i < intsInRandState*blockDim.x; i += blockDim.x) {
+      shStateBuff[i] = randStatesAsInts[i + blockDim.x*blockIdx.x];
+    }
+
+    __syncthreads();
+    curandSrcPtr = (curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
+  } else {
+    curandSrcPtr = &randStates[threadId];
+  }
+
+  curandState localRandState = *curandSrcPtr;
+
   //__shared__ VertexID newNeigbhors[N_THREADS];
 
   if (threadId >= transitToSamplesSize)
@@ -273,7 +295,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     return;
   }
 
-  graph.device_csr = (CSRPartition*)&csrPartitionBuff[0];
+  CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
   VertexID_t sample = transitToSamplesValues[transitIdx];
   assert(sample < NumSamples);
   VertexID_t neighbor = invalidVertex;
@@ -283,14 +305,14 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   if (transit != invalidVertex) {
     // if (graph.device_csr->has_vertex(transit) == false)
     //   printf("transit %d\n", transit);
-    assert(graph.device_csr->has_vertex(transit));
+    assert(csr->has_vertex(transit));
 
-    EdgePos_t numTransitEdges = graph.device_csr->get_n_edges_for_vertex(transit);
+    EdgePos_t numTransitEdges = csr->get_n_edges_for_vertex(transit);
     
     if (numTransitEdges != 0) {
-      const CSR::Edge* transitEdges = graph.device_csr->get_edges(transit);
-      const float* transitEdgeWeights = graph.device_csr->get_weights(transit);
-      const float maxWeight = graph.device_csr->get_max_weight(transit);
+      const CSR::Edge* transitEdges = csr->get_edges(transit);
+      const float* transitEdgeWeights = csr->get_weights(transit);
+      const float maxWeight = csr->get_max_weight(transit);
 
       neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
                       numTransitEdges, transitNeighborIdx, &randState);
@@ -318,7 +340,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
 
   __syncwarp();
 
-  EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
+//  EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
 
   if (step != steps() - 1) {
     //No need to store at last step
@@ -327,7 +349,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   }
   
   EdgePos_t insertionPos = 0; 
-  if (numberOfTransits(step) > 1) {    
+  if (false && numberOfTransits(step) > 1) {    
     insertionPos = utils::atomicAdd(&sampleInsertionPositions[sample], 1);
   } else {
     insertionPos = step;
@@ -337,9 +359,9 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
   // }
   assert(finalSampleSize > 0);
-  if (insertionPos >= finalSampleSize) {
-    printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
-  }
+  // if (insertionPos >= finalSampleSize) {
+  //   printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
+  // }
   assert(insertionPos < finalSampleSize);
   finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
   // if (sample == 100) {
@@ -348,8 +370,6 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   //TODO: We do not need atomic instead store indices of transit in another array,
   //wich can be accessed based on sample and transitIdx.
 }
-#define MAX(x,y) (((x)<(y))?(y):(x))
-#define MIN(x,y) (((x)>(y))?(y):(x))
 
 template<int THREADS, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool COALESCE_GL_LOADS, int TRANSITS_PER_THREAD, bool COALESCE_CURAND_LOAD>
 __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
@@ -366,8 +386,7 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
   const int EDGE_CACHE_SIZE = (CACHE_EDGES ? CACHE_SIZE * sizeof(CSR::Edge) : 0);
   const int WEIGHT_CACHE_SIZE = (CACHE_WEIGHTS ? CACHE_SIZE * sizeof(float) : 0);
   const int TOTAL_CACHE_SIZE = MAX(WEIGHT_CACHE_SIZE + EDGE_CACHE_SIZE, 1); 
-  const int EDGE_CACHE_SIZE_PER_SUBWARP = ((EDGE_CACHE_SIZE)/SUBWARPS_IN_TB);
-  const int WEIGHT_CACHE_SIZE_PER_SUBWARP = ((WEIGHT_CACHE_SIZE)/SUBWARPS_IN_TB);
+  const int CACHE_SIZE_PER_SUBWARP = CACHE_SIZE/SUBWARPS_IN_TB;
 
   union unionShMem {
     struct {
@@ -385,8 +404,8 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
   const int subWarpIdxInTB = threadIdx.x/LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
   const int startSubWarpIdxInTB = (blockIdx.x*blockDim.x)/LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
 
-  EdgePos_t* edgesInShMem = (EdgePos_t*) (CACHE_EDGES ? &shMem.edgeAndWeightCache[EDGE_CACHE_SIZE_PER_SUBWARP*subWarpIdxInTB] : nullptr);
-  float* edgeWeightsInShMem = (float*) (CACHE_WEIGHTS ? (&shMem.edgeAndWeightCache[EDGE_CACHE_SIZE] + WEIGHT_CACHE_SIZE_PER_SUBWARP*subWarpIdxInTB): nullptr);
+  EdgePos_t* edgesInShMem = (EdgePos_t*) (CACHE_EDGES ? &shMem.edgeAndWeightCache[CACHE_SIZE_PER_SUBWARP*subWarpIdxInTB] : nullptr);
+  float* edgeWeightsInShMem = (float*) (CACHE_WEIGHTS ? (&shMem.edgeAndWeightCache[EDGE_CACHE_SIZE + CACHE_SIZE_PER_SUBWARP*subWarpIdxInTB]): nullptr);
   bool* globalLoadBV = nullptr;
 
   curandState* curandSrcPtr;
@@ -442,14 +461,15 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
     VertexID_t firstThreadTransit = __shfl_sync(FULL_WARP_MASK, transit, 0, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
     __syncwarp();
 
-    invalidateCache = true || currTransit != firstThreadTransit;
+    invalidateCache = currTransit != firstThreadTransit;
+    currTransit = firstThreadTransit;
 
     CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
     
     int tmpReadVertexData;
 
     if (invalidateCache) {
-      const CSR::Vertex* transitVertex = csr->get_vertex(firstThreadTransit);
+      const CSR::Vertex* transitVertex = csr->get_vertex(currTransit);
       if (subWarpThreadIdx < sizeof(CSR::Vertex)/sizeof(int)) {
         tmpReadVertexData = ((const int*)transitVertex)[subWarpThreadIdx];
       }
@@ -469,27 +489,22 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
       glTransitEdgeWeights = (float*)((startEdgeIdx != -1) ? csr->get_weights() + startEdgeIdx : nullptr);
     }
 
-    // if (transit == 4272124){//  && numTransitEdges != csr->get_n_edges_for_vertex(transit)) {
-    //   printf("transit: %d, numTransitEdges %d %d threadIdx.x %d startEdgeIdx %d endEdgeIdx %d, startEdgeIdx1 %d endEdgeIdx1 %d tmpReadVertexData %d\n", transit, numTransitEdges, csr->get_n_edges_for_vertex(transit), threadIdx.x, startEdgeIdx, endEdgeIdx, csr->get_start_edge_idx(transit), csr->get_end_edge_idx(transit), tmpReadVertexData);
-    //   return;
-    // }
-    if (firstThreadTransit != transit)
+    if (false) {
+      shMem.edgeAndWeightCache[threadIdx.x%32] = numTransitEdges + (int32_t)maxWeight + (int32_t)glTransitEdges + (int32_t)glTransitEdgeWeights;
       continue;
-    
-    // return;
-    //assert (numTransitEdges == csr->get_n_edges_for_vertex(transit));
-    // __syncwarp();
+    }
 
-    // if (CACHE_EDGES && invalidateCache) {
-    //   for (int e = subWarpThreadIdx; e < min((EdgePos_t)(EDGE_CACHE_SIZE_PER_SUBWARP/sizeof(CSR::Edge)), numTransitEdges); e += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
-    //     edgesInShMem[e] = -1;
-    //   }
-    // }
+    if (CACHE_EDGES && invalidateCache) {
+      for (int e = subWarpThreadIdx; e < min((EdgePos_t)CACHE_SIZE_PER_SUBWARP, numTransitEdges); 
+           e += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
+        edgesInShMem[e] = -1;
+      }
+    }
 
     if (CACHE_WEIGHTS && invalidateCache) {
-      //shMem.edgeAndWeightCache[threadIdx.x%32] = 0;
-      for (int e = subWarpThreadIdx; e < (EdgePos_t)(WEIGHT_CACHE_SIZE_PER_SUBWARP/sizeof(float)); e += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) { //
-        //edgeWeightsInShMem[e] = -1;
+      for (int e = subWarpThreadIdx; e < min((EdgePos_t)CACHE_SIZE_PER_SUBWARP, numTransitEdges); 
+           e += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
+        edgeWeightsInShMem[e] = -1;
       }
     }
 
@@ -507,18 +522,16 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
     assert(sample < NumSamples);
     VertexID_t neighbor = invalidVertex;
 
-    if (transit != invalidVertex) {
-      // if (graph.device_csr->has_vertex(transit) == false)
-      //   printf("transit %d\n", transit);
-      assert(csr->has_vertex(transit));
-      
-      if (numTransitEdges != 0) {
-        neighbor = nextCached<EDGE_CACHE_SIZE_PER_SUBWARP/sizeof(CSR::Edge), CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sample, maxWeight, 
-                                                                                                            glTransitEdges, glTransitEdgeWeights, 
-                                                                                                            numTransitEdges, transitNeighborIdx, &localRandState,
-                                                                                                            edgesInShMem, edgeWeightsInShMem,
-                                                                                                            globalLoadBV);
-      }
+    // if (graph.device_csr->has_vertex(transit) == false)
+    //   printf("transit %d\n", transit);
+    assert(csr->has_vertex(transit));
+    
+    if (numTransitEdges != 0) {
+      neighbor = nextCached<CACHE_SIZE_PER_SUBWARP, CACHE_EDGES, CACHE_WEIGHTS, COALESCE_GL_LOADS>(step, transit, sample, maxWeight, 
+                                                                                    glTransitEdges, glTransitEdgeWeights, 
+                                                                                    numTransitEdges, transitNeighborIdx, &localRandState,
+                                                                                    edgesInShMem, edgeWeightsInShMem,
+                                                                                    globalLoadBV);
     }
 
     // __syncwarp();
@@ -556,7 +569,6 @@ template<int CACHE_SIZE, bool COALESCE_GL_LOADS, typename T>
 __device__ inline VertexID_t cacheAndGet(EdgePos_t id, const T* transitEdges, T* cachedEdges, bool* globalLoadBV)
 {
   VertexID_t e;
-
   if (id >= CACHE_SIZE) {
     return transitEdges[id];
   }
@@ -564,22 +576,20 @@ __device__ inline VertexID_t cacheAndGet(EdgePos_t id, const T* transitEdges, T*
   if (COALESCE_GL_LOADS) {
     e = cachedEdges[id];
     if (e == -1)
-      globalLoadBV[id] = true;
+      cachedEdges[id] = -2;
 
-    __syncthreads();
-
-    for (int i = threadIdx.x; i < CACHE_SIZE; i += blockDim.x) {
-      if (globalLoadBV[i]) {
+    int subWarpThreadIdx = threadIdx.x % LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+    int subWarp = threadIdx.x / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+    for (int i = subWarpThreadIdx; i < CACHE_SIZE; i += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
+      if (cachedEdges[i] == -2) {
         cachedEdges[i] = transitEdges[i];
       }
     }
     
-    __syncthreads();
-
-    globalLoadBV[id] = false;
     e = cachedEdges[id];
   } else {
     e = cachedEdges[id];
+
     if (e == -1) {
       e = transitEdges[id];
       cachedEdges[id] = e;
@@ -755,7 +765,7 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, cons
 
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
   //__shared__ VertexID newNeigbhors[N_THREADS];
-
+  graph.device_csr = (CSRPartition*)&csrPartitionBuff[0];
   if (threadId >= NumSamples)
     return;
   
@@ -879,7 +889,7 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
   EdgePos_t numThreadGroups = 0;
   if (trCount >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
     kernelType = TransitKernelTypes::GridKernel;
-  } else if (trCount >= LoadBalancing::LoadBalancingThreshold::BlockLevel) {
+  } else if (trCount > LoadBalancing::LoadBalancingThreshold::BlockLevel) {
     kernelType = TransitKernelTypes::ThreadBlockKernel;
     // numThreadGroups = 0;
     // threadToTransitPos[threadIdx.x] = 0;
@@ -906,7 +916,7 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
                                 (kTy == TransitKernelTypes::ThreadBlockKernel ? LoadBalancing::LoadBalancingThreshold::BlockLevel : 
                                 (kTy == TransitKernelTypes::SubWarpKernel ? LoadBalancing::LoadBalancingThreshold::SubWarpLevel : -1));
 
-    if (kTy == TransitKernelTypes::GridKernel) {
+    if (kTy == TransitKernelTypes::GridKernel && useGridKernel) {
       if (kernelType == TransitKernelTypes::GridKernel) {
         numThreadGroups = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::GridLevel);
         threadToTransitPos[threadIdx.x] = trPos;
@@ -918,7 +928,7 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
       } 
       glKernelTransitsNum = gridKernelTransitsNum;
       glKernelTransits = gridKernelTransits;
-    } else if (kTy == TransitKernelTypes::ThreadBlockKernel) {
+    } else if (kTy == TransitKernelTypes::ThreadBlockKernel && useThreadBlockKernel) {
       if (kernelType == TransitKernelTypes::ThreadBlockKernel) {
         numThreadGroups = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::BlockLevel);
         threadToTransitPos[threadIdx.x] = trPos;
@@ -930,7 +940,7 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
       }       
       glKernelTransitsNum = threadBlockKernelTransitsNum;
       glKernelTransits = threadBlockKernelTransits;
-    } else if (kTy == TransitKernelTypes::SubWarpKernel) {
+    } else if (kTy == TransitKernelTypes::SubWarpKernel && useSubWarpKernel) {
       if (kernelType == TransitKernelTypes::SubWarpKernel) {
         numThreadGroups = DIVUP(trCount, LoadBalancing::LoadBalancingThreshold::SubWarpLevel);
         threadToTransitPos[threadIdx.x] = trPos;
@@ -943,7 +953,6 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
       }       
       glKernelTransitsNum = subWarpKernelTransitsNum;
       glKernelTransits = subWarpKernelTransits;
-      
     } else {
       continue;
     }
@@ -1463,7 +1472,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
       
       double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-      identityKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      identityKernel<N_THREADS, true><<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
@@ -1474,7 +1483,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       double identityKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
       identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
       
-      const int perThreadSamplesForSubWarpKernel = 2;
+      const int perThreadSamplesForSubWarpKernel = 1;
       int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamplesForSubWarpKernel), 256);
       //std::cout << "subWarpKernelTransitsNum " << *subWarpKernelTransitsNum << " threadBlocks " << threadBlocks << std::endl;
       double subWarpKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
@@ -1597,7 +1606,6 @@ bool doSampleParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nex
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
     const size_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
-    
     //Sample neighbors of transit vertices
     sampleParallelKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
                     nextDoorData.samples.size(), nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,

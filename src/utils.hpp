@@ -13,6 +13,8 @@
 #define FULL_WARP_MASK 0xffffffff
 #define WARP_SIZE (32)
 #define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {assert(false);}
+#define MAX(x,y) (((x)<(y))?(y):(x))
+#define MIN(x,y) (((x)>(y))?(y):(x))
 
 namespace utils {
 
