@@ -256,7 +256,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
                                VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
                                curandState* randStates, const int* kernelTypeForTransit)
 {
-  unsigned char shMemCuRand[sizeof(curandState)*THREADS];
+  __shared__ unsigned char shMemCuRand[sizeof(curandState)*THREADS];
 
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
 
@@ -300,8 +300,6 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   assert(sample < NumSamples);
   VertexID_t neighbor = invalidVertex;
 
-  curandState randState = randStates[transitIdx];
-
   if (transit != invalidVertex) {
     // if (graph.device_csr->has_vertex(transit) == false)
     //   printf("transit %d\n", transit);
@@ -315,7 +313,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
       const float maxWeight = csr->get_max_weight(transit);
 
       neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
-                      numTransitEdges, transitNeighborIdx, &randState);
+                      numTransitEdges, transitNeighborIdx, &localRandState);
 #if 0
       //search if neighbor has already been selected.
       //we can do that in register if required
@@ -1472,7 +1470,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
       
       double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-      identityKernel<N_THREADS, true><<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      identityKernel<N_THREADS, false><<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
