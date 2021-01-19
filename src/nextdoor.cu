@@ -95,6 +95,7 @@ const int ALL_NEIGHBORS = -1;
 const bool useGridKernel = true;
 const bool useSubWarpKernel = false;
 const bool useThreadBlockKernel = true;
+const bool combineTwoSampleStores = true;
 
 enum TransitKernelTypes {
   GridKernel = 1,
@@ -240,7 +241,18 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
     printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
   }
   assert(insertionPos < finalSampleSize);
-  finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+  if (combineTwoSampleStores) {
+    if (step % 2 == 1) {
+      finalSamples[sample*finalSampleSize + insertionPos - 1] = transit;
+      finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+    } else if (step == steps() - 1) {
+      finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+    }
+  }
+  else {
+    finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+  }
+
   // if (sample == 100) {
   //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
   // }
@@ -361,7 +373,21 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   //   printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
   // }
   assert(insertionPos < finalSampleSize);
-  finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+
+  if (combineTwoSampleStores) {
+    if (step % 2 == 1) {
+      int2 *ptr = (int2*)&finalSamples[sample*finalSampleSize + insertionPos - 1];
+      int2 res;
+      res.x = transit;
+      res.y = neighbor;
+      *ptr = res;
+      //finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+    } else if (step == steps() - 1) {
+      finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+    }
+  } else {
+    finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+  }
   // if (sample == 100) {
   //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
   // }
@@ -740,11 +766,20 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       }
       assert(insertionPos < finalSampleSize);
 
-      if (step %2 == 0) {
-        //((uint64_t*)finalSamples)[(sample*finalSampleSize)/2 + threadIdx.x] = (uint64_t)(((uint64_t)transit) | (((uint64_t)neighbor) << 32));
+      if (combineTwoSampleStores) {
+        if (step % 2 == 1) {
+          int2 *ptr = (int2*)&finalSamples[sample*finalSampleSize + insertionPos - 1];
+          int2 res;
+          res.x = transit;
+          res.y = neighbor;
+          *ptr = res;
+          //finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+        } else if (step == steps() - 1) {
+          finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+        }
+      } else {
+        finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
       }
-
-      finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
       // if (sample == 100) {
       //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
       // }
@@ -1183,8 +1218,8 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
     maxBits++;
   }
   
-  data.maxBits = maxBits + 1;
-
+  data.maxBits = maxBits;
+  
   //Allocate storage for final samples on GPU
   data.hFinalSamples = std::vector<VertexID_t>(finalSampleSize*data.samples.size());
 
@@ -1470,7 +1505,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
       
       double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-      identityKernel<N_THREADS, false><<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      identityKernel<N_THREADS, true><<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
