@@ -48,7 +48,7 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
   size_t numNeighborsSampledAtPrevStep = 0;
 
   for (int step = 0; step < min(maxSteps, steps()); step++) {
-    if (step == 0) {
+    if (step == 0) { 
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
         std::unordered_set<VertexID_t> uniqueNeighbors;
 

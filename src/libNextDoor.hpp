@@ -20,6 +20,7 @@ struct NextDoorData {
   VertexID_t* dTransitToSampleMapValues;
   EdgePos_t* dSampleInsertionPositions;
   curandState* dCurandStates;
+  size_t maxThreadsPerKernel;
   VertexID_t* dFinalSamples;
   int INVALID_VERTEX;
   int maxBits;

@@ -157,19 +157,23 @@ __host__ __device__ int numberOfTransits(int step) {
 
 #include "check_results.cu"
 
-__global__ void samplingKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
+__global__ void samplingKernel(const int step, GPUCSRPartition graph, const size_t threadsExecuted, const size_t currExecutionThreads,
+                               const VertexID_t invalidVertex,
                                const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
                                const size_t transitToSamplesSize, const size_t NumSamples,
                                VertexID_t* samplesToTransitKeys, VertexID_t* samplesToTransitValues,
                                VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
                                curandState* randStates)
 {
-  int threadId = threadIdx.x + blockDim.x * blockIdx.x;
+  EdgePos_t threadId = threadIdx.x + blockDim.x * blockIdx.x;
   //__shared__ VertexID newNeigbhors[N_THREADS];
 
-  if (threadId >= transitToSamplesSize)
+  if (threadId >= currExecutionThreads)
     return;
   
+  curandState* randState = &randStates[threadId];
+
+  threadId += threadsExecuted;
   EdgePos_t transitIdx = threadId/stepSize(step);
   EdgePos_t transitNeighborIdx = threadId % stepSize(step);
   
@@ -191,7 +195,6 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
       const float* transitEdgeWeights = graph.device_csr->get_weights(transit);
       const float maxWeight = graph.device_csr->get_max_weight(transit);
 
-      curandState* randState = &randStates[threadId];
       neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
                       numTransitEdges, transitNeighborIdx, randState);
 #if 0
@@ -227,7 +230,9 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
   }
   
   EdgePos_t insertionPos = 0; 
-  if (numberOfTransits(step) > 1) {    
+  if (numberOfTransits(step) > 1) {
+    //TODO: We do not need atomic instead store indices of transit in another array,
+    //wich can be accessed based on sample and transitIdx.
     insertionPos = utils::atomicAdd(&sampleInsertionPositions[sample], 1);
   } else {
     insertionPos = step;
@@ -241,7 +246,7 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
     printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sample);
   }
   assert(insertionPos < finalSampleSize);
-  if (combineTwoSampleStores) {
+  if (numberOfTransits(step) == 1 and combineTwoSampleStores) {
     if (step % 2 == 1) {
       finalSamples[sample*finalSampleSize + insertionPos - 1] = transit;
       finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
@@ -256,8 +261,6 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const Vert
   // if (sample == 100) {
   //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
   // }
-  //TODO: We do not need atomic instead store indices of transit in another array,
-  //wich can be accessed based on sample and transitIdx.
 }
 
 template<int THREADS, bool COALESCE_CURAND_LOAD>
@@ -975,21 +978,31 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   }
 }
 
-__global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
-                               const size_t NumSamples,
-                               VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
-                               curandState* randStates)
+__global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, 
+                                     const VertexID_t invalidVertex,
+                                     const size_t threadsExecuted, 
+                                     const size_t currExecutionThreads,
+                                     const size_t totalThreads,
+                                     const size_t NumSamples,
+                                     VertexID_t* finalSamples, 
+                                     const size_t finalSampleSize, 
+                                     EdgePos_t* sampleInsertionPositions,
+                                     curandState* randStates)
 {
   //TODO: Following code assumes Random Walk
 
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
   //__shared__ VertexID newNeigbhors[N_THREADS];
   graph.device_csr = (CSRPartition*)&csrPartitionBuff[0];
-  if (threadId >= NumSamples)
+  if (threadId >= currExecutionThreads)
     return;
-  
-  VertexID_t sample = threadId;
-  VertexID_t transit = (step == 0) ? sample : finalSamples[sample*finalSampleSize + step - 1];
+
+  curandState* randState = &randStates[threadId];
+  threadId += threadsExecuted;
+  EdgePos_t numTransits = numberOfTransits(step);
+  EdgePos_t numTransitsInPrevStep = numberOfTransits(step - 1);
+  VertexID_t sample = threadId / numTransits;
+  VertexID_t transit = (step == 0) ? sample : finalSamples[sample*finalSampleSize + (step - 1) * numTransits + (threadId % numTransits) % numTransitsInPrevStep];
   VertexID_t neighbor = invalidVertex;
   
   if (transit == invalidVertex) {
@@ -1004,7 +1017,6 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, cons
     const float* transitEdgeWeights = graph.device_csr->get_weights(transit);
     const float maxWeight = graph.device_csr->get_max_weight(transit);
 
-    curandState* randState = &randStates[threadId];
     neighbor = next(step, transit, sample, maxWeight, transitEdges, transitEdgeWeights, 
                     numTransitEdges, 0, randState);
 #if 0
@@ -1027,8 +1039,6 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, cons
     }
 #endif
   }
-
-  EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);  
   
   EdgePos_t insertionPos = 0; 
 
@@ -1387,7 +1397,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
 
   //Size of each sample output
   size_t maxNeighborsToSample = 1;
-  for (int step = 0; step < steps(); step++) {
+  for (int step = 0; step < steps() - 1; step++) {
     maxNeighborsToSample *= stepSize(step);
   }
 
@@ -1406,18 +1416,23 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
   
   data.maxBits = maxBits;
   
+  // size_t free = 0, total = 0;
+  // CHK_CU(cudaMemGetInfo(&free, &total));
+  // printf("free memory %ld nextDoorData.samples.size() %ld maxNeighborsToSample %ld\n", free, data.samples.size(), maxNeighborsToSample);
+ 
+
   //Allocate storage for final samples on GPU
   data.hFinalSamples = std::vector<VertexID_t>(finalSampleSize*data.samples.size());
 
   CHK_CU(cudaMalloc(&data.dFinalSamples, sizeof(VertexID_t)*data.hFinalSamples.size()));
   gpu_memset(data.dFinalSamples, data.INVALID_VERTEX, data.hFinalSamples.size());
   //Samples to Transit Map
-  //TODO: hFinalSamples.size() is wrong.
+
   CHK_CU(cudaMalloc(&data.dSamplesToTransitMapKeys, sizeof(VertexID_t)*data.samples.size()*maxNeighborsToSample));
+
   CHK_CU(cudaMalloc(&data.dSamplesToTransitMapValues, sizeof(VertexID_t)*data.samples.size()*maxNeighborsToSample));
 
   //Transit to Samples Map
-  //TODO: hFinalSamples.size() is wrong. It should be maximum number of transits.
   CHK_CU(cudaMalloc(&data.dTransitToSampleMapKeys, sizeof(VertexID_t)*data.samples.size()*maxNeighborsToSample));
   CHK_CU(cudaMalloc(&data.dTransitToSampleMapValues, sizeof(VertexID_t)*data.samples.size()*maxNeighborsToSample));
 
@@ -1430,9 +1445,17 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData& data)
   //Insertion positions per transit vertex for each sample
   
   CHK_CU(cudaMalloc(&data.dSampleInsertionPositions, sizeof(EdgePos_t)*data.samples.size()));
-
-  CHK_CU(cudaMalloc(&data.dCurandStates, maxNeighborsToSample*data.samples.size()*sizeof(curandState)));
-  init_curand_states<<<thread_block_size(data.samples.size()*maxNeighborsToSample, 256UL), 256UL>>> (data.dCurandStates, data.samples.size()*maxNeighborsToSample);
+  size_t curandDataSize = maxNeighborsToSample*data.samples.size()*sizeof(curandState);
+  const size_t curandSizeLimit = 5L*1024L*1024L*8*sizeof(curandState);
+  if (curandDataSize < curandSizeLimit) {
+    data.maxThreadsPerKernel = maxNeighborsToSample*data.samples.size();
+  } else {
+    data.maxThreadsPerKernel = curandSizeLimit/sizeof(curandState);
+    curandDataSize = curandSizeLimit;
+  }
+  printf("Mximum Threads Per Kernel: %ld\n", data.maxThreadsPerKernel);
+  CHK_CU(cudaMalloc(&data.dCurandStates, curandDataSize));
+  init_curand_states<<<thread_block_size(data.maxThreadsPerKernel, 256UL), 256UL>>> (data.dCurandStates, data.maxThreadsPerKernel);
   CHK_CU(cudaDeviceSynchronize());
 
   return true;
@@ -1521,7 +1544,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 {
   //Size of each sample output
   size_t maxNeighborsToSample = 1;
-  for (int step = 0; step < steps(); step++) {
+  for (int step = 0; step < steps() - 1; step++) {
     maxNeighborsToSample *= stepSize(step);
   }
 
@@ -1636,14 +1659,18 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
     
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
-      samplingKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                      (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                      totalThreads, nextDoorData.samples.size(),
-                      nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                      nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                      nextDoorData.dCurandStates);
-      CHK_CU(cudaGetLastError());
-      CHK_CU(cudaDeviceSynchronize());
+      for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
+        size_t currExecutionThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
+        samplingKernel<<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
+                        threadsExecuted, currExecutionThreads, nextDoorData.INVALID_VERTEX,
+                        (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                        totalThreads, nextDoorData.samples.size(),
+                        nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                        nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                        nextDoorData.dCurandStates);
+        CHK_CU(cudaGetLastError());
+        CHK_CU(cudaDeviceSynchronize());
+      }
     } else {
       double loadBalancingT1 = convertTimeValToDouble(getTimeOfDay ());
       void* dRunLengthEncodeTmpStorage = nullptr;
@@ -1845,10 +1872,13 @@ bool doSampleParallelSampling(GPUCSRPartition gpuCSRPartition, NextDoorData& nex
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
     const size_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
-    //Sample neighbors of transit vertices
-    sampleParallelKernel<<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                    nextDoorData.samples.size(), nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                    nextDoorData.dCurandStates);
+    for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
+      size_t currExecutionThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
+      //Sample neighbors of transit vertices
+      sampleParallelKernel<<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                      threadsExecuted, currExecutionThreads, totalThreads, nextDoorData.samples.size(), nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                      nextDoorData.dCurandStates);
+      }
 
                     
     CHK_CU(cudaGetLastError());
