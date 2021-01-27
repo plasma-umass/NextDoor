@@ -1,3 +1,5 @@
+#include <omp.h>
+
 int numNeighborsSampledAtStep(int step)
 {
   int n = 1;
@@ -46,38 +48,60 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
   size_t numNeighborsSampledAtPrevStep = 0;
-
+  
   for (int step = 0; step < min(maxSteps, steps()); step++) {
     if (step == 0) { 
+      bool foundError = false;
+      #pragma omp parallel for shared(foundError)
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
         std::unordered_set<VertexID_t> uniqueNeighbors;
-
+        // printf("omp_get_num_threads() %d\n", omp_get_num_threads());
         const size_t sampleId = s/finalSampleSize;
         const VertexID_t initialVal = initialSamples[sampleId];
         size_t contentsLength = 0;
-        for (size_t v = s + numNeighborsToSampleAtStep; v < s + stepSize(step); v++) {
-          VertexID_t transit = finalSamples[v];
-          uniqueNeighbors.insert(transit);
-          contentsLength += (int)(transit != INVALID_VERTEX);
+        if (stepSize(step) != ALL_NEIGHBORS) {
+          for (size_t v = s + numNeighborsToSampleAtStep; v < s + stepSize(step); v++) {
+            VertexID_t transit = finalSamples[v];
+            uniqueNeighbors.insert(transit);
+            contentsLength += (int)(transit != INVALID_VERTEX);
 
-          if (transit != INVALID_VERTEX &&
-              adj_matrix[initialVal].count(transit) == 0) {
-            printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
-            return false;
+            if (!foundError && transit != INVALID_VERTEX &&
+                adj_matrix[initialVal].count(transit) == 0) {
+              printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
+              foundError = true;
+            }
+          }
+
+          if (!foundError && contentsLength == 0 && adj_matrix[initialVal].size() > 0) {
+            printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
+                    step, contentsLength, sampleId, adj_matrix[initialVal].size());
+            foundError = true;
+          }
+        } else {
+          for (size_t v = s + numNeighborsToSampleAtStep; v < s + adj_matrix[initialVal].size(); v++) {
+            VertexID_t transit = finalSamples[v];
+            uniqueNeighbors.insert(transit);
+            contentsLength += (int)(transit != INVALID_VERTEX);
+
+            if (!foundError && transit != INVALID_VERTEX &&
+                adj_matrix[initialVal].count(transit) == 0) {
+              printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
+              foundError = true;
+            }
+          }
+
+          if (!foundError && adj_matrix[initialVal].size() != contentsLength) {
+            printf("%s:%d Sample '%d' has %ld neighbors but %ld are sampled at Step '%d'\n", __FILE__, __LINE__, sampleId, 
+                   adj_matrix[initialVal].size(), contentsLength, step);
+            foundError = true;
           }
         }
-
-
-        // if (uniqueNeighbors.size() < stepSize(step)) {
-        //   printf("uniqueneibhors %ld\n", uniqueNeighbors.size());
-        // }
-        if (contentsLength == 0 && adj_matrix[initialVal].size() > 0) {
-          printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
-                  step, contentsLength, sampleId, adj_matrix[initialVal].size());
-          return false;
-        }
       }
+
+      if (foundError) return false;
     } else {
+      bool foundError = false;
+      #pragma omp parallel for shared(foundError)
       for (size_t s = 0; s < finalSamples.size(); s += finalSampleSize) {
         const size_t sampleId = s/finalSampleSize;
         size_t contentsLength = 0;
@@ -106,19 +130,19 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
               }
             }
 
-            if (found == false) {
+            if (!foundError && found == false) {
               printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
               std::cout << "Contents of sample : [";
               for (size_t v2 = s; v2 < s + finalSampleSize; v2++) {
                 std::cout << finalSamples[v2] << ", ";
               }
               std::cout << "]" << std::endl;
-              return false;
+              foundError = true;
             }
           }
         }
 
-        if (contentsLength == 0 && sumEdgesOfNeighborsAtPrevStep > 0) {
+        if (!foundError && contentsLength == 0 && sumEdgesOfNeighborsAtPrevStep > 0) {
           printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
                   step, contentsLength, sampleId, sumEdgesOfNeighborsAtPrevStep);
           std::cout << "Contents of sample : [";
@@ -126,10 +150,11 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
             std::cout << finalSamples[v2] << ", ";
           }
           std::cout << "]" << std::endl;
-          return false;
-          return false;
+          foundError = true;
         }
       }
+
+      if (foundError) return false;
     }
 
     numNeighborsToSampleAtStep = stepSizeAtStep(step);

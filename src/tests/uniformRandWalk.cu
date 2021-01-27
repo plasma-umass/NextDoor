@@ -33,6 +33,11 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
     return transitEdges[x];
 }
 
+__host__ int samplingType()
+{
+  return SamplingType::Individual;
+}
+
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
 //APP_TEST(UniformRandWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 

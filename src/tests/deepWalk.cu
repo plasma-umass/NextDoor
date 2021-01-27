@@ -68,6 +68,10 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
     return transitEdges[x];
 }
 
+__host__ int samplingType()
+{
+  return SamplingType::Individual;
+}
 
 /*
   float2 randNums = curand_normal2(state);
