@@ -18,9 +18,10 @@ class LayerSample
   int adjacencyMatrixVal[NUM_LAYERS*NUM_SAMPLED_VERTICES];
 };
 
+template<class SampleType>
 __device__ inline
-VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sample, 
-              const float max_weight,
+VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx, 
+              SampleType* sample, const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
 {
@@ -28,9 +29,10 @@ VertexID next(int step, CSRPartition* csr, const VertexID* transits, const Verte
   return 0;
 }
 
-template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
 __device__ inline
-VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
+VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx,
+              SampleType* sample, 
               const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, 
@@ -80,7 +82,7 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
 #define CHECK_RESULTS true
 
 //APP_TEST(KHop, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", false)
-APP_TEST(LayerSample, KHop, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
+APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
