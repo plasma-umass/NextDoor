@@ -8,7 +8,7 @@ int stepSize(int k) {
 }
 
 __device__ inline
-VertexID next(int step, const VertexID* transit, const VertexID sample, 
+VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sample, 
               const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
@@ -117,6 +117,11 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
 
 //nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
+class DummySample
+{
+
+};
+
 #define RUNS 1
 #define CHECK_RESULTS true
 
@@ -127,14 +132,14 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
 // APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
-APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
-APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-APP_TEST(DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
-APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
-APP_TEST(DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-APP_TEST(DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
+APP_TEST(DummySample, DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
+APP_TEST(DummySample, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
+APP_TEST(DummySample, DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
+APP_TEST(DummySample, DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
+APP_TEST(DummySample, DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
+APP_TEST(DummySample, DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)
+APP_TEST(DummySample, DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
+APP_TEST(DummySample, DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "SampleParallel", false)
 
 
 

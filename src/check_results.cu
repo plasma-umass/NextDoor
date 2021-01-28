@@ -81,10 +81,15 @@ bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
           foundError = true;
         }
       }
+
+      if (foundError)
+        return false;
     }
 
     numNeighborsToSampleAtStep += stepSize(step);
   }
+
+  return true;
 }
 
 bool checkSampledVerticesResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
@@ -102,7 +107,6 @@ bool checkSampledVerticesResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
 
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
-  size_t numNeighborsSampledAtPrevStep = 0;
   
   for (int step = 0; step < min(maxSteps, steps()); step++) {
     if (step == 0) { 
@@ -213,7 +217,6 @@ bool checkSampledVerticesResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
     }
 
     numNeighborsToSampleAtStep = stepSizeAtStep(step);
-    numNeighborsSampledAtPrevStep = stepSizeAtStep(step-1);
   }
 
   return true;
