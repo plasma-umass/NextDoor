@@ -42,7 +42,7 @@ __host__ __device__ OutputFormat outputFormat()
   return AdjacencyMatrix;
 }
 
-#define VERTICES_PER_SAMPLE 1
+#define VERTICES_PER_SAMPLE 2
 
 __host__ EdgePos_t numSamples(CSR* graph)
 {
