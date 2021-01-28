@@ -7,8 +7,10 @@ int stepSize(int k) {
   return 1;
 }
 
+template<class SampleType>
 __device__ inline
-VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sample, 
+VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+              SampleType* sample, 
               const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
@@ -28,9 +30,10 @@ VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexI
   return transitEdges[x];
 }
 
-template<int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
 __device__ inline
-VertexID nextCached(int step, const VertexID transit, const VertexID sample, 
+VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
+  SampleType* sample,
               const float max_weight,
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, 
