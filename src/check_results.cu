@@ -1,4 +1,5 @@
 #include <omp.h>
+#include "libNextDoor.hpp"
 
 int numNeighborsSampledAtStep(int step)
 {
@@ -25,8 +26,69 @@ int numNeighborsSampledAtStep(int step)
   return n;
 }
 
-bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
-                  const size_t finalSampleSize, std::vector<VertexID_t>& finalSamples, int maxSteps)
+typedef std::unordered_map<VertexID, std::unordered_set<VertexID>> AdjMatrix;
+
+void csrToAdjMatrix(CSR* csr, AdjMatrix& adjMatrix)
+{
+  for (VertexID v : csr->iterate_vertices()) {
+    adjMatrix[v] = std::unordered_set<VertexID> ();
+    for (EdgePos_t i = csr->get_start_edge_idx(v); 
+         i <= csr->get_end_edge_idx(v); i++) {
+      VertexID e = csr->get_edges()[i];
+      adjMatrix[v].insert(e);
+    }
+  }
+}
+
+bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
+                                const size_t finalSampleSize,
+                                std::vector<VertexID_t>& hFinalSamples, 
+                                std::vector<VertexID_t>& hFinalSamplesCSRRow, 
+                                std::vector<VertexID_t>& hFinalSamplesCSRCol, int maxSteps)
+{
+  std::cout << "checking results" << std::endl;
+  AdjMatrix adjMatrix;
+
+  csrToAdjMatrix(csr, adjMatrix);
+  size_t numNeighborsToSampleAtStep = 0;
+
+  for (int step = 0; step < min(maxSteps, steps()); step++) {
+    if (step == 0) {
+      bool foundError = false;
+
+      for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
+        const size_t sampleId = s/finalSampleSize;
+        const VertexID_t initialVal = initialSamples[sampleId];
+        size_t contentsLength = 0;
+
+        for (size_t v = 0; v < stepSize(step); v++) {
+          EdgePos_t idx = v + s + numNeighborsToSampleAtStep;
+          VertexID_t col = hFinalSamplesCSRCol[idx];
+          //VertexID_t row = hFinalSamplesCSRRow[idx];
+          VertexID_t transit = hFinalSamples[s + col];
+          contentsLength += (int)(transit != INVALID_VERTEX);
+
+          if (!foundError && transit != INVALID_VERTEX &&
+            adjMatrix[initialVal].count(transit) == 0) {
+            printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
+            foundError = true;
+          }
+        }
+
+        if (!foundError && contentsLength == 0 && adjMatrix[initialVal].size() > 0) {
+          printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
+                  step, contentsLength, sampleId, adjMatrix[initialVal].size());
+          foundError = true;
+        }
+      }
+    }
+
+    numNeighborsToSampleAtStep += stepSize(step);
+  }
+}
+
+bool checkSampledVerticesResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
+                                const size_t finalSampleSize, std::vector<VertexID_t>& finalSamples, int maxSteps)
 {
   //Check result by traversing all sampled neighbors and making
   //sure that if neighbors at kth-hop is an adjacent vertex of one
@@ -34,16 +96,9 @@ bool check_result(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexI
 
   //First create the adjacency matrix.
   std::cout << "checking results" << std::endl;
-  std::unordered_map<VertexID, std::unordered_set<VertexID>> adj_matrix;
+  AdjMatrix adj_matrix;
 
-  for (VertexID v : csr->iterate_vertices()) {
-    adj_matrix[v] = std::unordered_set<VertexID> ();
-    for (EdgePos_t i = csr->get_start_edge_idx(v); 
-         i <= csr->get_end_edge_idx(v); i++) {
-      VertexID e = csr->get_edges()[i];
-      adj_matrix[v].insert(e);
-    }
-  }
+  csrToAdjMatrix(csr, adj_matrix);
 
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;

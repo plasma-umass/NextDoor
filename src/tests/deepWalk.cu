@@ -70,7 +70,35 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
 
 __host__ int samplingType()
 {
-  return SamplingType::Individual;
+  return SamplingType::IndividualNeighborhood;
+}
+
+__host__ __device__ OutputFormat outputFormat()
+{
+  return SampledVertices;
+}
+
+#define VERTICES_PER_SAMPLE 1
+
+__host__ __device__ EdgePos_t numSamples(CSR* graph)
+{
+  return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
+}
+
+__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
+{
+  std::vector<VertexID_t> initialValue;
+
+  for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
+    initialValue.push_back(sampleIdx * VERTICES_PER_SAMPLE + i);
+  }
+
+  return initialValue;
+}
+
+__host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
+{
+  return VERTICES_PER_SAMPLE;
 }
 
 /*
@@ -98,10 +126,10 @@ __host__ int samplingType()
 // APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
+// APP_TEST(DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "TransitParallel", false)
 APP_TEST(DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", 10, false, "SampleParallel", false)
 APP_TEST(DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
- APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
+APP_TEST(DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "TransitParallel", false)
 APP_TEST(DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 APP_TEST(DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", 10, false, "SampleParallel", false)
 APP_TEST(DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", 10, false, "TransitParallel", false)

@@ -32,9 +32,30 @@ VertexID nextCached(int step, const VertexID transit, const VertexID sample,
   return transitEdges[id];
 }
 
-__host__ int samplingType()
+__host__ __device__ int samplingType()
 {
   return SamplingType::CollectiveNeighborhood;
+}
+
+__host__ __device__ OutputFormat outputFormat()
+{
+  return AdjacencyMatrix;
+}
+
+#define VERTICES_PER_SAMPLE 1
+
+__host__ EdgePos_t numSamples(CSR* graph)
+{
+  return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
+}
+
+__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
+{
+  std::vector<VertexID_t> initialValue;
+
+  for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
+    initialValue.push_back(sampleIdx * VERTICES_PER_SAMPLE + i);
+  }
 }
 
 #define RUNS 1

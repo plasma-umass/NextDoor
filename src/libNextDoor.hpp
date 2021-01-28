@@ -14,6 +14,15 @@
 struct NextDoorData {
   std::vector<VertexID_t> samples;
   std::vector<VertexID_t> hFinalSamples;
+
+  /*Outputs for Matrix*/
+  std::vector<EdgePos_t> hFinalSamplesCSRRow;
+  std::vector<EdgePos_t> hFinalSamplesCSRCol;
+  std::vector<float> hFinalSamplesCSRVal;
+  EdgePos_t* dFinalSamplesCSRRow;
+  float* dFinalSamplesCSRVal;
+  EdgePos_t* dFinalSamplesCSRCol;
+  /******************/
   VertexID_t* dSamplesToTransitMapKeys;
   VertexID_t* dSamplesToTransitMapValues;
   VertexID_t* dTransitToSampleMapKeys;
@@ -23,6 +32,7 @@ struct NextDoorData {
   curandState* dCurandStates;
   size_t maxThreadsPerKernel;
   VertexID_t* dFinalSamples;
+  VertexID_t* dInitialSamples;
   int INVALID_VERTEX;
   int maxBits;
   GPUCSRPartition gpuCSRPartition;
