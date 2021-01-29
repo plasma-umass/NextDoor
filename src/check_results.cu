@@ -40,11 +40,10 @@ void csrToAdjMatrix(CSR* csr, AdjMatrix& adjMatrix)
   }
 }
 
+template<class SampleType>
 bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
-                                const size_t finalSampleSize,
-                                std::vector<VertexID_t>& hFinalSamples, 
-                                std::vector<VertexID_t>& hFinalSamplesCSRRow, 
-                                std::vector<VertexID_t>& hFinalSamplesCSRCol, int maxSteps)
+                                const size_t finalSampleSize, std::vector<VertexID_t>& hFinalSamples, 
+                                std::vector<SampleType>& samples, int maxSteps)
 {
   std::cout << "checking results" << std::endl;
   AdjMatrix adjMatrix;
@@ -58,28 +57,63 @@ bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
 
       for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
         const size_t sampleId = s/finalSampleSize;
-        const VertexID_t initialVal = initialSamples[sampleId];
         size_t contentsLength = 0;
 
-        for (size_t v = 0; v < stepSize(step); v++) {
-          EdgePos_t idx = v + s + numNeighborsToSampleAtStep;
-          VertexID_t col = hFinalSamplesCSRCol[idx];
-          //VertexID_t row = hFinalSamplesCSRRow[idx];
+        //Two kinds of check are performed here.
+        //1. If there is an edge in sample's adjacency matrix then there is same edge in the Graph.
+        //2. All edges that can exist between vertices of two layers in graph also exists between 
+        // sample's adjacency matrix.
+
+        //Check first condition
+        for (size_t v = 0; v < samples[sampleId].adjacencyMatrixLen[step]; v++) {
+          VertexID_t col = samples[sampleId].adjacencyMatrixCol[step][v];
+          VertexID_t row = samples[sampleId].adjacencyMatrixRow[step][v];
           VertexID_t transit = hFinalSamples[s + col];
+          VertexID_t initVertex = initialSamples[sampleId * initialSampleSize(nullptr) + row];
           contentsLength += (int)(transit != INVALID_VERTEX);
 
           if (!foundError && transit != INVALID_VERTEX &&
-            adjMatrix[initialVal].count(transit) == 0) {
-            printf("%s:%d Invalid '%d' in Sample '%ld' at Step '%d'\n", __FILE__, __LINE__, transit, sampleId, step);
+            adjMatrix[initVertex].count(transit) == 0) {
+            std::cout << "col: " << col << " row: " << row << std::endl;
+            printf("%s:%d Invalid '%d' in Sample '%ld' at for previous step vertex '%d' Step '%d'\n", __FILE__, __LINE__, transit, sampleId,initVertex, step);
             foundError = true;
           }
         }
 
-        if (!foundError && contentsLength == 0 && adjMatrix[initialVal].size() > 0) {
-          printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
-                  step, contentsLength, sampleId, adjMatrix[initialVal].size());
-          foundError = true;
+        //Check second condition
+        for (size_t v = 0; v < stepSize(step); v++) {
+          VertexID_t transit = hFinalSamples[s + v];
+
+          for (int initVertexIdx = 0; initVertexIdx < initialSampleSize(nullptr); initVertexIdx++) {
+            VertexID_t initVertex = initialSamples[sampleId * initialSampleSize(nullptr) + initVertexIdx];
+            if (adjMatrix[initVertex].count(transit) == 1) {
+              //Edge exist in graph. So, search for that there is an edge in the sample.
+              bool foundEdge = false;
+              for (int e = 0; e < samples[sampleId].adjacencyMatrixLen[step]; e++) {
+                VertexID_t col = samples[sampleId].adjacencyMatrixCol[step][e];
+                VertexID_t row = samples[sampleId].adjacencyMatrixRow[step][e];
+                VertexID_t v1 = initialSamples[sampleId * initialSampleSize(nullptr) + row];
+                VertexID_t v2 = hFinalSamples[s + col];
+
+                if (adjMatrix[v1].count(v2) == 1) {
+                  foundEdge = true;
+                  break;
+                }
+              }
+
+              if (!foundError && !foundEdge) {
+                printf("Edge '%d'->'%d' exists in Graph but not in sample\n", transit, initVertex);
+                foundError = true;
+              }
+            }
+          }
         }
+
+        // if (!foundError && contentsLength == 0) {
+        //   printf("Step %d: '%ld' vertices sampled for sample '%ld' but sum of edges of all vertices in sample is '%ld'\n", 
+        //           step, contentsLength, sampleId, adjMatrix[initialVal].size());
+        //   foundError = true;
+        // }
       }
 
       if (foundError)

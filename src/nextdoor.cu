@@ -1156,13 +1156,6 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
   // assert(insertionPos < finalSampleSize);
   
   if (outputFormat() == AdjacencyMatrix && samplingType() == CollectiveNeighborhood) {
-    if (neighbor != invalidVertex) {
-      insertionPos = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
-      finalSamplesCSRCol[sampleIdx*finalSampleSize + insertionPos] = neighbrID;
-      finalSamplesCSRRow[sampleIdx*finalSampleSize + insertionPos] = transitID;
-      finalSamplesCSRVal[sampleIdx*finalSampleSize + insertionPos] = 1.0f;
-    }
-
     finalSamples[sampleIdx*finalSampleSize + neighbrID] = neighbor;
   } else if (outputFormat() == SampledVertices && samplingType() == IndividualNeighborhood) {
     if (numberOfTransits(step) > 1) {    
@@ -2093,15 +2086,8 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& nextDoorData)
 {
   CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamples[0], nextDoorData.dFinalSamples, 
                     nextDoorData.hFinalSamples.size()*sizeof(nextDoorData.hFinalSamples[0]), cudaMemcpyDeviceToHost));
-
-  if (outputFormat() == AdjacencyMatrix) {
-    CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamplesCSRCol[0], nextDoorData.dFinalSamplesCSRCol, 
-                      nextDoorData.hFinalSamplesCSRCol.size()*sizeof(nextDoorData.hFinalSamplesCSRCol[0]), cudaMemcpyDeviceToHost));
-    CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamplesCSRRow[0], nextDoorData.dFinalSamplesCSRRow, 
-                      nextDoorData.hFinalSamplesCSRRow.size()*sizeof(nextDoorData.hFinalSamplesCSRRow[0]), cudaMemcpyDeviceToHost));
-    CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamplesCSRVal[0], nextDoorData.dFinalSamplesCSRVal, 
-                      nextDoorData.hFinalSamplesCSRVal.size()*sizeof(nextDoorData.hFinalSamplesCSRVal[0]), cudaMemcpyDeviceToHost));
-  }
+  CHK_CU(cudaMemcpy(&nextDoorData.samples[0], nextDoorData.dOutputSamples, 
+                    nextDoorData.samples.size()*sizeof(SampleType), cudaMemcpyDeviceToHost));
   return nextDoorData.hFinalSamples;
 }
 
@@ -2171,12 +2157,11 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
   freeDeviceData(nextDoorData);
   if (chk_results) {
-    if (outputFormat() == SampledVertices) 
+    if (sizeof(SampleType) == 0) 
       return checkSampledVerticesResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, nextDoorData.hFinalSamples, 4);
     else 
       return checkAdjacencyMatrixResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, 
-                                        nextDoorData.hFinalSamples, nextDoorData.hFinalSamplesCSRRow, 
-                                        nextDoorData.hFinalSamplesCSRCol, 4);
+                                        nextDoorData.hFinalSamples, nextDoorData.samples, 4);
   }
   
   return true;

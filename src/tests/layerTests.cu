@@ -4,7 +4,7 @@
 #define NUM_SAMPLED_VERTICES 64
 #define VERTICES_PER_SAMPLE 64
 
-__host__ __device__ int steps() {return 1;}
+__host__ __device__ int steps() {return NUM_LAYERS;}
 
 __host__ __device__ 
 int stepSize(int k) {
@@ -15,9 +15,9 @@ class LayerSample
 {
 public:
   int adjacencyMatrixLen[NUM_LAYERS];
-  int adjacencyMatrixRow[NUM_LAYERS][VERTICES_PER_SAMPLE][NUM_SAMPLED_VERTICES];
-  int adjacencyMatrixCol[NUM_LAYERS][VERTICES_PER_SAMPLE][NUM_SAMPLED_VERTICES];
-  int adjacencyMatrixVal[NUM_LAYERS][VERTICES_PER_SAMPLE][NUM_SAMPLED_VERTICES];
+  int adjacencyMatrixRow[NUM_LAYERS][VERTICES_PER_SAMPLE*NUM_SAMPLED_VERTICES];
+  int adjacencyMatrixCol[NUM_LAYERS][VERTICES_PER_SAMPLE*NUM_SAMPLED_VERTICES];
+  int adjacencyMatrixVal[NUM_LAYERS][VERTICES_PER_SAMPLE*NUM_SAMPLED_VERTICES];
 };
 
 template<class SampleType>
@@ -30,13 +30,16 @@ VertexID next(int step, CSRPartition* csr, const VertexID* transits, const Verte
   EdgePos_t id = RandNumGen::rand_int(state, csr->get_n_vertices());
   for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
     VertexID transit = transits[i];
-    if (csr->has_edge_logn(transit, id)) 
-    {
+    bool hasEdge = csr->has_edge(transit, id);
+    if (id == 64653) {
+      printf("transit %d id %d col %d row %d hasEdge %d sampleIdx %d\n", transit, id, neighbrID, i, (int)hasEdge, sampleIdx);
+    }
+    if (hasEdge) {
       int len = ::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
-      int cooIdx = step * NUM_SAMPLED_VERTICES + len;
-      sample->adjacencyMatrixRow[step][i][len] = transit;
-      sample->adjacencyMatrixCol[step][i][len] = transit;
-      sample->adjacencyMatrixVal[step][i][len] = transit;
+      //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
+      sample->adjacencyMatrixRow[step][len] = i;
+      sample->adjacencyMatrixCol[step][len] = neighbrID;
+      sample->adjacencyMatrixVal[step][len] = 1.0f;
     }
   }
 
