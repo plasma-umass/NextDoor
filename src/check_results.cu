@@ -53,7 +53,7 @@ bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
 
   for (int step = 0; step < min(maxSteps, steps()); step++) {
     bool foundError = false;
-    std::cout << "finalSampleSize " << finalSampleSize << " numNeighborsToSampleAtStep " << numNeighborsToSampleAtStep << std::endl;
+    std::cout << "Step: "<< step << " finalSampleSize " << finalSampleSize << " numNeighborsToSampleAtStep " << numNeighborsToSampleAtStep << std::endl;
     const size_t startIdxForCurrStep = (step == 0) ? 0 : (numNeighborsToSampleAtStep + stepSize(step));
     for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
       const size_t sampleId = s/finalSampleSize;

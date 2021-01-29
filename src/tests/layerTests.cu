@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-#define NUM_LAYERS 5
+#define NUM_LAYERS 1
 #define NUM_SAMPLED_VERTICES 64
 #define VERTICES_PER_SAMPLE 64
 
@@ -71,7 +71,7 @@ __host__ __device__ OutputFormat outputFormat()
 
 __host__ EdgePos_t numSamples(CSR* graph)
 {
-  return graph->get_n_vertices() / VERTICES_PER_SAMPLE / 10;
+  return graph->get_n_vertices() / VERTICES_PER_SAMPLE/5;
 }
 
 __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
@@ -94,11 +94,11 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
 #define CHECK_RESULTS true
 
 //APP_TEST(KHop, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", false)
-//APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
+APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-APP_TEST(LayerSample, FastGCN, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
+//APP_TEST(LayerSample, FastGCN, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
