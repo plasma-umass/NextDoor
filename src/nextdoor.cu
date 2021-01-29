@@ -159,17 +159,32 @@ EdgePos_t stepSizeAtStep(int step)
   if (step == -1)
     return 0;
 
-  EdgePos_t n = 1;
-  for (int i = 0; i <= step; i++) {
-    n = n * stepSize(i);
-  }
+  if (samplingType() == IndividualNeighborhood) {
+    EdgePos_t n = 1;
+    for (int i = 0; i <= step; i++) {
+      n = n * stepSize(i);
+    }
 
-  return n;
+    return n;
+  } else if (samplingType() == CollectiveNeighborhood) {
+    EdgePos_t n = 0;
+    for (int i = 0; i <= step; i++) {
+      n += stepSize(i);
+    }
+
+    return n;
+  }
 }
 
 
 __host__ __device__ int numberOfTransits(int step) {
-  return stepSizeAtStep(step);
+  if (samplingType() == CollectiveNeighborhood) {
+    return stepSize(step);
+  } else if (samplingType() == IndividualNeighborhood) {
+    return stepSizeAtStep(step);
+  }
+  assert(false);
+  return -1;
 }
 
 #include "check_results.cu"
@@ -1076,11 +1091,14 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
   EdgePos_t numTransitsInNeghbrhood = 0;
   //TODO: Template this kernel based on the sampling type
   if (samplingType() == CollectiveNeighborhood) {
-    numTransitsInNeghbrhood = 1;
+    numTransitsInNeghbrhood = numberOfTransits(step);
     if (step == 0) {
       transits = &initialSamples[sampleIdx*initialSampleSize(nullptr)];
     } else {
+      size_t verticesAddTillPreviousStep = stepSizeAtStep(step - 2);
+      //printf("verticesAddTillPreviousStep %ld\n", verticesAddTillPreviousStep); 
 
+      transits = &finalSamples[sampleIdx*finalSampleSize + verticesAddTillPreviousStep];
     }
   } else {
     if (step == 0) {
@@ -1156,7 +1174,7 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
   // assert(insertionPos < finalSampleSize);
   
   if (outputFormat() == AdjacencyMatrix && samplingType() == CollectiveNeighborhood) {
-    finalSamples[sampleIdx*finalSampleSize + neighbrID] = neighbor;
+    finalSamples[sampleIdx*finalSampleSize + stepSizeAtStep(step - 1) + neighbrID] = neighbor;
   } else if (outputFormat() == SampledVertices && samplingType() == IndividualNeighborhood) {
     if (numberOfTransits(step) > 1) {    
       insertionPos = finalSampleSizeTillPreviousStep + (threadId % numTransits);
@@ -2132,12 +2150,7 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
     maxNeighborsToSample *= stepSize(step);
   }
 
-  size_t finalSampleSize = 0;
-  size_t neighborsToSampleAtStep = 1;
-  for (int step = 0; step < steps(); step++) {
-    neighborsToSampleAtStep *= stepSize(step);
-    finalSampleSize += neighborsToSampleAtStep;
-  }
+  size_t finalSampleSize = getFinalSampleSize();
   
   size_t totalSampledVertices = 0;
 

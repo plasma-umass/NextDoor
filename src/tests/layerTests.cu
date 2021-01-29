@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-#define NUM_LAYERS 1
+#define NUM_LAYERS 2
 #define NUM_SAMPLED_VERTICES 64
 #define VERTICES_PER_SAMPLE 64
 
@@ -31,9 +31,6 @@ VertexID next(int step, CSRPartition* csr, const VertexID* transits, const Verte
   for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
     VertexID transit = transits[i];
     bool hasEdge = csr->has_edge(transit, id);
-    if (id == 64653) {
-      printf("transit %d id %d col %d row %d hasEdge %d sampleIdx %d\n", transit, id, neighbrID, i, (int)hasEdge, sampleIdx);
-    }
     if (hasEdge) {
       int len = ::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
       //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
