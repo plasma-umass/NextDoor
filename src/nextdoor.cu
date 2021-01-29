@@ -1563,6 +1563,13 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
   CHK_CU(cudaMemcpy(data.dInitialSamples, &data.initialContents[0], 
                     sizeof(VertexID_t)*data.initialContents.size(), cudaMemcpyHostToDevice));
 
+  //Allocate storage for samples on GPU
+  if (sizeof(SampleType) > 0) {
+    CHK_CU(cudaMalloc(&data.dOutputSamples, sizeof(SampleType)*data.samples.size()));
+    CHK_CU(cudaMemcpy(data.dOutputSamples, &data.samples[0], sizeof(SampleType)*data.samples.size(), 
+                      cudaMemcpyHostToDevice));
+  }
+
   //Allocate storage for final samples on GPU
   data.hFinalSamples = std::vector<VertexID_t>(finalSampleSize*data.samples.size());
 

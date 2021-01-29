@@ -1,21 +1,23 @@
 #include "testBase.h"
 
 #define NUM_LAYERS 1
-#define NUM_SAMPLED_VERTICES 1
+#define NUM_SAMPLED_VERTICES 64
+#define VERTICES_PER_SAMPLE 64
 
 __host__ __device__ int steps() {return 1;}
 
 __host__ __device__ 
 int stepSize(int k) {
-  return 1;
+  return NUM_SAMPLED_VERTICES;
 }
 
 class LayerSample 
 {
+public:
   int adjacencyMatrixLen[NUM_LAYERS];
-  int adjacencyMatrixRow[NUM_LAYERS*NUM_SAMPLED_VERTICES];
-  int adjacencyMatrixCol[NUM_LAYERS*NUM_SAMPLED_VERTICES];
-  int adjacencyMatrixVal[NUM_LAYERS*NUM_SAMPLED_VERTICES];
+  int adjacencyMatrixRow[NUM_LAYERS][VERTICES_PER_SAMPLE][NUM_SAMPLED_VERTICES];
+  int adjacencyMatrixCol[NUM_LAYERS][VERTICES_PER_SAMPLE][NUM_SAMPLED_VERTICES];
+  int adjacencyMatrixVal[NUM_LAYERS][VERTICES_PER_SAMPLE][NUM_SAMPLED_VERTICES];
 };
 
 template<class SampleType>
@@ -25,8 +27,20 @@ VertexID next(int step, CSRPartition* csr, const VertexID* transits, const Verte
               const CSR::Edge* transitEdges, const float* transitEdgeWeights,
               const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
 {
-  //EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-  return 0;
+  EdgePos_t id = RandNumGen::rand_int(state, csr->get_n_vertices());
+  for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
+    VertexID transit = transits[i];
+    if (csr->has_edge_logn(transit, id)) 
+    {
+      int len = ::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
+      int cooIdx = step * NUM_SAMPLED_VERTICES + len;
+      sample->adjacencyMatrixRow[step][i][len] = transit;
+      sample->adjacencyMatrixCol[step][i][len] = transit;
+      sample->adjacencyMatrixVal[step][i][len] = transit;
+    }
+  }
+
+  return id;
 }
 
 template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
@@ -54,8 +68,6 @@ __host__ __device__ OutputFormat outputFormat()
 {
   return AdjacencyMatrix;
 }
-
-#define VERTICES_PER_SAMPLE 2
 
 __host__ EdgePos_t numSamples(CSR* graph)
 {
