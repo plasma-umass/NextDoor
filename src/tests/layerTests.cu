@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-#define NUM_LAYERS 2
+#define NUM_LAYERS 5
 #define NUM_SAMPLED_VERTICES 64
 #define VERTICES_PER_SAMPLE 64
 
@@ -30,7 +30,7 @@ VertexID next(int step, CSRPartition* csr, const VertexID* transits, const Verte
   EdgePos_t id = RandNumGen::rand_int(state, csr->get_n_vertices());
   for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
     VertexID transit = transits[i];
-    bool hasEdge = csr->has_edge(transit, id);
+    bool hasEdge = csr->has_edge_logn(transit, id);
     if (hasEdge) {
       int len = ::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
       //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
@@ -71,7 +71,7 @@ __host__ __device__ OutputFormat outputFormat()
 
 __host__ EdgePos_t numSamples(CSR* graph)
 {
-  return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
+  return graph->get_n_vertices() / VERTICES_PER_SAMPLE / 10;
 }
 
 __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
@@ -94,11 +94,11 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
 #define CHECK_RESULTS true
 
 //APP_TEST(KHop, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", false)
-APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
+//APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-// APP_TEST(KHop, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
+APP_TEST(LayerSample, FastGCN, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)

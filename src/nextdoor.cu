@@ -1555,7 +1555,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
   int finalSampleSize = getFinalSampleSize();
   std::cout << "Final Size of each sample: " << finalSampleSize << std::endl;
   std::cout << "Maximum Neighbors Sampled at each step: " << maxNeighborsToSample << std::endl;
-
+  std::cout << "Number of Samples: " << numSamples(csr) << std::endl;
   data.INVALID_VERTEX = csr->get_n_vertices();
   int maxBits = 0;
   while ((data.INVALID_VERTEX >> maxBits) != 0) {
@@ -1620,17 +1620,6 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
 
   if (samplingType() == SamplingType::CollectiveNeighborhood) {
     CHK_CU(cudaMalloc(&data.dNeighborhoodSizes, sizeof(EdgePos_t)*data.samples.size()));
-  }
-
-  if (outputFormat() == AdjacencyMatrix) {
-    data.hFinalSamplesCSRRow = std::vector<EdgePos_t>(finalSampleSize*data.samples.size());
-    data.hFinalSamplesCSRCol = std::vector<EdgePos_t>(finalSampleSize*data.samples.size());
-    data.hFinalSamplesCSRVal = std::vector<float>(finalSampleSize*data.samples.size());
-
-    //TODO: correct this. it is not final size of samples but less.
-    CHK_CU(cudaMalloc(&data.dFinalSamplesCSRRow, sizeof(EdgePos_t)*data.hFinalSamples.size()));
-    CHK_CU(cudaMalloc(&data.dFinalSamplesCSRVal, sizeof(float)*data.hFinalSamples.size()));
-    CHK_CU(cudaMalloc(&data.dFinalSamplesCSRCol, sizeof(EdgePos_t)*data.hFinalSamples.size()));
   }
 
   return true;
