@@ -2109,6 +2109,45 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
         CHK_CU(cudaGetLastError());
         CHK_CU(cudaDeviceSynchronize());
         
+    #if 0
+        //Check if the CSR is correct
+        EdgePos_t* csrRows = new EdgePos_t[initialSampleSize(csr)*nextDoorData.samples.size()];
+        EdgePos_t* csrCols = new VertexID_t[(*hSumNeighborhoodSizes)];
+        EdgePos_t* samplePos = new EdgePos_t[nextDoorData.samples.size()];
+        
+        CHK_CU(cudaMemcpy(csrCols, dCollectiveNeighborhoodCSRCols, sizeof(VertexID_t)*(*hSumNeighborhoodSizes), 
+                          cudaMemcpyDeviceToHost));
+        CHK_CU(cudaMemcpy(csrRows, dCollectiveNeighborhoodCSRRows, sizeof(EdgePos_t)*initialSampleSize(csr)*nextDoorData.samples.size(), 
+                          cudaMemcpyDeviceToHost));
+        CHK_CU(cudaMemcpy(samplePos, dSampleNeighborhoodPos, sizeof(EdgePos_t)*nextDoorData.samples.size(), 
+                          cudaMemcpyDeviceToHost));
+        const int SZ = initialSampleSize(csr)*nextDoorData.samples.size();
+        for (int sample = 0; sample < nextDoorData.samples.size(); sample++) {
+          for (int v = 0; v < initialSampleSize(csr); v++) {
+            EdgePos_t edgeStart = csrRows[sample * initialSampleSize(csr) + v];
+            EdgePos_t edgeEnd = -1;
+            EdgePos_t idxInRows = sample * initialSampleSize(csr) + v;
+            
+            //TODO: Add one more field to a vertex to each sample that is the length of all edges.
+            if (v + 1 == initialSampleSize(csr)) {
+              continue;
+            }
+            if (v + 1 < initialSampleSize(csr)) {
+              edgeEnd = csrRows[idxInRows + 1];
+            } else if (sample + 1 < nextDoorData.samples.size()) {
+              edgeEnd = samplePos[sample + 1];
+            } else {
+              edgeEnd = (*hSumNeighborhoodSizes);
+            }
+             
+            VertexID transit = nextDoorData.initialContents[sample * initialSampleSize(csr) + v];
+            if (edgeEnd - edgeStart != csr->n_edges_for_vertex(transit)) {
+              printf("transit %d edgeEnd %d edgeStart %d csr->n_edges_for_vertex(transit) %d\n", transit, edgeEnd, edgeStart, csr->n_edges_for_vertex(transit));
+            }
+            assert(edgeEnd - edgeStart == csr->n_edges_for_vertex(transit));
+          }
+        }
+    #endif
         /*Sorting takes a ton of time (2-3x more). So, it probably be benificial to 
          * create a CSR matrix of the neighborhood of transit vertices.*/
         //Sort these edges of neighborhood

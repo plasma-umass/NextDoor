@@ -71,7 +71,7 @@ __host__ __device__ OutputFormat outputFormat()
 
 __host__ EdgePos_t numSamples(CSR* graph)
 {
-  return graph->get_n_vertices() / VERTICES_PER_SAMPLE/5;
+  return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
 }
 
 __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
