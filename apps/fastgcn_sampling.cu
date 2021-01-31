@@ -91,6 +91,10 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
   return VERTICES_PER_SAMPLE;
 }
 
+static NextDoorData<LayerSample> nextDoorData;
+
 int main(int argc, char* argv[]) {
   return appMain<LayerSample>(argc, argv);
 }
+
+#include "nextDoorModule.cu"

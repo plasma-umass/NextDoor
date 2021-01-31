@@ -5,7 +5,6 @@
 static CSR* graph_csr = nullptr;
 static Graph graph;
 static GPUCSRPartition gpuCSRPartition;
-static NextDoorData nextDoorData;
 
 static PyObject * initSampling(PyObject *self, PyObject *args)
 {
@@ -22,7 +21,7 @@ static PyObject * initSampling(PyObject *self, PyObject *args)
 
 static PyObject* sample(PyObject *self, PyObject *args)
 {
-  doSampling(gpuCSRPartition, nextDoorData);
+  doSampleParallelSampling(graph_csr, gpuCSRPartition, nextDoorData);
   Py_RETURN_NONE;
 }
 
@@ -60,6 +59,7 @@ static PyMethodDef NextDoorMethods[] = {
   {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
+extern "C"
 PyMODINIT_FUNC initNextDoor ()
 {
     Py_InitModule("NextDoor",NextDoorMethods);

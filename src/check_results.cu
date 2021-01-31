@@ -65,7 +65,7 @@ bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
       // sample's adjacency matrix.
 
       //Check first condition
-      for (size_t v = 0; v < samples[sampleId].adjacencyMatrixLen[step]; v++) {
+      for (EdgePos_t v = 0; v < samples[sampleId].adjacencyMatrixLen[step]; v++) {
         VertexID_t col = samples[sampleId].adjacencyMatrixCol[step][v];
         VertexID_t row = samples[sampleId].adjacencyMatrixRow[step][v];
         VertexID_t transit = hFinalSamples[s + startIdxForCurrStep + col];
@@ -87,10 +87,10 @@ bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
       }
 
       //Check second condition
-      for (size_t v = 0; v < stepSize(step); v++) {
+      for (EdgePos_t v = 0; v < (EdgePos_t)stepSize(step); v++) {
         VertexID_t transit = hFinalSamples[s + startIdxForCurrStep + v];
-        size_t prevSZ = (step == 0) ? initialSampleSize(nullptr) : stepSize(step - 1);
-        for (int prevVertexIdx = 0; prevVertexIdx < prevSZ; prevVertexIdx++) {
+        EdgePos_t prevSZ = (step == 0) ? initialSampleSize(nullptr) : stepSize(step - 1);
+        for (EdgePos_t prevVertexIdx = 0; prevVertexIdx < prevSZ; prevVertexIdx++) {
           VertexID_t prevVertex = -1;
           if (step == 0) {
             prevVertex = initialSamples[sampleId * initialSampleSize(nullptr) + prevVertexIdx];
@@ -201,7 +201,7 @@ bool checkSampledVerticesResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
           }
 
           if (!foundError && adj_matrix[initialVal].size() != contentsLength) {
-            printf("%s:%d Sample '%d' has %ld neighbors but %ld are sampled at Step '%d'\n", __FILE__, __LINE__, sampleId, 
+            printf("%s:%d Sample '%ld' has %ld neighbors but %ld are sampled at Step '%d'\n", __FILE__, __LINE__, sampleId, 
                    adj_matrix[initialVal].size(), contentsLength, step);
             foundError = true;
           }

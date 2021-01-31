@@ -37,5 +37,8 @@ layerTest: src/tests/layerTests.cu src/nextdoor.cu src/tests/testBase.h src/chec
 fastgcn_sampling: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu 
 	nvcc $< -IAnyOption/ AnyOption/anyoption.cpp -Isrc -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
 
+fastgcn_samplingIntegration: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu src/libNextDoor.hpp src/nextDoorModule.cu
+	nvcc $< -IAnyOption/ AnyOption/anyoption.cpp -I/usr/include/python2.7/ -Isrc -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
+
 clean:
 	rm -rf cpu gpu *.h.gch *.o src/*.h.gch src/*.o src/*.o

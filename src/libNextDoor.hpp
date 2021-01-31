@@ -45,7 +45,7 @@ GPUCSRPartition transferCSRToGPU(CSR* csr);
 template<class SampleType>
 bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data);
 template<class SampleType>
-bool doSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& data, int nruns);
+bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData);
 template<class SampleType>
 std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& data);
 

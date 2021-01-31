@@ -1565,9 +1565,9 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
   int maxV = 0;
   for (int sampleIdx = 0; sampleIdx < numSamples(csr); sampleIdx++) {
     auto initialVertices = initialSample(sampleIdx, csr);
-    if (initialVertices.size() != initialSampleSize(csr)) {
+    if ((EdgePos_t)initialVertices.size() != initialSampleSize(csr)) {
       //We require that number of vertices in sample initially are equal to the initialSampleSize
-      printf ("initialSampleSize '%d' != initialSample(%d).size() '%d'\n", 
+      printf ("initialSampleSize '%d' != initialSample(%d).size() '%ld'\n", 
               initialSampleSize(csr), sampleIdx, initialVertices.size());
       abort();
     }
@@ -1689,7 +1689,7 @@ void printKernelTypes(CSR* csr, VertexID_t* dUniqueTransits, VertexID_t* dUnique
   size_t gridLevelTransits = 0, gridLevelSamples = 0, gridVerticesWithEdgesLessThan10K = 0, gridVerticesWithEdgesMoreThan10K = 0;
   EdgePos_t maxEdgesOfGridTransits = 0;
 
-  for (size_t tr = 0; tr < *hUniqueTransitsNumRuns; tr++) {
+  for (EdgePos_t tr = 0; tr < *hUniqueTransitsNumRuns; tr++) {
     // if (tr == 0) {printf("%s:%d hUniqueTransitsCounts[0] is %d\n", __FILE__, __LINE__, hUniqueTransitsCounts[tr]);}
     if (hUniqueTransitsCounts[tr] < 8) {
       identityKernelTransits++;
@@ -1860,12 +1860,12 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
-    const size_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
+    const EdgePos_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
     
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
       for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
-        size_t currExecutionThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
+        size_t currExecutionThreads = min((EdgePos_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
         samplingKernel<<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
                         threadsExecuted, currExecutionThreads, nextDoorData.INVALID_VERTEX,
                         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
@@ -1926,7 +1926,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
       
       double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-      identityKernel<SampleType, N_THREADS, true><<<thread_block_size(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+      identityKernel<SampleType, N_THREADS, true><<<DIVUP(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
         totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
         nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
