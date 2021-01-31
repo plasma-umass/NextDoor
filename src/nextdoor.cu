@@ -2261,7 +2261,7 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
   freeDeviceData(nextDoorData);
   if (chk_results) {
-    if (sizeof(SampleType) == 0) 
+    if (false) 
       return checkSampledVerticesResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, nextDoorData.hFinalSamples, 4);
     else 
       return checkAdjacencyMatrixResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, 

@@ -1,12 +1,11 @@
-#include "sample.hpp"
-#include "csr.hpp"
-#include "utils.hpp"
-#include "sampler.cuh"
-#include "rand_num_gen.cuh"
-
 #include <curand.h>
 #include <curand_kernel.h>
 #include <vector>
+
+
+#include "csr.hpp"
+#include "utils.hpp"
+#include "rand_num_gen.cuh"
 
 #ifndef __NEXTDOOR_HPP__
 #define __NEXTDOOR_HPP__
