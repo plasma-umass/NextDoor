@@ -33,7 +33,7 @@ static PyObject* finalSamples(PyObject *self, PyObject *args)
 
   for (i = 0; i < final.size(); ++i)
   {
-      PyList_Append(result, PyInt_FromLong(final[i]));
+      PyList_Append(result, PyLong_FromLong(final[i]));
   }
 
   return result;
@@ -59,8 +59,32 @@ static PyMethodDef NextDoorMethods[] = {
   {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
+#ifdef PYTHON_2
 extern "C"
 PyMODINIT_FUNC initNextDoor ()
 {
     Py_InitModule("NextDoor",NextDoorMethods);
 }
+#endif
+
+#ifdef PYTHON_3
+static struct PyModuleDef NextDoorModule = {
+  PyModuleDef_HEAD_INIT,
+  "NextDoor",
+  NULL,
+  -1,
+  NextDoorMethods
+};
+extern "C"
+PyMODINIT_FUNC PyInit_NextDoor(void)
+{
+  PyObject *m;
+
+  m = PyModule_Create(&NextDoorModule);
+  if (m == NULL)
+    return NULL;
+  
+
+  return m;
+}
+#endif
