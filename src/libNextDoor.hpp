@@ -12,6 +12,7 @@
 
 template<class SampleType>
 struct NextDoorData {
+  CSR* csr;
   std::vector<SampleType> samples;
   std::vector<VertexID_t> hFinalSamples;
   std::vector<VertexID_t> initialContents;
@@ -48,5 +49,6 @@ template<class SampleType>
 bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData);
 template<class SampleType>
 std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& data);
+int getFinalSampleSize();
 
 #endif

@@ -1,14 +1,14 @@
 #include "gtest/gtest.h"
 #include "../nextdoor.cu"
-
+#include "../check_results.cu"
 #ifndef __TEST_BASE_H__
 #define __TEST_BASE_H__
 
 #define GRAPH_PATH "../GPUesque-for-eval/input/"
 
-#define APP_TEST(SampleClass,App,Graph,Path,Runs,CheckResults,KernelType,LoadBalancing) \
+#define APP_TEST(SampleClass,App,Graph,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
   TEST(App, Graph) { \
-  EXPECT_TRUE(nextdoor<SampleClass>(Path, "adj-list", "text", Runs, CheckResults, false, KernelType, LoadBalancing));\
+  EXPECT_TRUE(nextdoor<SampleClass>(Path, "adj-list", "text", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc));\
 }
 
 // TEST(KHop, Mico) {

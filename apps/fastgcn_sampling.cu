@@ -1,7 +1,7 @@
 #include "libNextDoor.hpp"
 #include "main.cu"
 
-#define NUM_LAYERS 1
+#define NUM_LAYERS 5
 #define NUM_SAMPLED_VERTICES 64
 #define VERTICES_PER_SAMPLE 64
 

@@ -1,6 +1,6 @@
 #include "testBase.h"
 
-#define NUM_LAYERS 1
+#define NUM_LAYERS 2
 #define NUM_SAMPLED_VERTICES 64
 #define VERTICES_PER_SAMPLE 64
 
@@ -93,8 +93,9 @@ __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
 #define RUNS 1
 #define CHECK_RESULTS true
 
+
 //APP_TEST(KHop, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", false)
-APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "SampleParallel", false)
+APP_TEST(LayerSample, FastGCN, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult, "SampleParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)

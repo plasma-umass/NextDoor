@@ -41,12 +41,17 @@ void csrToAdjMatrix(CSR* csr, AdjMatrix& adjMatrix)
 }
 
 template<class SampleType>
-bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
-                                const size_t finalSampleSize, std::vector<VertexID_t>& hFinalSamples, 
-                                std::vector<SampleType>& samples, int maxSteps)
+bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
 {
   std::cout << "checking results" << std::endl;
   AdjMatrix adjMatrix;
+  CSR* csr = nextDoorData.csr;
+  auto& initialSamples = nextDoorData.initialContents;
+  auto finalSampleSize = getFinalSampleSize();
+  auto& hFinalSamples = nextDoorData.hFinalSamples;
+  auto samples = nextDoorData.samples;
+  auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
+  int maxSteps = 4;
 
   csrToAdjMatrix(csr, adjMatrix);
   size_t numNeighborsToSampleAtStep = 0;
@@ -143,12 +148,18 @@ bool checkAdjacencyMatrixResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::
   return true;
 }
 
-bool checkSampledVerticesResult(CSR* csr, const VertexID_t INVALID_VERTEX, std::vector<VertexID_t>& initialSamples, 
-                                const size_t finalSampleSize, std::vector<VertexID_t>& finalSamples, int maxSteps)
+template<class SampleType>
+bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
 {
   //Check result by traversing all sampled neighbors and making
   //sure that if neighbors at kth-hop is an adjacent vertex of one
   //of the k-1th hop neighbors.
+  CSR* csr = nextDoorData.csr;
+  auto& initialSamples = nextDoorData.initialContents;
+  auto finalSampleSize = getFinalSampleSize();
+  auto& finalSamples = nextDoorData.hFinalSamples;
+  auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
+  int maxSteps = 4;
 
   //First create the adjacency matrix.
   std::cout << "checking results" << std::endl;

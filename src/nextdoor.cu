@@ -138,11 +138,12 @@ VertexID nextCached(int step, const VertexID transit,
               bool* globalLoadBV);
 __host__ __device__ int steps();
 __host__ __device__ int samplingType();
+template<class SampleType>
+__host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType sample);
 __host__ __device__ OutputFormat outputFormat();
 __host__ __device__ EdgePos_t numSamples(CSR* graph);
 __host__ __device__ EdgePos_t initialSampleSize(CSR* graph);
 __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph);
-
 /**********************/
 
 __constant__ char csrPartitionBuff[sizeof(CSRPartition)];
@@ -186,8 +187,6 @@ __host__ __device__ int numberOfTransits(int step) {
   assert(false);
   return -1;
 }
-
-#include "check_results.cu"
 
 template<class SamplingType>
 __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size_t threadsExecuted, const size_t currExecutionThreads,
@@ -2201,9 +2200,10 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& nextDoorData)
 }
 
 template<class SampleType>
-int nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, 
+bool nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, 
              const int nruns, const bool chk_results, const bool print_samples,
-             const char* kernelType, const bool enableLoadBalancing)
+             const char* kernelType, const bool enableLoadBalancing,
+             bool (*checkResultsFunc)(NextDoorData<SampleType>&))
 {
   std::vector<Vertex> vertices;
 
@@ -2211,7 +2211,7 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   Graph graph;
   CSR* csr;
   if ((csr = loadGraph(graph, (char*)graph_file, (char*)graph_type, (char*)graph_format)) == nullptr) {
-    return 1;
+    return false;
   }
 
   std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
@@ -2221,6 +2221,7 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   
   NextDoorData<SampleType> nextDoorData;
+  nextDoorData.csr = csr;
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   allocNextDoorDataOnGPU(csr, nextDoorData);
   
@@ -2261,14 +2262,13 @@ int nextdoor(const char* graph_file, const char* graph_type, const char* graph_f
   std::cout << "totalSampledVertices " << totalSampledVertices << std::endl;
   freeDeviceData(nextDoorData);
   if (chk_results) {
-    if (false) 
-      return checkSampledVerticesResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, nextDoorData.hFinalSamples, 4);
-    else 
-      return checkAdjacencyMatrixResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, 
-                                        nextDoorData.hFinalSamples, nextDoorData.samples, 4);
+    // if (false) 
+    //   return checkSampledVerticesResult(csr, nextDoorData.INVALID_VERTEX, nextDoorData.initialContents, finalSampleSize, nextDoorData.hFinalSamples, 4);
+    // else 
+      return checkResultsFunc(nextDoorData);
   }
   
-  return true;
+  return false;
 }
 
 #endif
