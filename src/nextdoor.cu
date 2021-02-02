@@ -140,7 +140,7 @@ __host__ __device__ int steps();
 __host__ __device__ int samplingType();
 __host__ __device__ bool hasExplicitTransits();
 template<class SampleType>
-__host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, const int transitIdx);
+__host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, const int transitIdx, curandState* randState);
 template<class SampleType>
 __host__ __device__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID);
 __host__ __device__ OutputFormat outputFormat();
@@ -1125,7 +1125,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
   if (samplingType() == CollectiveNeighborhood) {
     assert(!hasExplicitTransits());
   } else {
-    VertexID_t transit = stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx);
+    VertexID_t transit = stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, randState);
     explicitTransits[threadId] = transit;
   }
 }
