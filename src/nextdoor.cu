@@ -258,10 +258,16 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
 
   EdgePos_t totalSizeOfSample = stepSizeAtStep(step - 1);
 
+  //TODO: templatize over hasExplicitTransits()
   if (step != steps() - 1) {
     //No need to store at last step
+    if (hasExplicitTransits()) {
+      VertexID_t transit = stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, randState);
+      samplesToTransitValues[threadId] = transit;
+    } else {
+      samplesToTransitValues[threadId] = neighbor;
+    }
     samplesToTransitKeys[threadId] = sampleIdx;
-    samplesToTransitValues[threadId] = neighbor;
   }
 
   EdgePos_t insertionPos = 0;
@@ -1099,7 +1105,7 @@ __global__ void collectiveNeighborhood(const int step, GPUCSRPartition graph,
   }
 }
 
-template<class SampleType>
+template<class SampleType, bool StoreAsMap>
 __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph, 
                                      const VertexID_t invalidVertex,
                                      const size_t threadsExecuted, 
@@ -1107,7 +1113,8 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
                                      const size_t totalThreads,
                                      SampleType* samples,
                                      const size_t NumSamples,
-                                     VertexID_t* explicitTransits,
+                                     VertexID_t* samplesToTransitKeys,
+                                     VertexID_t* samplesToTransitValues,
                                      curandState* randStates)
 {
   //Number of threads executed are: Num of Samples * Number of Transits
@@ -1126,7 +1133,11 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
     assert(!hasExplicitTransits());
   } else {
     VertexID_t transit = stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, randState);
-    explicitTransits[threadId] = transit;
+    samplesToTransitValues[threadId] = transit;
+
+    if (StoreAsMap) {
+      samplesToTransitKeys[threadId] = sampleIdx;
+    }
   }
 }
 
@@ -1678,11 +1689,6 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
                     cudaMemcpyHostToDevice));
   CHK_CU(cudaMemcpy(data.dTransitToSampleMapValues, &data.samples[0], sizeof(VertexID_t)*numSamples, 
                     cudaMemcpyHostToDevice));
-
-  if (hasExplicitTransits()) {
-    CHK_CU(cudaMalloc(&data.dExplicitTransits, sizeof(VertexID_t)*numSamples*maxNeighborsToSample));
-  }
-
   //Insertion positions per transit vertex for each sample
   CHK_CU(cudaMalloc(&data.dSampleInsertionPositions, sizeof(EdgePos_t)*numSamples));
   size_t curandDataSize = maxNeighborsToSample*numSamples*sizeof(curandState);
@@ -1904,7 +1910,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   for (int step = 0; step < steps(); step++) {
     neighborsToSampleAtStep *= stepSize(step);
     const EdgePos_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
-    
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
       for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
@@ -2031,6 +2036,25 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
     }
 
     if (step != steps() - 1) {
+      if (false and hasExplicitTransits() and step > 0) {
+        const size_t totalThreads = numSamples(csr)*neighborsToSampleAtStep;
+        for (int _thExecs = 0; _thExecs < totalThreads; _thExecs += nextDoorData.maxThreadsPerKernel) {
+          const size_t currExecThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - _thExecs);
+
+          explicitTransitsKernel<SampleType, true><<<DIVUP(currExecThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
+                                                                                                      nextDoorData.INVALID_VERTEX,
+                                                                                                      _thExecs, currExecThreads,
+                                                                                                      totalThreads,
+                                                                                                      nextDoorData.dOutputSamples,
+                                                                                                      nextDoorData.samples.size(),
+                                                                                                      nextDoorData.dSamplesToTransitMapKeys,
+                                                                                                      nextDoorData.dSamplesToTransitMapValues,
+                                                                                                      nextDoorData.dCurandStates);
+          
+          CHK_CU(cudaGetLastError());
+          CHK_CU(cudaDeviceSynchronize());
+        }
+      }
       double inversionT1 = convertTimeValToDouble(getTimeOfDay ());
       //Invert sample->transit map by sorting samples based on the transit vertices
       cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
@@ -2217,24 +2241,15 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
         for (int _thExecs = 0; _thExecs < totalThreads; _thExecs += nextDoorData.maxThreadsPerKernel) {
           const size_t currExecThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - _thExecs);
 
-          // __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph, 
-          //   const VertexID_t invalidVertex,
-          //   const size_t threadsExecuted, 
-          //   const size_t currExecutionThreads,
-          //   const size_t totalThreads,
-          //   SampleType* samples,
-          //   const size_t NumSamples,
-          //   VertexID_t* explicitTransits,
-          //   curandState* randStates)
-
-          explicitTransitsKernel<SampleType><<<DIVUP(currExecThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
-                                                                                               nextDoorData.INVALID_VERTEX,
-                                                                                               _thExecs, currExecThreads,
-                                                                                               totalThreads,
-                                                                                               nextDoorData.dOutputSamples,
-                                                                                               nextDoorData.samples.size(),
-                                                                                               nextDoorData.dExplicitTransits,
-                                                                                               nextDoorData.dCurandStates);
+          explicitTransitsKernel<SampleType, false><<<DIVUP(currExecThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
+                                                                                                      nextDoorData.INVALID_VERTEX,
+                                                                                                      _thExecs, currExecThreads,
+                                                                                                      totalThreads,
+                                                                                                      nextDoorData.dOutputSamples,
+                                                                                                      nextDoorData.samples.size(),
+                                                                                                      nullptr,
+                                                                                                      nextDoorData.dSamplesToTransitMapValues,
+                                                                                                      nextDoorData.dCurandStates);
           
           CHK_CU(cudaGetLastError());
           CHK_CU(cudaDeviceSynchronize());
@@ -2247,7 +2262,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
                     nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
                     nextDoorData.dFinalSamplesCSRCol, nextDoorData.dFinalSamplesCSRRow, nextDoorData.dFinalSamplesCSRVal, 
                     nextDoorData.dFinalSamples, finalSampleSize, 
-                    nextDoorData.dExplicitTransits,
+                    nextDoorData.dSamplesToTransitMapValues,
                     nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
