@@ -34,6 +34,9 @@ uniformRandWalkTest: src/tests/uniformRandWalk.cu src/nextdoor.cu src/tests/test
 layerTest: src/tests/layerTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
 	nvcc $< -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
 
+multiRWTest: src/tests/multiRW.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
+	nvcc $< -Igoogletest/googletest/include/ -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+
 fastgcn_sampling: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu 
 	nvcc $< -IAnyOption/ AnyOption/anyoption.cpp -Isrc -I/mnt/homes/abhinav/cub-1.8.0 -Lgoogletest/build/lib/ -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
 
