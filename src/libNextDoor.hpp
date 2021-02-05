@@ -17,7 +17,8 @@ struct NextDoorData {
   std::vector<VertexID_t> hFinalSamples;
   std::vector<VertexID_t> initialContents;
   SampleType* dOutputSamples;
-
+  std::vector<VertexID_t> initialTransitToSampleValues;
+  
   /*Outputs for Matrix*/
   std::vector<EdgePos_t> hFinalSamplesCSRRow;
   std::vector<EdgePos_t> hFinalSamplesCSRCol;

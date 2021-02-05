@@ -1645,6 +1645,8 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
     }
 
     data.initialContents.insert(data.initialContents.end(), initialVertices.begin(), initialVertices.end());
+    for (auto v : initialVertices)
+      data.initialTransitToSampleValues.push_back(sampleIdx);
   }
 
   for (auto vertex : csr->iterate_vertices()) {
@@ -1816,25 +1818,22 @@ template<class SampleType>
 bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData, bool enableLoadBalancing)
 {
   //Size of each sample output
-  size_t maxNeighborsToSample = 1;
+  size_t maxNeighborsToSample = (samplingType() == CollectiveNeighborhood) ? 1 : initialSampleSize(csr);
   for (int step = 0; step < steps() - 1; step++) {
-    maxNeighborsToSample *= stepSize(step);
-  }
-
-  size_t finalSampleSize = 0;
-  size_t neighborsToSampleAtStep = 1;
-  for (int step = 0; step < steps(); step++) {
-    neighborsToSampleAtStep *= stepSize(step);
-    finalSampleSize += neighborsToSampleAtStep;
+    if (samplingType() == CollectiveNeighborhood) {
+      maxNeighborsToSample = max(maxNeighborsToSample, (size_t)stepSize(step));
+    } else {
+      maxNeighborsToSample *= stepSize(step);
+    }
   }
   
-  //TODO: This works only when the initial size of each sample is 1.
-  assert (initialSampleSize(csr) == 1);
-  neighborsToSampleAtStep = 1;
-  CHK_CU(cudaMemcpy(nextDoorData.dTransitToSampleMapKeys, &nextDoorData.initialContents[0], sizeof(VertexID_t)*nextDoorData.samples.size(), 
-                  cudaMemcpyHostToDevice));
-  CHK_CU(cudaMemcpy(nextDoorData.dTransitToSampleMapValues, &nextDoorData.initialContents[0], sizeof(VertexID_t)*nextDoorData.samples.size(), 
-                  cudaMemcpyHostToDevice));
+  size_t finalSampleSize = getFinalSampleSize();
+  CHK_CU(cudaMemcpy(nextDoorData.dTransitToSampleMapKeys, &nextDoorData.initialContents[0], 
+                    sizeof(VertexID_t)*nextDoorData.initialContents.size(), 
+                    cudaMemcpyHostToDevice));
+  CHK_CU(cudaMemcpy(nextDoorData.dTransitToSampleMapValues, &nextDoorData.initialTransitToSampleValues[0], 
+                    sizeof(VertexID_t)*nextDoorData.initialTransitToSampleValues.size(), 
+                    cudaMemcpyHostToDevice));
   VertexID_t* d_temp_storage = nullptr;
   size_t temp_storage_bytes = 0;
 
@@ -1926,15 +1925,19 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   double subWarpKernelTime = 0;
   double identityKernelTime = 0;
   double threadBlockKernelTime = 0;
+  size_t neighborsToSampleAtStep = (samplingType() == CollectiveNeighborhood) ? 1 : initialSampleSize(csr);
 
   double end_to_end_t1 = convertTimeValToDouble(getTimeOfDay ());
   for (int step = 0; step < steps(); step++) {
-    neighborsToSampleAtStep *= stepSize(step);
-    const EdgePos_t totalThreads = nextDoorData.samples.size()*neighborsToSampleAtStep;
+    const size_t numTransits = (samplingType() == CollectiveNeighborhood) ? 1 : neighborsToSampleAtStep;
+    neighborsToSampleAtStep = (samplingType() == CollectiveNeighborhood) ? stepSize(step) : neighborsToSampleAtStep * stepSize(step);    
+    const size_t totalThreads = numSamples(csr)*neighborsToSampleAtStep;
+    std::cout << "totalThreads " << totalThreads << std::endl;
+
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
       for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
-        size_t currExecutionThreads = min((EdgePos_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
+        size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
         samplingKernel<<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
                         threadsExecuted, currExecutionThreads, nextDoorData.INVALID_VERTEX,
                         (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
