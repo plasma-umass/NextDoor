@@ -74,7 +74,19 @@ __host__ EdgePos_t numSamples(CSR* graph)
   return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
 }
 
-__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
+__host__ __device__ bool hasExplicitTransits()
+{
+  return false;
+}
+
+template<class SampleType>
+__device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
+{
+  return -1;
+}
+
+template<class SampleType>
+__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
 {
   std::vector<VertexID_t> initialValue;
 
@@ -83,6 +95,16 @@ __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph)
   }
 
   return initialValue;
+}
+
+template<class SampleType>
+__host__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID)
+{
+  SampleType sample;
+  for (int i = 0; i < NUM_LAYERS; i++) {
+    sample.adjacencyMatrixLen[i] = 0;
+  }
+  return sample;
 }
 
 __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)

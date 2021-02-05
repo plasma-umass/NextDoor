@@ -165,7 +165,7 @@ EdgePos_t stepSizeAtStep(int step)
     return 0;
 
   if (samplingType() == IndividualNeighborhood) {
-    EdgePos_t n = 1;
+    EdgePos_t n = initialSampleSize(nullptr);
     for (int i = 0; i <= step; i++) {
       n = n * stepSize(i);
     }
@@ -1206,7 +1206,8 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
     }
   } else {
     if (step == 0) {
-        transits = &initialSamples[sampleIdx];
+      EdgePos_t transitIdx = threadId % numTransits;
+      transits = &initialSamples[sampleIdx*initialSampleSize(nullptr) + transitIdx];
     } else if (hasExplicitTransits()) {
       transits = &explicitTransits[sampleIdx*numTransitsInPrevStep + (threadId % numTransits) % numTransitsInPrevStep];
     } else {
@@ -1635,7 +1636,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
   for (int sampleIdx = 0; sampleIdx < numSamples(csr); sampleIdx++) {
     SampleType sample = initializeSample<SampleType>(csr, sampleIdx);
     data.samples.push_back(sample);
-    auto initialVertices = initialSample(sampleIdx, csr, sample);
+    auto initialVertices = initialSample(sampleIdx, csr, data.samples[data.samples.size() - 1]);
     if ((EdgePos_t)initialVertices.size() != initialSampleSize(csr)) {
       //We require that number of vertices in sample initially are equal to the initialSampleSize
       printf ("initialSampleSize '%d' != initialSample(%d).size() '%ld'\n", 
@@ -2125,7 +2126,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
 {
   //Size of each sample output
   int finalSampleSize = getFinalSampleSize();
-  int neighborsToSampleAtStep = 1;
+  int neighborsToSampleAtStep = initialSampleSize(csr);
 
   EdgePos_t* hSumNeighborhoodSizes;
   EdgePos_t* dSumNeighborhoodSizes;
@@ -2147,7 +2148,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
     const size_t numTransits = (samplingType() == CollectiveNeighborhood) ? 1 : neighborsToSampleAtStep;
     neighborsToSampleAtStep = (samplingType() == CollectiveNeighborhood) ? stepSize(step) : neighborsToSampleAtStep * stepSize(step);
     const size_t totalThreads = numSamples(csr)*neighborsToSampleAtStep;
-    //std::cout << "totalThreads " << totalThreads << std::endl;
+    std::cout << "totalThreads " << totalThreads << std::endl;
     for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
       size_t currExecutionThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
       if (samplingType() == SamplingType::CollectiveNeighborhood) {
