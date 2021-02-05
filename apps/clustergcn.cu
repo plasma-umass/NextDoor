@@ -1,6 +1,8 @@
-#include "testBase.h"
-
 #include <stdlib.h>
+
+#include "libNextDoor.hpp"
+#include "main.cu"
+#include "check_results.cu"
 
 #define VERTICES_PER_SAMPLE 64
 
@@ -186,19 +188,10 @@ bool checkSubGraphResult(NextDoorData<SampleType>& nextDoorData)
   return true;
 }
 
-// APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
-// APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-APP_TEST(SubGraphSample, SubGraph, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-//APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-//APP_TEST(SubGraph, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-//APP_TEST(SubGraphSample, SubGraph, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-APP_TEST(SubGraphSample, SubGraph, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-//APP_TEST(SubGraphSample, SubGraph, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+static NextDoorData<SubGraphSample> nextDoorData;
+
+int main(int argc, char* argv[]) {
+  return appMain<SubGraphSample>(argc, argv, checkSubGraphResult<SubGraphSample>);
+}
+
+//#include "nextDoorModule.cu"

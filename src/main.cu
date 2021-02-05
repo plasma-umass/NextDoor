@@ -3,7 +3,7 @@
 #include <anyoption.h>
 
 template<class SampleType>
-int appMain(int argc, char* argv[])
+int appMain(int argc, char* argv[], bool (*checkResults) (NextDoorData<SampleType>& nextDoorData))
 { 
   AnyOption *opt = new AnyOption();
   opt->addUsage("usage: ");
@@ -49,5 +49,5 @@ int appMain(int argc, char* argv[])
 
   return nextdoor<SampleType>(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
                   atoi(opt->getValue('n')), opt->getFlag("check-results"), opt->getFlag("print-samples"),
-                  opt->getValue('k'), opt->getFlag('l'));
+                  opt->getValue('k'), opt->getFlag('l'), checkResults);
 }

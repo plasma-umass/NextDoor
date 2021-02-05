@@ -20,6 +20,7 @@ gpuRelease: src/nextdoor.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_m
 graphSageIntegration: src/nextDoorModule.cu src/csr.hpp src/utils.hpp src/graph.hpp src/pinned_memory_alloc.hpp src/sampler.cuh src/check_results.cu src/nextdoor.cu
 	nvcc --default-stream per-thread $< -I/usr/include/python2.7/ -std=c++11 -arch=compute_61  -IAnyOption/ AnyOption/anyoption.cpp -I./Heap-Layers -O3 -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
 
+#**************TESTS********************#
 test: khopTest uniformRandWalkTest deepWalkTest
 	
 khopTest: src/tests/khopTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
@@ -39,15 +40,23 @@ multiRWTest: src/tests/multiRW.cu src/nextdoor.cu src/tests/testBase.h src/check
 
 subGraphSamplingTests: src/tests/subGraphSamplingTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
 	nvcc $< -Igoogletest/googletest/include/ -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+########################################
+
+#*************APPS*********************#
+clusterGCNSampling: apps/clustergcn.cu src/nextdoor.cu src/nextDoorModule.cu src/main.cu src/check_results.cu
+	nvcc $< -IAnyOption/ AnyOption/anyoption.cpp -DPYTHON_3 -I/usr/include/python3.7m/ -Isrc -lcurand -lpthread -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
 
 fastgcn_sampling: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu 
-	nvcc $< -IAnyOption/ AnyOption/anyoption.cpp -Isrc  -Lgoogletest/build/lib/ -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+	nvcc $< -IAnyOption/ AnyOption/anyoption.cpp -Isrc  -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+#**************************************#
 
+#*************Python Modules*******#
 fastgcn_samplingIntegrationPython2: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu src/libNextDoor.hpp src/nextDoorModule.cu
-	nvcc $< -DPYTHON_2 -IAnyOption/ AnyOption/anyoption.cpp -I/usr/include/python2.7/ -Isrc  -Lgoogletest/build/lib/ -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
+	nvcc $< -DPYTHON_2 -IAnyOption/ AnyOption/anyoption.cpp -I/usr/include/python2.7/ -Isrc  -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
 
 fastgcn_samplingIntegrationPython3: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu src/libNextDoor.hpp src/nextDoorModule.cu
-	nvcc $< -DPYTHON_3 -IAnyOption/ AnyOption/anyoption.cpp -I/usr/include/python3.7m/ -Isrc  -Lgoogletest/build/lib/ -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
+	nvcc $< -DPYTHON_3 -IAnyOption/ AnyOption/anyoption.cpp -I/usr/include/python3.7m/ -Isrc -lcurand -lpthread  -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
+####################################
 
 clean:
 	rm -rf cpu gpu *.h.gch *.o src/*.h.gch src/*.o src/*.o
