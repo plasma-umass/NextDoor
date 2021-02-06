@@ -1,6 +1,7 @@
 #include <omp.h>
 #include "libNextDoor.hpp"
 
+template<typename App>
 int numNeighborsSampledAtStep(int step)
 {
   int n = 1;
@@ -9,17 +10,17 @@ int numNeighborsSampledAtStep(int step)
     return 0;
   }
 
-  if (stepSize(0) == 1) {
+  if (App().stepSize(0) == 1) {
     n = 1;
   } else {
-    n = stepSize(0);
+    n = App().stepSize(0);
   }
 
   for(int i = 1; i <= step; i++) {
-    if (stepSize(i) == 1) {
-      n += stepSize(i);
+    if (App().stepSize(i) == 1) {
+      n += App().stepSize(i);
     } else {
-      n += n * stepSize(i);
+      n += n * App().stepSize(i);
     }
   }
 
@@ -40,14 +41,14 @@ void csrToAdjMatrix(CSR* csr, AdjMatrix& adjMatrix)
   }
 }
 
-template<class SampleType>
+template<class SampleType, typename App>
 bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
 {
   std::cout << "checking results" << std::endl;
   AdjMatrix adjMatrix;
   CSR* csr = nextDoorData.csr;
   auto& initialSamples = nextDoorData.initialContents;
-  auto finalSampleSize = getFinalSampleSize();
+  auto finalSampleSize = getFinalSampleSize<App>();
   auto& hFinalSamples = nextDoorData.hFinalSamples;
   auto samples = nextDoorData.samples;
   auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
@@ -56,10 +57,10 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
   csrToAdjMatrix(csr, adjMatrix);
   size_t numNeighborsToSampleAtStep = 0;
 
-  for (int step = 0; step < min(maxSteps, steps()); step++) {
+  for (int step = 0; step < min(maxSteps, App().steps()); step++) {
     bool foundError = false;
     std::cout << "Step: "<< step << " finalSampleSize " << finalSampleSize << " numNeighborsToSampleAtStep " << numNeighborsToSampleAtStep << std::endl;
-    const size_t startIdxForCurrStep = (step == 0) ? 0 : (numNeighborsToSampleAtStep + stepSize(step));
+    const size_t startIdxForCurrStep = (step == 0) ? 0 : (numNeighborsToSampleAtStep + App().stepSize(step));
     for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
       const size_t sampleId = s/finalSampleSize;
       size_t contentsLength = 0;
@@ -77,7 +78,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
         VertexID_t prevVertex = -1;
         
         if (step == 0) {
-          prevVertex = initialSamples[sampleId * initialSampleSize(nullptr) + row];
+          prevVertex = initialSamples[sampleId * App().initialSampleSize(nullptr) + row];
         } else {
           prevVertex = hFinalSamples[s + numNeighborsToSampleAtStep + row];
         }
@@ -92,13 +93,13 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
       }
 
       //Check second condition
-      for (EdgePos_t v = 0; v < (EdgePos_t)stepSize(step); v++) {
+      for (EdgePos_t v = 0; v < (EdgePos_t)App().stepSize(step); v++) {
         VertexID_t transit = hFinalSamples[s + startIdxForCurrStep + v];
-        EdgePos_t prevSZ = (step == 0) ? initialSampleSize(nullptr) : stepSize(step - 1);
+        EdgePos_t prevSZ = (step == 0) ? App().initialSampleSize(nullptr) : App().stepSize(step - 1);
         for (EdgePos_t prevVertexIdx = 0; prevVertexIdx < prevSZ; prevVertexIdx++) {
           VertexID_t prevVertex = -1;
           if (step == 0) {
-            prevVertex = initialSamples[sampleId * initialSampleSize(nullptr) + prevVertexIdx];
+            prevVertex = initialSamples[sampleId * App().initialSampleSize(nullptr) + prevVertexIdx];
           } else {
             prevVertex = hFinalSamples[s + numNeighborsToSampleAtStep + prevVertexIdx];
           }
@@ -110,7 +111,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
               VertexID_t row = samples[sampleId].adjacencyMatrixRow[step][e];
               VertexID_t v1 = -1;
               if (step == 0) {
-                v1 = initialSamples[sampleId * initialSampleSize(nullptr) + row];
+                v1 = initialSamples[sampleId * App().initialSampleSize(nullptr) + row];
               } else {
                 v1 = hFinalSamples[s + numNeighborsToSampleAtStep + row];
               }
@@ -142,13 +143,13 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
       return false;
     
     if (step >= 1)
-      numNeighborsToSampleAtStep += stepSize(step);
+      numNeighborsToSampleAtStep += App().stepSize(step);
   }
 
   return true;
 }
 
-template<class SampleType>
+template<class SampleType, typename App>
 bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
 {
   //Check result by traversing all sampled neighbors and making
@@ -156,7 +157,7 @@ bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
   //of the k-1th hop neighbors.
   CSR* csr = nextDoorData.csr;
   auto& initialSamples = nextDoorData.initialContents;
-  auto finalSampleSize = getFinalSampleSize();
+  auto finalSampleSize = getFinalSampleSize<App>();
   auto& finalSamples = nextDoorData.hFinalSamples;
   auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
   int maxSteps = 4;
@@ -170,7 +171,7 @@ bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
   
-  for (int step = 0; step < min(maxSteps, steps()); step++) {
+  for (int step = 0; step < min(maxSteps, App().steps()); step++) {
     if (step == 0) { 
       bool foundError = false;
       #pragma omp parallel for shared(foundError)
@@ -180,8 +181,8 @@ bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
         const size_t sampleId = s/finalSampleSize;
         const VertexID_t initialVal = initialSamples[sampleId];
         size_t contentsLength = 0;
-        if (stepSize(step) != ALL_NEIGHBORS) {
-          for (size_t v = s + numNeighborsToSampleAtStep; v < s + stepSize(step); v++) {
+        if (App().stepSize(step) != ALL_NEIGHBORS) {
+          for (size_t v = s + numNeighborsToSampleAtStep; v < s + App().stepSize(step); v++) {
             VertexID_t transit = finalSamples[v];
             uniqueNeighbors.insert(transit);
             contentsLength += (int)(transit != INVALID_VERTEX);
@@ -228,7 +229,7 @@ bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
         size_t contentsLength = 0;
         size_t sumEdgesOfNeighborsAtPrevStep = 0;
         
-        for (size_t v = s + numNeighborsSampledAtStep(step-2); v < s + numNeighborsSampledAtStep(step-1); v++) {
+        for (size_t v = s + numNeighborsSampledAtStep<App>(step-2); v < s + numNeighborsSampledAtStep<App>(step-1); v++) {
           sumEdgesOfNeighborsAtPrevStep +=  adj_matrix[finalSamples[v]].size();
         }
         
@@ -236,15 +237,15 @@ bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
         //   printf("step %d start %d end %d\n", step, numNeighborsSampledAtStep(step-1),
         //          ((step == steps() - 1) ? finalSampleSize : numNeighborsSampledAtStep(step)));
         // }
-        for (size_t v = s + numNeighborsSampledAtStep(step-1); 
-             v < s + ((step == steps() - 1) ? finalSampleSize : numNeighborsSampledAtStep(step)); v++) {
+        for (size_t v = s + numNeighborsSampledAtStep<App>(step-1); 
+             v < s + ((step == App().steps() - 1) ? finalSampleSize : numNeighborsSampledAtStep<App>(step)); v++) {
           VertexID_t transit = finalSamples[v];
           contentsLength += (int)(transit != INVALID_VERTEX);
           
           bool found = false;
           if (transit != INVALID_VERTEX) {
 
-            for (size_t v1 = s + numNeighborsSampledAtStep(step-2); v1 < s + numNeighborsSampledAtStep(step-1); v1++) {
+            for (size_t v1 = s + numNeighborsSampledAtStep<App>(step-2); v1 < s + numNeighborsSampledAtStep<App>(step-1); v1++) {
               if (adj_matrix[finalSamples[v1]].count(transit) > 0) {
                 found = true;
                 break;
@@ -278,7 +279,7 @@ bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
       if (foundError) return false;
     }
 
-    numNeighborsToSampleAtStep = stepSizeAtStep(step);
+    numNeighborsToSampleAtStep = stepSizeAtStep<App>(step);
   }
 
   return true;

@@ -1,127 +1,129 @@
 #include "testBase.h"
 
-__host__ __device__ int steps() {return 10;}
+struct DeepWalkApp {
+  __host__ __device__ int steps() {return 10;}
 
-__host__ __device__ 
-int stepSize(int k) {
-  return 1;
-}
-
-template<class SampleType>
-__device__ inline
-VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
-              SampleType* sample, 
-              const float max_weight,
-              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-              const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
-{
-  if (numEdges == 1) {
-    return transitEdges[0];
-  }
-  
-  EdgePos_t x = RandNumGen::rand_int(state, numEdges);
-  float y = curand_uniform(state)*max_weight;
-
-  while (y > transitEdgeWeights[x]) {
-    x = RandNumGen::rand_int(state, numEdges);
-    y = curand_uniform(state)*max_weight;
+  __host__ __device__ 
+  int stepSize(int k) {
+    return 1;
   }
 
-  return transitEdges[x];
-}
+  template<class SampleType>
+  __device__ inline
+  VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+  {
+    if (numEdges == 1) {
+      return transitEdges[0];
+    }
+    
+    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
+    float y = curand_uniform(state)*max_weight;
 
-template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
-__device__ inline
-VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
-  SampleType* sample,
-              const float max_weight,
-              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-              curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
-              bool* globalLoadBV)
-{
-  if (numEdges == 1) {
-    if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(0, transitEdges, cachedEdges, globalLoadBV);
-    return transitEdges[0];
-  }
-  
-  EdgePos_t x = RandNumGen::rand_int(state, numEdges);
-  float y = curand_uniform(state)*max_weight;
-  float weight;
-  if (CACHE_WEIGHTS) {
-    weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
-  } else {
-    weight = transitEdgeWeights[x];
+    while (y > transitEdgeWeights[x]) {
+      x = RandNumGen::rand_int(state, numEdges);
+      y = curand_uniform(state)*max_weight;
+    }
+
+    return transitEdges[x];
   }
 
-  while (y > weight) {
-    x = RandNumGen::rand_int(state, numEdges);
-    y = curand_uniform(state)*max_weight;
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+  __device__ inline
+  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
+    SampleType* sample,
+                const float max_weight,
+                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
+                curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
+                bool* globalLoadBV)
+  {
+    if (numEdges == 1) {
+      if (CACHE_EDGES)
+        return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(0, transitEdges, cachedEdges, globalLoadBV);
+      return transitEdges[0];
+    }
+    
+    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
+    float y = curand_uniform(state)*max_weight;
+    float weight;
     if (CACHE_WEIGHTS) {
       weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
     } else {
       weight = transitEdgeWeights[x];
     }
+
+    while (y > weight) {
+      x = RandNumGen::rand_int(state, numEdges);
+      y = curand_uniform(state)*max_weight;
+      if (CACHE_WEIGHTS) {
+        weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
+      } else {
+        weight = transitEdgeWeights[x];
+      }
+    }
+
+    if (CACHE_EDGES)
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdges, cachedEdges, globalLoadBV);
+    else
+      return transitEdges[x];
   }
 
-  if (CACHE_EDGES)
-    return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdges, cachedEdges, globalLoadBV);
-  else
-    return transitEdges[x];
-}
-
-__host__ int samplingType()
-{
-  return SamplingType::IndividualNeighborhood;
-}
-
-__host__ __device__ OutputFormat outputFormat()
-{
-  return SampledVertices;
-}
-
-#define VERTICES_PER_SAMPLE 1
-
-__host__ __device__ EdgePos_t numSamples(CSR* graph)
-{
-  return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
-}
-
-template<class SampleType>
-__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
-{
-  std::vector<VertexID_t> initialValue;
-
-  for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-    initialValue.push_back(sampleIdx * VERTICES_PER_SAMPLE + i);
+  __host__ __device__ int samplingType()
+  {
+    return SamplingType::IndividualNeighborhood;
   }
 
-  return initialValue;
-}
+  __host__ __device__ OutputFormat outputFormat()
+  {
+    return SampledVertices;
+  }
 
-__host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
-{
-  return VERTICES_PER_SAMPLE;
-}
+  #define VERTICES_PER_SAMPLE 1
 
-__host__ __device__ bool hasExplicitTransits()
-{
-  return false;
-}
+  __host__ __device__ EdgePos_t numSamples(CSR* graph)
+  {
+    return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
+  }
 
-template<class SampleType>
-__host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
-{
-}
+  template<class SampleType>
+  __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
+  {
+    std::vector<VertexID_t> initialValue;
 
-template<class SampleType>
-__host__ __device__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID)
-{
-  SampleType sample;
+    for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
+      initialValue.push_back(sampleIdx * VERTICES_PER_SAMPLE + i);
+    }
 
-  return sample;
-}
+    return initialValue;
+  }
+
+  __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
+  {
+    return VERTICES_PER_SAMPLE;
+  }
+
+  __host__ __device__ bool hasExplicitTransits()
+  {
+    return false;
+  }
+
+  template<class SampleType>
+  __host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
+  {
+  }
+
+  template<class SampleType>
+  __host__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID)
+  {
+    SampleType sample;
+
+    return sample;
+  }
+};
 
 /*
   float2 randNums = curand_normal2(state);
@@ -147,124 +149,20 @@ class DummySample
 #define RUNS 1
 #define CHECK_RESULTS true
 
-// APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
-// APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-APP_TEST(DummySample, DeepWalk, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", false)
-APP_TEST(DummySample, DeepWalk, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "SampleParallel", false)
-APP_TEST(DummySample, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST(DummySample, DeepWalk, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", false)
-APP_TEST(DummySample, DeepWalk, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST(DummySample, DeepWalk, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "SampleParallel", false)
-APP_TEST(DummySample, DeepWalk, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", false)
-APP_TEST(DummySample, DeepWalk, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST(DummySample, DeepWalk, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "SampleParallel", false)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// APP_TEST(DeepWalk, DeepWalkApp, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
+// APP_TEST(DeepWalk, DeepWalkApp, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
+// APP_TEST(DeepWalk, DeepWalkApp, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
+// APP_TEST(DeepWalk, DeepWalkApp, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
+// APP_TEST(DeepWalk, DeepWalkApp, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
+// APP_TEST(DeepWalk, DeepWalkApp, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
+#define COMMA ,
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS,  checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)

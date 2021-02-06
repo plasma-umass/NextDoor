@@ -45,11 +45,11 @@ struct NextDoorData {
 
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format);
 GPUCSRPartition transferCSRToGPU(CSR* csr);
-template<class SampleType>
+template<class SampleType, typename App>
 bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data);
-template<class SampleType>
+template<class SampleType, typename App>
 bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData);
-template<class SampleType>
+template<class SampleType, typename App>
 std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& data);
 int getFinalSampleSize();
 

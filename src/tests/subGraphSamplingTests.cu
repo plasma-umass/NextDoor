@@ -4,13 +4,6 @@
 
 #define VERTICES_PER_SAMPLE 64
 
-__host__ __device__ int steps() {return 1;}
-
-__host__ __device__ 
-int stepSize(int k) {
-  return 1;
-}
-
 class SubGraphSample 
 {
 public:
@@ -21,98 +14,107 @@ public:
   int adjacencyMatrixVal[VERTICES_PER_SAMPLE*VERTICES_PER_SAMPLE];
 };
 
-template<class SampleType>
-__device__ inline
-VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx, 
-              SampleType* sample, const float max_weight,
-              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-              const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
-{
-  VertexID_t v1 = transits[0];
-  for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) {
-    VertexID_t v2 = sample->vertices[v2Idx];
-    bool hasEdge = csr->has_edge_logn(v1, v2);
-    if (hasEdge) {
-      int len = ::atomicAdd(&sample->adjacencyMatrixLen, 1);
-      //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
-      sample->adjacencyMatrixRow[len] = v1;
-      sample->adjacencyMatrixCol[len] = v2;
-      sample->adjacencyMatrixVal[len] = 1.0f;
+struct SubGraphSamplingApp {
+  __host__ __device__ int steps() {return 1;}
+
+  __host__ __device__ 
+  int stepSize(int k) {
+    return 1;
+  }
+
+  template<class SampleType>
+  __device__ inline
+  VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx, 
+                SampleType* sample, const float max_weight,
+                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+  {
+    VertexID_t v1 = transits[0];
+    for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) {
+      VertexID_t v2 = sample->vertices[v2Idx];
+      bool hasEdge = csr->has_edge_logn(v1, v2);
+      if (hasEdge) {
+        int len = ::atomicAdd(&sample->adjacencyMatrixLen, 1);
+        //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
+        sample->adjacencyMatrixRow[len] = v1;
+        sample->adjacencyMatrixCol[len] = v2;
+        sample->adjacencyMatrixVal[len] = 1.0f;
+      }
     }
+
+    return -1;
   }
 
-  return -1;
-}
-
-template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
-__device__ inline
-VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx,
-              SampleType* sample, 
-              const float max_weight,
-              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-              curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
-              bool* globalLoadBV)
-{
-  EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-  if (CACHE_EDGES)
-    return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(id, transitEdges, cachedEdges, globalLoadBV);
-  return transitEdges[id];
-}
-
-__host__ __device__ int samplingType()
-{
-  return SamplingType::IndividualNeighborhood;
-}
-
-__host__ __device__ OutputFormat outputFormat()
-{
-  return AdjacencyMatrix;
-}
-
-__host__ EdgePos_t numSamples(CSR* graph)
-{
-  return graph->get_n_vertices() / VERTICES_PER_SAMPLE / 10;
-}
-
-__host__ __device__ bool hasExplicitTransits()
-{
-  return false;
-}
-
-template<class SampleType>
-__device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
-{
-  return -1;
-}
-
-template<class SampleType>
-__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
-{
-  std::vector<VertexID_t> initialValue;
-
-  for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-    VertexID_t v = sampleIdx * VERTICES_PER_SAMPLE + i;
-    initialValue.push_back(v);
-    sample.vertices[i] = v;
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+  __device__ inline
+  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
+                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
+                curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
+                bool* globalLoadBV)
+  {
+    EdgePos_t id = RandNumGen::rand_int(state, numEdges);
+    if (CACHE_EDGES)
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(id, transitEdges, cachedEdges, globalLoadBV);
+    return transitEdges[id];
   }
 
-  return initialValue;
-}
+  __host__ __device__ int samplingType()
+  {
+    return SamplingType::IndividualNeighborhood;
+  }
 
-template<class SampleType>
-__host__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID)
-{
-  SampleType sample;
-  sample.adjacencyMatrixLen = 0;
+  __host__ __device__ OutputFormat outputFormat()
+  {
+    return AdjacencyMatrix;
+  }
 
-  return sample;
-}
+  __host__ EdgePos_t numSamples(CSR* graph)
+  {
+    return graph->get_n_vertices() / VERTICES_PER_SAMPLE / 10;
+  }
 
-__host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
-{
-  return VERTICES_PER_SAMPLE;
-}
+  __host__ __device__ bool hasExplicitTransits()
+  {
+    return false;
+  }
+
+  template<class SampleType>
+  __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
+  {
+    return -1;
+  }
+
+  template<class SampleType>
+  __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
+  {
+    std::vector<VertexID_t> initialValue;
+
+    for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
+      VertexID_t v = sampleIdx * VERTICES_PER_SAMPLE + i;
+      initialValue.push_back(v);
+      sample.vertices[i] = v;
+    }
+
+    return initialValue;
+  }
+
+  template<class SampleType>
+  __host__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID)
+  {
+    SampleType sample;
+    sample.adjacencyMatrixLen = 0;
+
+    return sample;
+  }
+
+  __host__ __device__ EdgePos_t initialSampleSize(CSR* graph)
+  {
+    return VERTICES_PER_SAMPLE;
+  }
+};
 
 #define RUNS 1
 #define CHECK_RESULTS true
@@ -125,7 +127,7 @@ bool checkSubGraphResult(NextDoorData<SampleType>& nextDoorData)
   //of the k-1th hop neighbors.
   CSR* csr = nextDoorData.csr;
   auto& initialSamples = nextDoorData.initialContents;
-  auto finalSampleSize = getFinalSampleSize();
+  auto finalSampleSize = getFinalSampleSize<SubGraphSamplingApp>();
   auto& finalSamples = nextDoorData.hFinalSamples;
   auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
   auto& samples = nextDoorData.samples;
@@ -192,13 +194,13 @@ bool checkSubGraphResult(NextDoorData<SampleType>& nextDoorData)
 // APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-APP_TEST(SubGraphSample, SubGraph, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+APP_TEST(SubGraphSample, SubGraph, SubGraphSamplingApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 //APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+APP_TEST(SubGraphSample, SubGraph, SubGraphSamplingApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
 //APP_TEST(SubGraph, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+APP_TEST(SubGraphSample, SubGraph, SubGraphSamplingApp, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 //APP_TEST(SubGraphSample, SubGraph, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-APP_TEST(SubGraphSample, SubGraph, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+APP_TEST(SubGraphSample, SubGraph, SubGraphSamplingApp, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+APP_TEST(SubGraphSample, SubGraph, SubGraphSamplingApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 //APP_TEST(SubGraphSample, SubGraph, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-APP_TEST(SubGraphSample, SubGraph, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+APP_TEST(SubGraphSample, SubGraph, SubGraphSamplingApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)

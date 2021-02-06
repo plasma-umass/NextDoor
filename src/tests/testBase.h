@@ -6,9 +6,10 @@
 
 #define GRAPH_PATH "../GPUesque-for-eval/input/"
 
-#define APP_TEST(SampleClass,App,Graph,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
-  TEST(App, Graph) { \
-  EXPECT_TRUE(nextdoor<SampleClass>(Path, "adj-list", "text", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc));\
+#define APP_TEST(SampleClass,AppName,App,Graph,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
+  TEST(AppName, Graph) { \
+  bool b = nextdoor<SampleClass, App>(Path, "adj-list", "text", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc);\
+  EXPECT_TRUE(b);\
 }
 
 // TEST(KHop, Mico) {
