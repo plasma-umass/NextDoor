@@ -1939,7 +1939,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
     const size_t numTransits = (App().samplingType() == CollectiveNeighborhood) ? 1 : neighborsToSampleAtStep;
     neighborsToSampleAtStep = (App().samplingType() == CollectiveNeighborhood) ? App().stepSize(step) : neighborsToSampleAtStep * App().stepSize(step);    
     const size_t totalThreads = App().numSamples(csr)*neighborsToSampleAtStep;
-    std::cout << "totalThreads " << totalThreads << std::endl;
 
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
@@ -2158,7 +2157,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
     const size_t numTransits = (App().samplingType() == CollectiveNeighborhood) ? 1 : neighborsToSampleAtStep;
     neighborsToSampleAtStep = (App().samplingType() == CollectiveNeighborhood) ? App().stepSize(step) : neighborsToSampleAtStep * App().stepSize(step);
     const size_t totalThreads = App().numSamples(csr)*neighborsToSampleAtStep;
-    std::cout << "totalThreads " << totalThreads << std::endl;
+    // std::cout << "totalThreads " << totalThreads << std::endl;
     for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
       size_t currExecutionThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
       if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
