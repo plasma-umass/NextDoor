@@ -2,8 +2,8 @@
 
 #include <anyoption.h>
 
-template<class SampleType>
-int appMain(int argc, char* argv[], bool (*checkResults) (NextDoorData<SampleType>& nextDoorData))
+template<class SampleType, typename App>
+int appMain(int argc, char* argv[], bool (*checkResults) (NextDoorData<SampleType, App>& nextDoorData))
 { 
   AnyOption *opt = new AnyOption();
   opt->addUsage("usage: ");
@@ -47,7 +47,7 @@ int appMain(int argc, char* argv[], bool (*checkResults) (NextDoorData<SampleTyp
     return 0;
   }
 
-  return nextdoor<SampleType>(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
+  return nextdoor<SampleType, App>(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
                   atoi(opt->getValue('n')), opt->getFlag("check-results"), opt->getFlag("print-samples"),
                   opt->getValue('k'), opt->getFlag('l'), checkResults);
 }

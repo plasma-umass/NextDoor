@@ -1635,7 +1635,7 @@ int getFinalSampleSize()
 }
 
 template<typename SampleType, typename App>
-bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
+bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
 {
   //Initially each sample contains only one vertex
   //Allocate one sample for each vertex
@@ -1741,8 +1741,8 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data)
   return true;
 }
 
-template<class SampleType>
-void freeDeviceData(NextDoorData<SampleType>& data) 
+template<class SampleType, typename App>
+void freeDeviceData(NextDoorData<SampleType, App>& data) 
 {
   CHK_CU(cudaFree(data.dSamplesToTransitMapKeys));
   CHK_CU(cudaFree(data.dSamplesToTransitMapValues));
@@ -1822,7 +1822,7 @@ void printKernelTypes(CSR* csr, VertexID_t* dUniqueTransits, VertexID_t* dUnique
 }
 
 template<class SampleType, typename App>
-bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData, bool enableLoadBalancing)
+bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType, App>& nextDoorData, bool enableLoadBalancing)
 {
   //Size of each sample output
   size_t maxNeighborsToSample = (App().samplingType() == CollectiveNeighborhood) ? 1 : App().initialSampleSize(csr);
@@ -2131,7 +2131,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 }
 
 template<class SampleType, typename App>
-bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData)
+bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType, App>& nextDoorData)
 {
   //Size of each sample output
   int finalSampleSize = getFinalSampleSize<App>();
@@ -2306,8 +2306,8 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
   return true;
 }
 
-template<class SampleType>
-std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& nextDoorData)
+template<class SampleType, typename App>
+std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType, App>& nextDoorData)
 {
   CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamples[0], nextDoorData.dFinalSamples, 
                     nextDoorData.hFinalSamples.size()*sizeof(nextDoorData.hFinalSamples[0]), cudaMemcpyDeviceToHost));
@@ -2320,7 +2320,7 @@ template<class SampleType, typename App>
 bool nextdoor(const char* graph_file, const char* graph_type, const char* graph_format, 
              const int nruns, const bool chk_results, const bool print_samples,
              const char* kernelType, const bool enableLoadBalancing,
-             bool (*checkResultsFunc)(NextDoorData<SampleType>&))
+             bool (*checkResultsFunc)(NextDoorData<SampleType, App>&))
 {
   std::vector<Vertex> vertices;
 
@@ -2337,7 +2337,7 @@ bool nextdoor(const char* graph_file, const char* graph_type, const char* graph_
   //graph.print(std::cout);
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   
-  NextDoorData<SampleType> nextDoorData;
+  NextDoorData<SampleType, App> nextDoorData;
   nextDoorData.csr = csr;
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   allocNextDoorDataOnGPU<SampleType, App>(csr, nextDoorData);

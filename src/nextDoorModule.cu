@@ -1,4 +1,10 @@
+#ifdef PYTHON_2 
 #include <Python.h>
+#endif
+
+#ifdef PYTHON_3 
+#include <Python.h>
+#endif
 
 #include "nextdoor.cu"
 

@@ -10,7 +10,7 @@
 #ifndef __NEXTDOOR_HPP__
 #define __NEXTDOOR_HPP__
 
-template<class SampleType>
+template<class SampleType, typename App>
 struct NextDoorData {
   CSR* csr;
   std::vector<SampleType> samples;
@@ -46,11 +46,11 @@ struct NextDoorData {
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format);
 GPUCSRPartition transferCSRToGPU(CSR* csr);
 template<class SampleType, typename App>
-bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType>& data);
+bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data);
 template<class SampleType, typename App>
-bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType>& nextDoorData);
+bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoorData<SampleType, App>& nextDoorData);
 template<class SampleType, typename App>
-std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType>& data);
+std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType, App>& data);
 int getFinalSampleSize();
 
 #endif

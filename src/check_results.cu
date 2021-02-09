@@ -42,7 +42,7 @@ void csrToAdjMatrix(CSR* csr, AdjMatrix& adjMatrix)
 }
 
 template<class SampleType, typename App>
-bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
+bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
 {
   std::cout << "checking results" << std::endl;
   AdjMatrix adjMatrix;
@@ -150,7 +150,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType>& nextDoorData)
 }
 
 template<class SampleType, typename App>
-bool checkSampledVerticesResult(NextDoorData<SampleType>& nextDoorData)
+bool checkSampledVerticesResult(NextDoorData<SampleType, App>& nextDoorData)
 {
   //Check result by traversing all sampled neighbors and making
   //sure that if neighbors at kth-hop is an adjacent vertex of one
