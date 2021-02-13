@@ -826,7 +826,8 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       VertexID_t neighbor = invalidVertex;
       // if (graph.device_csr->has_vertex(transit) == false)
       //   printf("transit %d\n", transit);
-      neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+      if (numEdgesInShMem > 0)
+        neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
                                                               glTransitEdges, glTransitEdgeWeights, 
                                                               numEdgesInShMem, transitNeighborIdx, &localRandState,
                                                               edgesInShMem, edgeWeightsInShMem,
@@ -985,6 +986,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
 
     __syncthreads();
 
+
     if (transit == transitForTB) {
       // if (threadIdx.x == 0 && kernelTypeForTransit[transit] != TransitKernelTypes::GridKernel) {
       //   printf("transit %d transitIdx %d gridDim.x %d\n", transit, transitIdx, gridDim.x);
@@ -997,14 +999,17 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       VertexID_t neighbor = invalidVertex;
       // if (graph.device_csr->has_vertex(transit) == false)
       //   printf("transit %d\n", transit);
-      neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+      if (numEdgesInShMem > 0)
+        neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
                                                               glTransitEdges, glTransitEdgeWeights, 
                                                               numEdgesInShMem, transitNeighborIdx, &localRandState,
                                                               edgesInShMem, edgeWeightsInShMem,
                                                               &globalLoadBV[0]);
       __syncwarp();
-
-      //EdgePos_t totalSizeOfSample = stepSizeAtStep<App>(step - 1);
+      // if (transit == 1935 && sampleIdx == 96) {
+      //   printf("989 neighbor %d CACHE_WEIGHTS %d CACHE_EDGES %d numEdgesInShMem %d\n", neighbor, CACHE_WEIGHTS, CACHE_EDGES, numEdgesInShMem);
+      // }
+      // //EdgePos_t totalSizeOfSample = stepSizeAtStep<App>(step - 1);
 
       if (step != App().steps() - 1) {
         //No need to store at last step
@@ -2048,7 +2053,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       double threadBlockKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
       threadBlockKernelTime += (threadBlockKernelTimeT2 - threadBlockKernelTimeT1);
 
-      const int perThreadSamplesForGridKernel = 4;
+      const int perThreadSamplesForGridKernel = 1;
       double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
       threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
       if (useGridKernel) {
