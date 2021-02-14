@@ -3,7 +3,7 @@
 #include <stdlib.h>    
 
 struct DeepWalkApp {
-  __host__ __device__ int steps() {return 2;}
+  __host__ __device__ int steps() {return 100;}
 
   __host__ __device__ 
   int stepSize(int k) {
@@ -162,9 +162,9 @@ class DummySample
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS,  checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
 //APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-// APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
 APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-// APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+APP_TEST(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
