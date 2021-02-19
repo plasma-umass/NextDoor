@@ -161,6 +161,31 @@ EdgePos_t newNeighborsSize(int hop, EdgePos_t num_edges)
 
 template<typename App>
 __host__ __device__
+EdgePos_t subWarpSizeAtStep(int step)
+{
+  if (step == -1)
+    return 0;
+  
+  //SubWarpSize is set to next power of 2
+  
+  EdgePos_t x = App().stepSize(step);
+
+  x--;
+  x |= x >> 1;
+  x |= x >> 2;
+  x |= x >> 4;
+  x |= x >> 8;
+  x |= x >> 16;
+  if (sizeof(EdgePos_t) == sizeof(uint64_t)) {
+    x |= x >> 32;
+  }
+  x++;
+
+  return x;
+}
+
+template<typename App>
+__host__ __device__
 EdgePos_t stepSizeAtStep(int step)
 {
   if (step == -1)
@@ -1204,9 +1229,6 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
                                      VertexID_t* initialSamples,
                                      SampleType* samples,
                                      const size_t NumSamples,
-                                     VertexID_t* finalSamplesCSRCol, 
-                                     EdgePos_t* finalSamplesCSRRow,
-                                     float* finalSamplesCSRVal,
                                      VertexID_t* finalSamples,
                                      const size_t finalSampleSize, 
                                      VertexID_t* explicitTransits,
@@ -1263,7 +1285,7 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
     }
   } else {
     if (step == 0) {
-      EdgePos_t transitIdx = threadId % numTransits;
+      EdgePos_t transitIdx = threadId % App().initialSampleSize(nullptr);
       singleTransit = initialSamples[sampleIdx*App().initialSampleSize(nullptr) + transitIdx];
     } else if (App().hasExplicitTransits()) {
       singleTransit = explicitTransits[sampleIdx*numTransitsInPrevStep + (threadId % numTransits) % numTransitsInPrevStep];
@@ -1346,6 +1368,7 @@ __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph,
     } else {
       insertionPos = step;
     }
+
     finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
   }
   // if (sample == 100) {
@@ -1622,8 +1645,13 @@ __global__ void invalidVertexStartPos(int step, VertexID_t* transitToSamplesKeys
     return;
   }
 
+  if (threadId == 0) {
+    printf("threadId is 0 totalTransits %d\n", totalTransits);
+  }
+  //If first transit is invalid.
   if (threadId == 0 && transitToSamplesKeys[0] == invalidVertex) {
-    outputStartPos[0] = 0;
+    printf("1047: threadIdx.x %d v %d invalidVertex %d\n", threadId, transitToSamplesKeys[threadId], invalidVertex);
+    *outputStartPos = 0;
     // printf("outputStartPos %d\n", *outputStartPos);
     return;
   }
@@ -1632,8 +1660,16 @@ __global__ void invalidVertexStartPos(int step, VertexID_t* transitToSamplesKeys
   if (transitToSamplesKeys[threadId - 1] != invalidVertex && 
       transitToSamplesKeys[threadId] == invalidVertex)
   {
-      outputStartPos[0] = threadId;
+    printf("1657: threadIdx.x %d v %d invalidVertex %d\n", threadId, transitToSamplesKeys[threadId], invalidVertex);
+    *outputStartPos = threadId;
+    return;
       // printf("outputStartPos %d\n", *outputStartPos);
+  }
+
+  //If no transit is invalid 
+  if (threadId == totalTransits - 1) {
+    printf("1666: threadIdx.x %d v %d invalidVertex %d\n", threadId, transitToSamplesKeys[threadId], invalidVertex);
+    *outputStartPos = totalTransits;
   }
 }
 
@@ -2054,17 +2090,18 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       double loadBalancingT1 = convertTimeValToDouble(getTimeOfDay ());
       CHK_CU(cudaMemset(dKernelTransitNums, 0, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
 
-      const size_t totalTransits = App().numSamples(csr)*neighborsToSampleAtStep;
+      const size_t totalTransits = App().numSamples(csr)*numTransits;
+      std::cout << "totalTransits " << totalTransits << " numTransits " << numTransits << std::endl;
       //Find the index of first invalid transit vertex. 
       invalidVertexStartPos<<<DIVUP(totalTransits, 256), 256>>>(step, nextDoorData.dTransitToSampleMapKeys, 
-                                                                totalThreads, nextDoorData.INVALID_VERTEX, dInvalidVertexStartPosInMap);
+                                                                totalTransits, nextDoorData.INVALID_VERTEX, dInvalidVertexStartPosInMap);
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-
+      
       CHK_CU(cudaMemcpy(invalidVertexStartPosInMap, dInvalidVertexStartPosInMap, 1 * sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
       //Now the number of threads launched are equal to number of valid transit vertices
       totalThreads = *invalidVertexStartPosInMap;
-
+      std::cout << "invalidVertexStartPosInMap " << *invalidVertexStartPosInMap << std::endl;
       void* dRunLengthEncodeTmpStorage = nullptr;
       size_t dRunLengthEncodeTmpStorageSize = 0;
 
@@ -2096,8 +2133,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-      //printKernelTypes(csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
-      
+      printKernelTypes(csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
+      std::cout<<"uniqueTransitNumRuns " << *uniqueTransitNumRuns << std::endl; 
       if (*uniqueTransitNumRuns > 0) {
         partitionTransitsInKernels<1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
             dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, 
@@ -2113,7 +2150,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         // getchar();
         double loadBalancingT2 = convertTimeValToDouble(getTimeOfDay ());
         loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
-        
+        int subWarpSize = subWarpSizeAtStep<App>(step);
+        std::cout << "SubWarpSize at step " << step << " " << subWarpSize << std::endl;
         double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
         identityKernel<SampleType, App, N_THREADS, true><<<DIVUP(totalThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
           (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
@@ -2404,7 +2442,6 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
                     nextDoorData.INVALID_VERTEX,
                     threadsExecuted, currExecutionThreads, totalThreads, 
                     nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                    nextDoorData.dFinalSamplesCSRCol, nextDoorData.dFinalSamplesCSRRow, nextDoorData.dFinalSamplesCSRVal, 
                     nextDoorData.dFinalSamples, finalSampleSize, 
                     nextDoorData.dSamplesToTransitMapValues,
                     nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
