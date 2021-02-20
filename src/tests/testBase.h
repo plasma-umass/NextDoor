@@ -12,6 +12,12 @@
   EXPECT_TRUE(b);\
 }
 
+#define APP_TEST_BINARY(SampleClass,AppName,App,Graph,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
+  TEST(AppName, Graph) { \
+  bool b = nextdoor<SampleClass, App>(Path, "edge-list", "binary", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc);\
+  EXPECT_TRUE(b);\
+}
+
 // TEST(KHop, Mico) {
 //   EXPECT_TRUE(nextdoor(GRAPH_PATH"/micro.graph", "adj-list", "text", CHECK_RESULTS, false));
 // }

@@ -1869,9 +1869,10 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
   CHK_CU(cudaMalloc(&data.dTransitToSampleMapValues, sizeof(VertexID_t)*numSamples*maxNeighborsToSample));
 
   //Same as initial values of samples for first iteration
-  CHK_CU(cudaMemcpy(data.dTransitToSampleMapKeys, &data.samples[0], sizeof(VertexID_t)*numSamples, 
+  CHK_CU(cudaMemcpy(data.dTransitToSampleMapKeys, &data.initialContents[0], sizeof(VertexID_t)*data.initialContents.size(), 
                     cudaMemcpyHostToDevice));
-  CHK_CU(cudaMemcpy(data.dTransitToSampleMapValues, &data.samples[0], sizeof(VertexID_t)*numSamples, 
+  CHK_CU(cudaMemcpy(data.dTransitToSampleMapValues, &data.initialTransitToSampleValues[0], 
+                    sizeof(VertexID_t)*data.initialTransitToSampleValues.size(), 
                     cudaMemcpyHostToDevice));
   //Insertion positions per transit vertex for each sample
   CHK_CU(cudaMalloc(&data.dSampleInsertionPositions, sizeof(EdgePos_t)*numSamples));
@@ -2171,8 +2172,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-      printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
-      std::cout<<"uniqueTransitNumRuns " << *uniqueTransitNumRuns << std::endl; 
+      //printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
+      //std::cout<<"uniqueTransitNumRuns " << *uniqueTransitNumRuns << std::endl; 
       if (*uniqueTransitNumRuns > 0) {
         partitionTransitsInKernels<1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
             dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, 
