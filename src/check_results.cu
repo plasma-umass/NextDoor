@@ -27,15 +27,16 @@ int numNeighborsSampledAtStep(int step)
   return n;
 }
 
-typedef std::unordered_map<VertexID, std::unordered_set<VertexID>> AdjMatrix;
+typedef std::vector<std::unordered_set<VertexID>> AdjMatrix;
 
-void csrToAdjMatrix(CSR* csr, AdjMatrix& adjMatrix)
+void csrToAdjMatrix(CSR* csrMatrix, AdjMatrix& adjMatrix)
 {
-  for (VertexID v : csr->iterate_vertices()) {
-    adjMatrix[v] = std::unordered_set<VertexID> ();
-    for (EdgePos_t i = csr->get_start_edge_idx(v); 
-         i <= csr->get_end_edge_idx(v); i++) {
-      VertexID e = csr->get_edges()[i];
+  size_t n = csrMatrix->get_n_vertices();
+  #pragma omp parallel for
+  for (VertexID v = 0; v < n; v++) {
+    for (EdgePos_t i = csrMatrix->get_start_edge_idx(v); 
+         i <= csrMatrix->get_end_edge_idx(v); i++) {
+      VertexID e = csrMatrix->get_edges()[i];
       adjMatrix[v].insert(e);
     }
   }
@@ -53,6 +54,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
   auto samples = nextDoorData.samples;
   auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
   int maxSteps = 4;
+  adjMatrix = AdjMatrix(csr->get_n_vertices(), std::unordered_set<VertexID> ());
 
   csrToAdjMatrix(csr, adjMatrix);
   size_t numNeighborsToSampleAtStep = 0;
@@ -164,10 +166,10 @@ bool checkSampledVerticesResult(NextDoorData<SampleType, App>& nextDoorData)
 
   //First create the adjacency matrix.
   std::cout << "checking results" << std::endl;
-  AdjMatrix adj_matrix;
+  AdjMatrix adj_matrix(csr->get_n_vertices(), std::unordered_set<VertexID> ());
 
   csrToAdjMatrix(csr, adj_matrix);
-
+  std::cout << "Adj Matrix of Graph Created " << std::endl;
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
   
@@ -230,7 +232,10 @@ bool checkSampledVerticesResult(NextDoorData<SampleType, App>& nextDoorData)
         size_t sumEdgesOfNeighborsAtPrevStep = 0;
         
         for (size_t v = s + numNeighborsSampledAtStep<App>(step-2); v < s + numNeighborsSampledAtStep<App>(step-1); v++) {
-          sumEdgesOfNeighborsAtPrevStep +=  adj_matrix[finalSamples[v]].size();
+          if (finalSamples[v] != INVALID_VERTEX) {
+          //std::cout << "adj_matrix[finalSamples[v]].size() " << adj_matrix[finalSamples[v]].size() << " " << finalSamples[v] << std::endl;
+            sumEdgesOfNeighborsAtPrevStep +=  adj_matrix[finalSamples[v]].size();
+          }
         }
         
         // if (sampleId == 48) {

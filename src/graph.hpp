@@ -119,7 +119,7 @@ public:
       std::cout << "" << std::endl;
       abort();
     }
-    std::cout << "graph string loaded " << std::endl;
+    std::cout << "Graph Binary Loaded" << std::endl;
 
     n_edges = 0;
     
@@ -128,14 +128,14 @@ public:
       int dst = *(int*)(string+s+4);
       float weight = *(float*)(string+s+8);
 
-      if ((size_t)src > vertices.size()) {
+      if ((size_t)src >= vertices.size()) {
         vertices.resize(src+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
         // }
       }
 
-      if ((size_t)dst > vertices.size()) {
+      if ((size_t)dst >= vertices.size()) {
         vertices.resize(dst+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
