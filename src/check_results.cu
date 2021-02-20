@@ -148,6 +148,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
       numNeighborsToSampleAtStep += App().stepSize(step);
   }
 
+  printf("Results Checked\n");
   return true;
 }
 
