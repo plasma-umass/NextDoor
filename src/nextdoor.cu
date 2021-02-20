@@ -728,12 +728,13 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
 template<int CACHE_SIZE, bool COALESCE_GL_LOADS, typename T>
 __device__ inline VertexID_t cacheAndGet(EdgePos_t id, const T* transitEdges, T* cachedEdges, bool* globalLoadBV)
 {
-  VertexID_t e;
   if (id >= CACHE_SIZE) {
     return transitEdges[id];
   }
   
-  if (COALESCE_GL_LOADS) {
+  VertexID_t e;
+
+  if (false && COALESCE_GL_LOADS) {
     e = cachedEdges[id];
     if (e == -1)
       cachedEdges[id] = -2;
@@ -1013,10 +1014,9 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
         transit = invalidVertex;
       }
     }
-    __syncthreads();
 
     if (threadIdx.x == 0) {
-      assert(transit == invalidVertex || (transit != invalidVertex && kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel));
+      //assert(transit == invalidVertex || (transit != invalidVertex && kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel));
       invalidateCache = transitForTB != transit || transitI == 0;
       transitForTB = transit;
     }
@@ -1035,7 +1035,7 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
     if (transitForTB != invalidVertex) {
       if (CACHE_EDGES && invalidateCache) {
         for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
-          edgesInShMem[i] = -1;//glTransitEdges[i];
+          edgesInShMem[i] = glTransitEdges[i];
         }
       }
     }
@@ -1043,7 +1043,7 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
     if (transitForTB != invalidVertex) {
       if (CACHE_WEIGHTS && invalidateCache) {
         for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
-          edgeWeightsInShMem[i] = -1;//glTransitEdgeWeights[i];
+          edgeWeightsInShMem[i] = glTransitEdgeWeights[i];
         }
       }
     }
@@ -1100,7 +1100,12 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
             neighborsToSampleAtStep *= App().stepSize(_s);
             finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
           }
-          insertionPos = finalSampleSizeTillPreviousStep + utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
+          EdgePos_t insertionStartPosForTransit = 0;
+          if (threadIdx.x % subWarpSize == 0) {
+            insertionStartPosForTransit = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], App().stepSize(step));
+          }
+          insertionStartPosForTransit = __shfl_sync(FULL_WARP_MASK, insertionStartPosForTransit, 0, subWarpSize);
+          insertionPos = finalSampleSizeTillPreviousStep + insertionStartPosForTransit + transitNeighborIdx;
         }
       } else {
         insertionPos = step;
@@ -1962,7 +1967,7 @@ void printKernelTypes(int step, CSR* csr, VertexID_t* dUniqueTransits, VertexID_
   size_t identityKernelTransits = 0, identityKernelSamples = 0, maxEdgesOfIdentityTransits = 0;
   size_t subWarpLevelTransits = 0, subWarpLevelSamples = 0, maxEdgesOfSubWarpTransits = 0, subWarpTransitsWithEdgesLessThan384 = 0, subWarpTransitsWithEdgesMoreThan384 = 0, numSubWarps = 0;
   size_t threadBlockLevelTransits = 0, threadBlockLevelSamples = 0, tbVerticesWithEdgesLessThan3K = 0, tbVerticesWithEdgesMoreThan3K = 0;
-  size_t gridLevelTransits = 0, gridLevelSamples = 0, gridVerticesWithEdgesLessThan10K = 0, gridVerticesWithEdgesMoreThan10K = 0;
+  size_t gridLevelTransits = 0, gridLevelSamples = 0, gridVerticesWithEdgesLessThan3K = 0, gridVerticesWithEdgesMoreThan3K = 0;
   EdgePos_t maxEdgesOfGridTransits = 0;
   int subWarpSize =  subWarpSizeAtStep<App>(step);
 
@@ -1996,9 +2001,9 @@ void printKernelTypes(int step, CSR* csr, VertexID_t* dUniqueTransits, VertexID_
       gridLevelTransits++;
       gridLevelSamples += hUniqueTransitsCounts[tr];
       if (csr->n_edges_for_vertex(tr) <= 3*1024) {
-        gridVerticesWithEdgesLessThan10K += 1;
+        gridVerticesWithEdgesLessThan3K += 1;
       } else {
-        gridVerticesWithEdgesMoreThan10K += 1;
+        gridVerticesWithEdgesMoreThan3K += 1;
       }
       maxEdgesOfGridTransits = max(maxEdgesOfGridTransits, csr->n_edges_for_vertex(tr));
     }
@@ -2007,12 +2012,12 @@ void printKernelTypes(int step, CSR* csr, VertexID_t* dUniqueTransits, VertexID_
   printf("IdentityKernelTransits: %ld, IdentityKernelSamples: %ld, MaxEdgesOfIdentityTransits: %ld\n" 
          "SubWarpLevelTransits: %ld, SubWarpLevelSamples: %ld, MaxEdgesOfSubWarpTranits: %ld, VerticesWithEdges > 384: %ld, VerticesWithEdges <= 384: %ld, NumSubWarps: %ld\n"
          "ThreadBlockLevelTransits: %ld, ThreadBlockLevelSamples: %ld, VerticesWithEdges > 3K: %ld, VerticesWithEdges < 3K: %ld\n"
-         "GridLevelTransits: %ld, GridLevelSamples: %ld, VerticesWithEdges > 10K: %ld, VerticesWithEdges < 10K: %ld, MaxEdgesOfTransit: %d\n", 
+         "GridLevelTransits: %ld, GridLevelSamples: %ld, VerticesWithEdges > 3sK: %ld, VerticesWithEdges < 3K: %ld, MaxEdgesOfTransit: %d\n", 
          identityKernelTransits, identityKernelSamples, maxEdgesOfIdentityTransits, 
          subWarpLevelTransits, subWarpLevelSamples, maxEdgesOfSubWarpTransits, 
             subWarpTransitsWithEdgesMoreThan384, subWarpTransitsWithEdgesLessThan384, numSubWarps, 
          threadBlockLevelTransits, threadBlockLevelSamples, tbVerticesWithEdgesMoreThan3K, tbVerticesWithEdgesLessThan3K,
-         gridLevelTransits, gridLevelSamples, gridVerticesWithEdgesMoreThan10K, gridVerticesWithEdgesLessThan10K, maxEdgesOfGridTransits);
+         gridLevelTransits, gridLevelSamples, gridVerticesWithEdgesMoreThan3K, gridVerticesWithEdgesLessThan3K, maxEdgesOfGridTransits);
 
   delete hUniqueTransits;
   delete hUniqueTransitsCounts;
@@ -2209,7 +2214,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-      //printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
+      printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
       //std::cout<<"uniqueTransitNumRuns " << *uniqueTransitNumRuns << std::endl; 
       if (*uniqueTransitNumRuns > 0) {
         partitionTransitsInKernels<App, 1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
@@ -2283,16 +2288,16 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         double threadBlockKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
         threadBlockKernelTime += (threadBlockKernelTimeT2 - threadBlockKernelTimeT1);
 
-        const int perThreadSamplesForGridKernel = 1;
+        const int perThreadSamplesForGridKernel = 2;
 
         threadBlocks = DIVUP(*gridKernelTransitsNum*subWarpSize, perThreadSamplesForGridKernel);
-        double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
         std::cout<<__LINE__ << ": gridKernelTransitsNum " << *gridKernelTransitsNum << " " << threadBlocks << std::endl;
+        double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
 
         if (useGridKernel && *gridKernelTransitsNum > 0) {
           for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
             size_t currExecThreadBlocks = min((size_t)nextDoorData.maxThreadsPerKernel/256, (size_t)(threadBlocks - threadBlocksExecuted));
-            gridKernel<SampleType,App,256,3*1024-3,false,false,false,perThreadSamplesForGridKernel,true><<<currExecThreadBlocks, 256>>>(step, threadBlocksExecuted,
+            gridKernel<SampleType,App,256,3*1024,false,false,false,perThreadSamplesForGridKernel,true><<<currExecThreadBlocks, 256>>>(step, threadBlocksExecuted,
               gpuCSRPartition, nextDoorData.INVALID_VERTEX,
               (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
               totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
