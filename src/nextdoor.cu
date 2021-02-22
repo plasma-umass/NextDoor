@@ -991,7 +991,7 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
   //__syncthreads();
   
   CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
-  int subWarpSize = subWarpSizeAtStep<App>(step);
+  const int subWarpSize = subWarpSizeAtStep<App>(step);
   for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
     EdgePos_t transitIdx = 0;
     int fullBlockIdx = threadBlocksExecuted + blockIdx.x;
@@ -1004,7 +1004,13 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
     __syncthreads();
     transitIdx = mapStartPos + threadIdx.x/subWarpSize; //threadId/stepSize(step);
     EdgePos_t transitNeighborIdx = threadIdx.x % subWarpSize;
-    VertexID_t transit = transitToSamplesKeys[transitIdx];
+    VertexID_t transit = invalidVertex;
+    if (threadIdx.x % subWarpSize == 0) {
+      transit = transitToSamplesKeys[transitIdx];
+    }
+    
+    transit = __shfl_sync(FULL_WARP_MASK, transit, 0, subWarpSize);
+    
     if (subWarpSize > 1 && fullBlockIdx % subWarpSize != 0 and threadIdx.x == 0) {
       //If a thread block at index i is assigned a transit, which is not the same as the transit
       //assigned to thread block (i/subWarpSize)*subWarpSize then we do not continue with the
@@ -1050,16 +1056,23 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
 
     __syncthreads();
 
-
-    if (transitNeighborIdx < App().stepSize(step) && transitForTB != invalidVertex && transit == transitForTB) {
+    if (transitForTB != invalidVertex && transit == transitForTB) {
       //A thread will run next only when it's transit is same as transit of the threadblock.
 
+      VertexID_t sampleIdx = transitToSamplesValues[transitIdx];
+
+      if (threadIdx.x % subWarpSize == 0) {
+        sampleIdx = transitToSamplesValues[transitIdx];
+      }
+      
+      sampleIdx = __shfl_sync(FULL_WARP_MASK, sampleIdx, 0, subWarpSize);
+
+      if (transitNeighborIdx >= App().stepSize(step)) 
+        continue;
       // if (threadIdx.x == 0 && kernelTypeForTransit[transit] != TransitKernelTypes::GridKernel) {
       //   printf("transit %d transitIdx %d gridDim.x %d\n", transit, transitIdx, gridDim.x);
       // }
       // assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
-
-      VertexID_t sampleIdx = transitToSamplesValues[transitIdx];
 
       assert(sampleIdx < NumSamples);
       VertexID_t neighbor = invalidVertex;
@@ -1119,10 +1132,10 @@ __global__ void gridKernel(const int step, int threadBlocksExecuted, GPUCSRParti
       //     printf("insertionPos %d finalSampleSize %ld sample %d threadIdx.x %d mapStartPos %d blockIdx.x %d transit %d\n", 
       //            insertionPos, finalSampleSize, sampleIdx, threadIdx.x, mapStartPos, blockIdx.x, transit);
 
-      if (insertionPos >= finalSampleSize) {
+      // if (insertionPos >= finalSampleSize) {
         
-        return;
-      }
+      //   return;
+      // }
       assert(insertionPos < finalSampleSize);
 
       if (combineTwoSampleStores && numberOfTransits<App>(step) == 1) {
