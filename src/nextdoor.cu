@@ -991,7 +991,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   //__syncthreads();
   
   CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
-  const int subWarpSize = subWarpSizeAtStep<App>(step);
+  const int subWarpSize = 32;//subWarpSizeAtStep<App>(step);
   for (int fullBlockIdx = blockIdx.x; fullBlockIdx < totalThreadBlocks; fullBlockIdx += gridDim.x) {
     EdgePos_t transitIdx = 0;
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
@@ -1006,12 +1006,16 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       EdgePos_t transitNeighborIdx = threadIdx.x % subWarpSize;
       //TODO: Specialize this for subWarpSizez = 1.
       VertexID_t transit = invalidVertex;
-      if (threadIdx.x % subWarpSize == 0) {
+      if (subWarpSize == 1) {
         transit = transitToSamplesKeys[transitIdx];
+      } else {
+        if (threadIdx.x % subWarpSize == 0) {
+          transit = transitToSamplesKeys[transitIdx];
+        }
+        
+        transit = __shfl_sync(FULL_WARP_MASK, transit, 0, subWarpSize);
       }
-      
-      transit = __shfl_sync(FULL_WARP_MASK, transit, 0, subWarpSize);
-      
+
       if (subWarpSize > 1 && fullBlockIdx % subWarpSize != 0 and threadIdx.x == 0) {
         //If a thread block at index i is assigned a transit, which is not the same as the transit
         //assigned to thread block (i/subWarpSize)*subWarpSize then we do not continue with the
