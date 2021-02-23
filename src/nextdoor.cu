@@ -225,6 +225,7 @@ __host__ __device__ int numberOfTransits(int step) {
   return -1;
 }
 
+#define STORE_TRANSIT_INDEX false
 template<class SamplingType, typename App>
 __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size_t threadsExecuted, const size_t currExecutionThreads,
                                const VertexID_t invalidVertex,
@@ -342,6 +343,14 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
     }
   }
   else {
+    if (STORE_TRANSIT_INDEX) {
+      //Store Index of transit in each sample's output
+      if (step == 0) {
+       // transitIndexInSample[sampleIdx] = insertionPos;
+      } else {
+
+      }
+    }
     finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
   }
 
@@ -1102,7 +1111,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
           //No need to store at last step
           samplesToTransitKeys[transitIdx] = sampleIdx; //TODO: Update this for khop to transitIdx + transitNeighborIdx
           if (App().hasExplicitTransits()) {
-            VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
+            //VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
             samplesToTransitValues[transitIdx] = transit;
           } else {
             samplesToTransitValues[transitIdx] = neighbor;
@@ -1768,7 +1777,7 @@ __global__ void init_curand_states(curandState* states, size_t num_states)
 {
   int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
   if (thread_id < num_states)
-    curand_init(thread_id, 0, 0, &states[thread_id]);
+    curand_init(thread_id, threadIdx.x, 0, &states[thread_id]);
 }
 
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format)
