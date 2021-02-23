@@ -960,7 +960,6 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   __shared__ unsigned char shMemAlloc[MAX(EDGE_CACHE_SIZE+WEIGHT_CACHE_SIZE, CURAND_SHMEM_SIZE)];
   
   //__shared__ bool globalLoadBV[COALESCE_GL_LOADS ? CACHE_SIZE : 1];
-  bool* globalLoadBV;
   __shared__ VertexID_t numEdgesInShMem;
   __shared__ bool invalidateCache;
   __shared__ VertexID_t transitForTB;
@@ -1098,7 +1097,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
                                                                 glTransitEdges, glTransitEdgeWeights, 
                                                                 numEdgesInShMem, transitNeighborIdx, &localRandState,
                                                                 edgesInShMem, edgeWeightsInShMem,
-                                                                &globalLoadBV[0]);
+                                                                nullptr);
         __syncwarp();
         // if (transit == 1935 && sampleIdx == 96) {
         //   printf("989 neighbor %d CACHE_WEIGHTS %d CACHE_EDGES %d numEdgesInShMem %d\n", neighbor, CACHE_WEIGHTS, CACHE_EDGES, numEdgesInShMem);
