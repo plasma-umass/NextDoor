@@ -669,7 +669,7 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
     assert(csr->has_vertex(transit));
     
     if (numTransitEdges != 0) {
-      neighbor = App().template nextCached<SampleType, CACHE_SIZE_PER_SUBWARP, CACHE_EDGES, CACHE_WEIGHTS, COALESCE_GL_LOADS>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+      neighbor = App().template nextCached<SampleType, CACHE_SIZE_PER_SUBWARP, CACHE_EDGES, CACHE_WEIGHTS, COALESCE_GL_LOADS, false>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
                                                                                     glTransitEdges, glTransitEdgeWeights, 
                                                                                     numTransitEdges, transitNeighborIdx, &localRandState,
                                                                                     edgesInShMem, edgeWeightsInShMem,
@@ -725,7 +725,7 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
   }
 }
 
-template<int CACHE_SIZE, bool COALESCE_GL_LOADS, typename T>
+template<int CACHE_SIZE, bool COALESCE_GL_LOADS, typename T, bool ONDEMAND_CACHING>
 __device__ inline VertexID_t cacheAndGet(EdgePos_t id, const T* transitEdges, T* cachedEdges, bool* globalLoadBV)
 {
   if (id >= CACHE_SIZE) {
@@ -751,7 +751,7 @@ __device__ inline VertexID_t cacheAndGet(EdgePos_t id, const T* transitEdges, T*
   } else {
     e = cachedEdges[id];
 
-    if (e == -1) {
+    if (ONDEMAND_CACHING and e == -1) {
       e = transitEdges[id];
       cachedEdges[id] = e;
     }
@@ -875,7 +875,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       // if (graph.device_csr->has_vertex(transit) == false)
       //   printf("transit %d\n", transit);
       if (numEdgesInShMem > 0)
-        neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+        neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, false>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
                                                               glTransitEdges, glTransitEdgeWeights, 
                                                               numEdgesInShMem, transitNeighborIdx, &localRandState,
                                                               edgesInShMem, edgeWeightsInShMem,
@@ -934,7 +934,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
   }
 }
 
-template<class SampleType, typename App, int THREADS, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool COALESCE_GL_LOADS, int TRANSITS_PER_THREAD, bool COALESCE_CURAND_LOAD>
+template<class SampleType, typename App, int THREADS, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool COALESCE_GL_LOADS, int TRANSITS_PER_THREAD, bool COALESCE_CURAND_LOAD, bool ONDEMAND_CACHING>
 __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID_t invalidVertex,
                            const VertexID_t* transitToSamplesKeys, const VertexID_t* transitToSamplesValues,
                            const size_t transitToSamplesSize, SampleType* samples, const size_t NumSamples,
@@ -1051,7 +1051,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
 
       if (CACHE_EDGES && invalidateCache) {
         for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
-          edgesInShMem[i] = glTransitEdges[i];
+          edgesInShMem[i] = (ONDEMAND_CACHING) ? -1 : glTransitEdges[i];
         }
       }
   
@@ -1085,7 +1085,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         // if (graph.device_csr->has_vertex(transit) == false)
         //   printf("transit %d\n", transit);
         if (numEdgesInShMem > 0)
-          neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+          neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, ONDEMAND_CACHING>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
                                                                 glTransitEdges, glTransitEdgeWeights, 
                                                                 numEdgesInShMem, transitNeighborIdx, &localRandState,
                                                                 edgesInShMem, edgeWeightsInShMem,
@@ -2239,7 +2239,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
       CHK_CU(cudaGetLastError());
       CHK_CU(cudaDeviceSynchronize());
-      printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
+      //printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
       //std::cout<<"uniqueTransitNumRuns " << *uniqueTransitNumRuns << std::endl; 
       if (*uniqueTransitNumRuns > 0) {
         partitionTransitsInKernels<App, 1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
@@ -2322,7 +2322,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
         if (useGridKernel && *gridKernelTransitsNum > 0) {
           // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
-            gridKernel<SampleType,App,256,3*1024,true,false,false,perThreadSamplesForGridKernel,true><<<maxThreadBlocksPerKernel, 256>>>(step,
+            gridKernel<SampleType,App,256,3*1024,true,false,false,perThreadSamplesForGridKernel,true,false><<<maxThreadBlocksPerKernel, 256>>>(step,
               gpuCSRPartition, nextDoorData.INVALID_VERTEX,
               (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
               totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),

@@ -25,7 +25,7 @@ struct KHopApp {
     return transitEdges[id];
   }
 
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING>
   __device__ inline
   VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
                 SampleType* sample, const float max_weight,
@@ -34,9 +34,9 @@ struct KHopApp {
                 curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
                 bool* globalLoadBV)
   {
-    EdgePos_t id = RandNumGen::rand_int(state, numEdges);
+    EdgePos_t id = neighbrID%numEdges;//RandNumGen::rand_int(state, numEdges);//neighbrID%numEdges;
     if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(id, transitEdges, cachedEdges, globalLoadBV);
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING>(id, transitEdges, cachedEdges, globalLoadBV);
     return transitEdges[id];
   }
 
@@ -98,8 +98,8 @@ class KHopSample
 
 };
 
-#define RUNS 1
-#define CHECK_RESULTS true
+#define RUNS 5
+#define CHECK_RESULTS false
 #define COMMA ,
 
 // APP_TEST(KHopSample, KHop, KHopApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
