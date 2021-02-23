@@ -1049,25 +1049,21 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
 
       __syncthreads();
 
-      if (transitForTB != invalidVertex) {
-        if (CACHE_EDGES && invalidateCache) {
-          for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
-            edgesInShMem[i] = glTransitEdges[i];
-          }
+      if (CACHE_EDGES && invalidateCache) {
+        for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
+          edgesInShMem[i] = glTransitEdges[i];
         }
       }
-    
-      if (transitForTB != invalidVertex) {
-        if (CACHE_WEIGHTS && invalidateCache) {
-          for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
-            edgeWeightsInShMem[i] = glTransitEdgeWeights[i];
-          }
+  
+      if (CACHE_WEIGHTS && invalidateCache) {
+        for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
+          edgeWeightsInShMem[i] = glTransitEdgeWeights[i];
         }
       }
 
       __syncthreads();
 
-      if (transitForTB != invalidVertex && transit == transitForTB) {
+      if (transit == transitForTB) {
         //A thread will run next only when it's transit is same as transit of the threadblock.
 
         VertexID_t sampleIdx = -1;//transitToSamplesValues[transitIdx];
