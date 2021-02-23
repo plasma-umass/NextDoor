@@ -1743,13 +1743,9 @@ __global__ void invalidVertexStartPos(int step, VertexID_t* transitToSamplesKeys
     return;
   }
 
-  if (threadId == 0) {
-    printf("threadId is 0 totalTransits %d gridDim.x %d\n", totalTransits, gridDim.x);
-  }
   //If first transit is invalid.
   if (threadId == 0) {
     if (transitToSamplesKeys[0] == invalidVertex) {
-      printf("1047: threadIdx.x %d v %d invalidVertex %d\n", threadId, transitToSamplesKeys[threadId], invalidVertex);
       *outputStartPos = 0;
     }
     // printf("outputStartPos %d\n", *outputStartPos);
@@ -1760,7 +1756,6 @@ __global__ void invalidVertexStartPos(int step, VertexID_t* transitToSamplesKeys
   if (transitToSamplesKeys[threadId - 1] != invalidVertex && 
       transitToSamplesKeys[threadId] == invalidVertex)
   {
-    printf("1657: threadIdx.x %d v %d invalidVertex %d\n", threadId, transitToSamplesKeys[threadId], invalidVertex);
     *outputStartPos = threadId;
     return;
       // printf("outputStartPos %d\n", *outputStartPos);
@@ -2394,6 +2389,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   CHK_CU(cudaFree(dUniqueTransits));
   CHK_CU(cudaFree(dUniqueTransitsCounts));
   CHK_CU(cudaFree(dUniqueTransitsNumRuns));
+  CHK_CU(cudaFree(dKernelTypeForTransit));
+  CHK_CU(cudaFree(dTransitPositions));
+  CHK_CU(cudaFree(dGridKernelTransits));
+  CHK_CU(cudaFree(dThreadBlockKernelTransits));
+  CHK_CU(cudaFree(dSubWarpKernelTransits));
 
   #if 0
   for (int s = 1; s < App().steps() - 2; s++) {

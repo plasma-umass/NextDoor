@@ -99,8 +99,8 @@ class KHopSample
 
 };
 
-#define RUNS 1
-#define CHECK_RESULTS true
+#define RUNS 10
+#define CHECK_RESULTS false
 #define COMMA ,
 
 // APP_TEST(KHopSample, KHop, KHopApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
