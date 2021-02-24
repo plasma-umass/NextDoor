@@ -308,6 +308,13 @@ namespace GPUUtils {
 
   const uint FULL_MASK = 0xffffffff;
 
+  void printCudaMemInfo() 
+  {
+    size_t free = 0, total = 0;
+    CHK_CU(cudaMemGetInfo(&free, &total));
+    printf("free memory %ld\n", free);
+  }
+
   __device__ inline int get_warp_mask_and_participating_threads (int condition, int& participating_threads, int& first_active_thread)
   {
     uint warp_mask = __ballot_sync(FULL_MASK, condition);
