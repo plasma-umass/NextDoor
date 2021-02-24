@@ -6,7 +6,7 @@ struct KHopApp {
 
   __host__ __device__ 
   int stepSize(int k) {
-    return ((k == 0) ? 10 : 25);
+    return ((k == 0) ? 10 : 32);
   }
 
   template<class SampleType>
@@ -25,7 +25,7 @@ struct KHopApp {
     return transitEdges[id];
   }
 
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING>
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
   __device__ inline
   VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
                 SampleType* sample, const float max_weight,
@@ -37,7 +37,7 @@ struct KHopApp {
     const EdgePos_t id = RandNumGen::rand_int(state, numEdges);
 
     if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING>(id, transitEdges, cachedEdges, globalLoadBV);
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(id, transitEdges, cachedEdges, globalLoadBV);
     return transitEdges[id];
   }
 
@@ -109,8 +109,8 @@ class KHopSample
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
 
-APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
-// APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
+// APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
+APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "SampleParallel", false)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, OrkutTP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, OrkutLB, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
