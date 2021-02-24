@@ -2290,7 +2290,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         //From each Transit we sample stepSize(step) vertices
         totalThreads =  totalThreads * subWarpSize;
         std::cout << "final totalThreads " << totalThreads << std::endl;
-        const size_t maxThreadBlocksPerKernel = 512;
+        const size_t maxThreadBlocksPerKernel = 4096;
         double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
         
         identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
@@ -2339,7 +2339,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         double threadBlockKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
         threadBlockKernelTime += (threadBlockKernelTimeT2 - threadBlockKernelTimeT1);
 
-        const int perThreadSamplesForGridKernel = 8;
+        const int perThreadSamplesForGridKernel = 16;
 
         threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
         double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
