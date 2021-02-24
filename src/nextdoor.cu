@@ -2367,9 +2367,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
         if (useGridKernel && *gridKernelTransitsNum > 0) {
           // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
+            const bool CACHE_EDGES = false;
+            const bool CACHE_WEIGHTS = false;
             switch (subWarpSizeAtStep<App>(step)) {
               case 32:
-                gridKernel<SampleType,App,256,3*1024-10,true,false,false,perThreadSamplesForGridKernel,true,true,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
+                gridKernel<SampleType,App,256,3*1024-10,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,false,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
                   gpuCSRPartition, nextDoorData.INVALID_VERTEX,
                   (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
                   totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
@@ -2378,7 +2380,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                   nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
                   break;
               case 16:
-                gridKernel<SampleType,App,256,3*1024-10,true,false,false,perThreadSamplesForGridKernel,true,true,256,16><<<maxThreadBlocksPerKernel, 256>>>(step,
+                gridKernel<SampleType,App,256,3*1024-10,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,16><<<maxThreadBlocksPerKernel, 256>>>(step,
                   gpuCSRPartition, nextDoorData.INVALID_VERTEX,
                   (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
                   totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
@@ -2386,7 +2388,16 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                   nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
                   nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
                   break;
-                
+              
+              case 1:
+              gridKernel<SampleType,App,256,3*1024-10,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,1><<<maxThreadBlocksPerKernel, 256>>>(step,
+                gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                break;
               default:
                 //TODO: Add others
                   break;

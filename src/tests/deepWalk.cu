@@ -33,7 +33,7 @@ struct DeepWalkApp {
     return transitEdges[x];
   }
 
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
   __device__ inline
   VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
     SampleType* sample,
@@ -45,7 +45,7 @@ struct DeepWalkApp {
   {
     if (numEdges == 1) {
       if (CACHE_EDGES)
-        return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(0, transitEdges, cachedEdges, globalLoadBV);
+        return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(0, transitEdges, cachedEdges, globalLoadBV);
       return transitEdges[0];
     }
     
@@ -53,7 +53,7 @@ struct DeepWalkApp {
     float y = curand_uniform(state)*max_weight;
     float weight;
     if (CACHE_WEIGHTS) {
-      weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
+      weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, float, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
     } else {
       weight = transitEdgeWeights[x];
     }
@@ -62,14 +62,14 @@ struct DeepWalkApp {
       x = RandNumGen::rand_int(state, numEdges);
       y = curand_uniform(state)*max_weight;
       if (CACHE_WEIGHTS) {
-        weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
+        weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, float, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(x, transitEdgeWeights, cachedWeights, globalLoadBV);
       } else {
         weight = transitEdgeWeights[x];
       }
     }
 
     if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdges, cachedEdges, globalLoadBV);
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE >(x, transitEdges, cachedEdges, globalLoadBV);
     else
       return transitEdges[x];
   }
