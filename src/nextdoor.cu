@@ -405,9 +405,14 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     int subWarpSize = subWarpSizeAtStep<App>(step);
     transitIdx = threadId/subWarpSize;
     transitNeighborIdx = threadId % subWarpSize;
-    transit = transitToSamplesKeys[transitIdx];
-    kernelTy = kernelTypeForTransit[transit];
-    
+    if (transitNeighborIdx == 0) {
+      transit = transitToSamplesKeys[transitIdx];
+      kernelTy = kernelTypeForTransit[transit];
+    }
+
+    transit = __shfl_sync(FULL_WARP_MASK, transit, 0, subWarpSize);
+    kernelTy = __shfl_sync(FULL_WARP_MASK, kernelTy, 0, subWarpSize);
+
     if (transitNeighborIdx >= App().stepSize(step)) {
       continue;
     }
@@ -419,7 +424,13 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     }
 
     CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
-    VertexID_t sampleIdx = transitToSamplesValues[transitIdx];
+    VertexID_t sampleIdx = -1;
+    
+    if (transitNeighborIdx == 0) {
+      sampleIdx = transitToSamplesValues[transitIdx];
+    }
+
+    sampleIdx = __shfl_sync(FULL_WARP_MASK, sampleIdx, 0, subWarpSize);
     assert(sampleIdx < NumSamples);
     VertexID_t neighbor = invalidVertex;
 
@@ -472,20 +483,24 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
       samplesToTransitKeys[threadId] = sampleIdx;
     }
     
-    size_t finalSampleSizeTillPreviousStep = 0;
-    size_t neighborsToSampleAtStep = 1;
+    EdgePos_t finalSampleSizeTillPreviousStep = 0;
+    EdgePos_t neighborsToSampleAtStep = 1;
     EdgePos_t insertionPos = 0; 
     if (numberOfTransits<App>(step) > 1) {    
       if (step == 0) {
         insertionPos = transitNeighborIdx;
       } else {
         EdgePos_t numTransits = numberOfTransits<App>(step);
-
         for (int _s = 0; _s < step; _s++) {
           neighborsToSampleAtStep *= App().stepSize(_s);
           finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
         }
-        insertionPos = finalSampleSizeTillPreviousStep + utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
+        EdgePos_t insertionStartPosForTransit = 0;
+        if (threadIdx.x % subWarpSize == 0) {
+            insertionStartPosForTransit = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], App().stepSize(step));
+        }
+        insertionStartPosForTransit = __shfl_sync(FULL_WARP_MASK, insertionStartPosForTransit, 0, subWarpSize);
+        insertionPos = finalSampleSizeTillPreviousStep + insertionStartPosForTransit + transitNeighborIdx;
       }
     } else {
       insertionPos = step;
@@ -985,23 +1000,30 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   
   curandState* curandSrcPtr;
 
+  const int subWarpSize = SUB_WARP_SIZE;
+
   if (COALESCE_CURAND_LOAD) {
     const int intsInRandState = sizeof(curandState)/sizeof(int);
     int* shStateBuff = (int*)&shMem.shMemAlloc[0];
 
     int* randStatesAsInts = (int*)randStates;
-  
-    for (int i = threadIdx.x; i < intsInRandState*blockDim.x; i += blockDim.x) {
+    
+    //Load curand only for the number of threads that are going to do sampling in this warp
+    for (int i = threadIdx.x; i < intsInRandState*(blockDim.x/subWarpSize)*App().stepSize(step); i += blockDim.x) {
       shStateBuff[i] = randStatesAsInts[i + blockDim.x*blockIdx.x];
     }
 
     __syncthreads();
-    curandSrcPtr = (curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
+    if (threadIdx.x % subWarpSize < App().stepSize(step)) {
+      //Load curand only for the threads that are going to do sampling.
+      int ld = threadIdx.x - (threadIdx.x/subWarpSize)*(subWarpSize-App().stepSize(step));
+      curandSrcPtr = (curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
+    }
   } else {
     curandSrcPtr = &randStates[threadId];
   }
 
-  curandState localRandState = *curandSrcPtr;
+  curandState localRandState = (threadIdx.x % subWarpSize < App().stepSize(step))? *curandSrcPtr: curandState();
   //curand_init(threadId, 0,0, &localRandState);
 
   //__shared__ VertexID newNeigbhors[N_THREADS];
@@ -1010,7 +1032,6 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   //__syncthreads();
   
   CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
-  const int subWarpSize = SUB_WARP_SIZE;
   for (int fullBlockIdx = blockIdx.x; fullBlockIdx < totalThreadBlocks; fullBlockIdx += gridDim.x) {
     EdgePos_t transitIdx = 0;
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
