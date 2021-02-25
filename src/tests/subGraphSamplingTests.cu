@@ -54,19 +54,24 @@ struct SubGraphSamplingAppI {
     {
       VertexID_t v2 = sample->vertices[v2Idx];
       bool hasEdge = csr->has_edge_logn(v1, v2);
+
       if (hasEdge) {
         int len = ::atomicAdd(&sample->adjacencyMatrixLen, 1) + sample->adjMatrixPos;
         //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
         sample->adjacencyMatrixRow[len] = v1;
         sample->adjacencyMatrixCol[len] = v2;
         //sample->adjacencyMatrixVal[len] = 1.0f;
+        if (v1 == 183464 && v2 == 226107) {
+          printf("sampleIdx %d v1 %d v2 %d hasEdge %d %d len %d\n", sampleIdx, v1, v2, hasEdge, sample->adjacencyMatrixLen, len);
+        }
       }
+
     }
 
     return -1;
   }
 
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
   __device__ inline
   VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx,
                 SampleType* sample, 
@@ -78,7 +83,7 @@ struct SubGraphSamplingAppI {
   {
     EdgePos_t id = RandNumGen::rand_int(state, numEdges);
     if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(id, transitEdges, cachedEdges, globalLoadBV);
+      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(id, transitEdges, cachedEdges, globalLoadBV);
     return transitEdges[id];
   }
 
@@ -121,7 +126,7 @@ struct SubGraphSamplingAppI {
     std::vector<VertexID_t> initialValue;
 
     for (int i = 0; i < VERTICES_PER_SAMPLE*NUM_CLUSTERS; i++) {
-      VertexID_t v = sampleIdx * VERTICES_PER_SAMPLE*NUM_CLUSTERS + i;
+      VertexID_t v = rand() % graph->get_n_vertices();
       initialValue.push_back(v);
       sample.vertices[i] = v;
     }
@@ -164,7 +169,7 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
 
   //First create the adjacency matrix.
   std::cout << "checking results" << std::endl;
-  AdjMatrix adj_matrix;
+  AdjMatrix adj_matrix(csr->get_n_vertices(), std::unordered_set<VertexID> ());
 
   csrToAdjMatrix(csr, adj_matrix);
 
@@ -172,11 +177,17 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
   size_t numNeighborsToSampleAtStep = 0;
   bool foundError = false;
   int sampleIdx = 0;
+  int* hRowStorage = new int[csr->get_n_edges()];
+  int* hColStorage = new int[csr->get_n_edges()];
+
+  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
+  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
+
   for (SampleType& sample : samples) {
     //Go through all edges between two vertices and see if they exist in the graph
     for (int e = 0; e < sample.adjacencyMatrixLen; e++) {
-      VertexID_t v1 = sample.adjacencyMatrixRow[e];
-      VertexID_t v2 = sample.adjacencyMatrixCol[e];
+      VertexID_t v1 = hRowStorage[e + sample.adjMatrixPos];
+      VertexID_t v2 = hColStorage[e + sample.adjMatrixPos];
 
       if (!foundError && adj_matrix[v1].count(v2) == 0) {
         printf("Sample '%d': no edge '%d' -> '%d' in graph\n", sampleIdx, v1, v2);
@@ -194,7 +205,7 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
           bool foundEdge = false;
           //Edge in Graph. Check if it is in Sample.
           for (int e = 0; e < sample.adjacencyMatrixLen; e++) {
-            if (sample.adjacencyMatrixRow[e] == v1 && sample.adjacencyMatrixCol[e] == v2) {
+            if ( hRowStorage[e + sample.adjMatrixPos]== v1 && hColStorage[e + sample.adjMatrixPos] == v2) {
               foundEdge = true;
               break;
             }
@@ -202,7 +213,7 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
 
           if (!foundEdge) {
             if (!foundError) {
-              printf("Sample '%d': Edge '%d'->'%d' exists in graph but not in sample of length '%d'\n", sampleIdx, v1, v2, sample.adjacencyMatrixLen);
+              printf("Sample '%d': Edge '%d'->'%d' exists in graph but not in sample of length '%d' sample.adjMatrixPos '%d'\n", sampleIdx, v1, v2, sample.adjacencyMatrixLen, sample.adjMatrixPos);
             }
             foundError = true;
           }
@@ -213,11 +224,12 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
     sampleIdx++;
   }
 
+  printf("Results Checked? %d\n", !foundError);
   if (foundError) return false;
   return true;
 }
 
-void foo(const char* graph_file, const char* graph_type, const char* graph_format, 
+bool foo(const char* graph_file, const char* graph_type, const char* graph_format, 
   const int nruns, const bool chk_results, const bool print_samples,
   const char* kernelType, const bool enableLoadBalancing,
   bool (*checkResultsFunc)(NextDoorData<SubGraphSample, SubGraphSamplingAppI>&))
@@ -225,23 +237,23 @@ void foo(const char* graph_file, const char* graph_type, const char* graph_forma
   Graph graph; 
   CSR* csr;
   if ((csr = loadGraph(graph, (char*)graph_file, (char*)"adj-list", (char*)"text")) == nullptr) {
-    return;
+    return false;
   }
 
   std::cout << "Graph has " <<graph.get_n_edges () << " edges and " << 
       graph.get_vertices ().size () << " vertices " << std::endl;
   
-  std::string parts_file = "/mnt/homes/abhinav/nextdoor-experiments/cluster_gcn/reddit-parts-txt";
-  std::ifstream partitionsFile(parts_file);
-  partitionsFile >> partitionsJson;
-  partitionsFile.close();
-  size_t maximumSize = 0;
+  // std::string parts_file = "/mnt/homes/abhinav/nextdoor-experiments/cluster_gcn/reddit-parts-txt";
+  // std::ifstream partitionsFile(parts_file);
+  // partitionsFile >> partitionsJson;
+  // partitionsFile.close();
+  // size_t maximumSize = 0;
 
-  for (auto& item : partitionsJson.items()) {
-    maximumSize = std::max(item.value().size(), maximumSize);
-  }
+  // for (auto& item : partitionsJson.items()) {
+  //   maximumSize = std::max(item.value().size(), maximumSize);
+  // }
 
-  std::cout << "maximumSize " << maximumSize << std::endl; 
+  // std::cout << "maximumSize " << maximumSize << std::endl; 
 
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   
@@ -265,15 +277,23 @@ void foo(const char* graph_file, const char* graph_type, const char* graph_forma
       abort();
   }
 
+  getFinalSamples(nextDoorData);
+
   // int hTotalLen = 0;
 
   // CHK_CU(cudaMemcpy(&hTotalLen, dAdjMatrixTotalLen, sizeof(int), cudaMemcpyDeviceToHost));
   // std::cout<<hTotalLen<<std::endl;
+
+  if (chk_results) {
+    return checkResultsFunc(nextDoorData);
+  }
+
+  return true;
 }
 
 #define SubGraphAPP_TEST(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
   TEST(SubGraphSampling, TestName) { \
-    foo(Path, (char*)"adj-list", (char*)"text", 1, false, false, "SampleParallel", false, chkResultsFunc);\
+    EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, "SampleParallel", false, chkResultsFunc));\
   }
 
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
