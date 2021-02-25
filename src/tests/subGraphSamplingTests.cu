@@ -3,8 +3,7 @@
 #include <stdlib.h>
 #include <nlohmann/json.hpp>
 
-#define VERTICES_PER_SAMPLE 105
-#define NUM_CLUSTERS 20
+#define VERTICES_PER_SAMPLE 100
 
 nlohmann::json partitionsJson;
 
@@ -15,7 +14,7 @@ public:
 
   int adjMatrixLength;
   int adjMatrixPos;
-  VertexID_t vertices[VERTICES_PER_SAMPLE*NUM_CLUSTERS];
+  VertexID_t vertices[VERTICES_PER_SAMPLE];
   int adjacencyMatrixLen;
   int *adjacencyMatrixRow;
   int *adjacencyMatrixCol;
@@ -32,7 +31,7 @@ struct SubGraphSamplingAppI {
   __host__ __device__ 
   int stepSize(int k) {
     if (k == 0) return 1;
-    return 1;
+    return VERTICES_PER_SAMPLE;
   }
 
   template<class SampleType>
@@ -43,27 +42,24 @@ struct SubGraphSamplingAppI {
                 const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
   {
     VertexID_t v1 = transits[0];
-
     if (step == 0) {
       ::atomicAdd(&sample->adjMatrixLength, numEdges);
       return v1;
     }
 
-    for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) 
-    //int v2Idx = neighbrID;
+    int v2Idx = neighbrID;//for (int v2Idx = neighbrID; v2Idx <= neighbrID; v2Idx++) 
     {
       VertexID_t v2 = sample->vertices[v2Idx];
       bool hasEdge = csr->has_edge_logn(v1, v2);
-
+      // if (v1==v2 && sampleIdx == 0) {
+      //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d\n", sampleIdx, v1, v2, hasEdge, v2Idx);
+      // }
       if (hasEdge) {
         int len = ::atomicAdd(&sample->adjacencyMatrixLen, 1) + sample->adjMatrixPos;
         //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
         sample->adjacencyMatrixRow[len] = v1;
         sample->adjacencyMatrixCol[len] = v2;
         //sample->adjacencyMatrixVal[len] = 1.0f;
-        if (v1 == 183464 && v2 == 226107) {
-          printf("sampleIdx %d v1 %d v2 %d hasEdge %d %d len %d\n", sampleIdx, v1, v2, hasEdge, sample->adjacencyMatrixLen, len);
-        }
       }
 
     }
@@ -99,7 +95,7 @@ struct SubGraphSamplingAppI {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return graph->get_n_vertices() / (VERTICES_PER_SAMPLE * NUM_CLUSTERS);
+    return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -110,14 +106,17 @@ struct SubGraphSamplingAppI {
   template<class SampleType>
   __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
   {
-    if (transitIdx == 0) {
-      if (step == 1) {
-        sample.adjMatrixPos = ::atomicAdd(sample.adjMatrixTotalLen, sample.adjMatrixLength);
-      }
+    if (transitIdx == 0 && step == 1) {
+      sample.adjMatrixPos = ::atomicAdd(sample.adjMatrixTotalLen, sample.adjMatrixLength);
     }
 
+    VertexID_t v = sample.vertices[transitIdx];
 
-    return sample.vertices[transitIdx];
+    if (sampleID == 0) {
+      printf("transitIdx %d v %d\n", transitIdx, v);
+    }
+
+    return v;
   }
 
   template<class SampleType>
@@ -125,7 +124,7 @@ struct SubGraphSamplingAppI {
   {
     std::vector<VertexID_t> initialValue;
 
-    for (int i = 0; i < VERTICES_PER_SAMPLE*NUM_CLUSTERS; i++) {
+    for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
       VertexID_t v = rand() % graph->get_n_vertices();
       initialValue.push_back(v);
       sample.vertices[i] = v;
@@ -147,7 +146,7 @@ struct SubGraphSamplingAppI {
     return sample;
   }
 
-  __host__ __device__ EdgePos_t initialSampleSize(CSR* graph) { return VERTICES_PER_SAMPLE*NUM_CLUSTERS;}
+  __host__ __device__ EdgePos_t initialSampleSize(CSR* graph) { return VERTICES_PER_SAMPLE;}
 };
 
 #define RUNS 1

@@ -1311,15 +1311,20 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
   if (threadId >= currExecutionThreads)
     return;
   
-  curandState* randState = &randStates[threadId];
+  // curandState* randState = &randStates[threadId];
   threadId += threadsExecuted;
+  if (threadId >= totalThreads)
+    return;
   EdgePos_t numTransits = numberOfTransits<App>(step - 1);
   EdgePos_t sampleIdx = threadId/numTransits;
+  if (sampleIdx > NumSamples)
+    return;
+
   EdgePos_t transitIdx = threadId % numTransits;
   if (App().samplingType() == CollectiveNeighborhood) {
     assert(!App().hasExplicitTransits());
   } else {
-    VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, randState);
+    VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, nullptr);
     samplesToTransitValues[threadId] = transit;
 
     if (StoreAsMap) {
@@ -1419,7 +1424,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
           EdgePos_t transitIdx = threadId % App().initialSampleSize(nullptr);
           singleTransit = initialSamples[sampleIdx*App().initialSampleSize(nullptr) + transitIdx];
         } else if (App().hasExplicitTransits()) {
-          singleTransit = explicitTransits[sampleIdx*numTransitsInPrevStep + (threadId % numTransits) % numTransitsInPrevStep];
+          singleTransit = explicitTransits[sampleIdx*numTransitsInPrevStep + (threadId % numTransits) / numTransitsInPrevStep];
         } else {
           singleTransit = finalSamples[sampleIdx*finalSampleSize + (step - 1) * numTransits + (threadId % numTransits) % numTransitsInPrevStep];
         }
@@ -2602,7 +2607,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
       ****************************/
     }
     if (App().hasExplicitTransits() and step > 0) {
-      const size_t totalThreads = App().numSamples(csr)*neighborsToSampleAtStep;
+      const size_t totalThreads = App().numSamples(csr)*numTransits;
       for (int _thExecs = 0; _thExecs < totalThreads; _thExecs += nextDoorData.maxThreadsPerKernel) {
         const size_t currExecThreads = min(nextDoorData.maxThreadsPerKernel, totalThreads - _thExecs);
 
