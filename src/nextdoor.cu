@@ -1023,7 +1023,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
     curandSrcPtr = &randStates[threadId];
   }
 
-  curandState localRandState = (threadIdx.x % subWarpSize < App().stepSize(step))? *curandSrcPtr: curandState();
+  curandState localRandState = (false && threadIdx.x % subWarpSize < App().stepSize(step))? *curandSrcPtr: curandState();
   //curand_init(threadId, 0,0, &localRandState);
 
   //__shared__ VertexID newNeigbhors[N_THREADS];
@@ -1041,6 +1041,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       __syncthreads();
 
       if (threadIdx.x == 0) {
+        //TODO: Coalesce these loads by loading them into shared memory.
         shMem.mapStartPos = gridKernelTBPositions[TRANSITS_PER_THREAD * fullBlockIdx + transitI];
       }
       __syncthreads();
@@ -1051,6 +1052,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       if (subWarpSize == 1) {
         transit = transitToSamplesKeys[transitIdx];
       } else {
+        //TODO: Coalesce this load by loading for all subWarps in thread block into shared memory.
         if (threadIdx.x % subWarpSize == 0) {
           transit = transitToSamplesKeys[transitIdx];
         }
@@ -1088,7 +1090,6 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       }
 
       __syncthreads();
-
       if (CACHE_EDGES && shMem.invalidateCache) {
         for (int i = threadIdx.x; i < min(CACHE_SIZE, shMem.numEdgesInShMem); i += blockDim.x) {
           if (ONDEMAND_CACHING) {
@@ -1370,7 +1371,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
     graph.device_csr = (CSRPartition*)&csrPartitionBuff[0];
     
     curandState* curandSrcPtr;
-    bool COALESCE_CURAND_LOAD = false;
+    bool COALESCE_CURAND_LOAD = true;
     if (COALESCE_CURAND_LOAD) {
       //Load curand states efficiently in registers
       const int intsInRandState = sizeof(curandState)/sizeof(int);
@@ -1494,7 +1495,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
         finalSamples[sampleIdx*finalSampleSize + stepSizeAtStep<App>(step - 1) + neighbrID] = neighbor;
       } else if (App().outputFormat() == SampledVertices && App().samplingType() == IndividualNeighborhood) {
         if (numberOfTransits<App>(step) > 1) {    
-          insertionPos = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);//finalSampleSizeTillPreviousStep + (threadId % numTransits);
+          insertionPos = finalSampleSizeTillPreviousStep + (threadId % numTransits);//utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);//
         } else {
           insertionPos = step;
         }
@@ -2358,6 +2359,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         double threadBlockKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
         threadBlockKernelTime += (threadBlockKernelTimeT2 - threadBlockKernelTimeT1);
 
+        //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
+        //Processing more can improve the locality if thread blocks have common transits.
         const int perThreadSamplesForGridKernel = 16;
 
         threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
