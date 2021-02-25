@@ -24,7 +24,8 @@ graphSageIntegration: src/nextDoorModule.cu src/csr.hpp src/utils.hpp src/graph.
 test: khopTest uniformRandWalkTest deepWalkTest
 	
 khopTest: src/tests/khopTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
-	nvcc $< -Igoogletest/googletest/include/  -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+	nvcc $< -Igoogletest/googletest/include/  -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 \
+	-code=sm_61 -Xcompiler -fopenmp  -maxrregcount=40 -o $@
 
 deepWalkTest: src/tests/deepWalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
 	nvcc $< -Igoogletest/googletest/include/  -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@

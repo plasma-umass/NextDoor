@@ -61,7 +61,7 @@ struct KHopApp {
     std::vector<VertexID_t> initialValue;
 
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      initialValue.push_back(sampleIdx * VERTICES_PER_SAMPLE + i);
+      initialValue.push_back((rand())%graph->get_n_vertices());
     }
 
     return initialValue;
@@ -107,8 +107,9 @@ class KHopSample
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
 
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
-APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
-//APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "SampleParallel", false)
+APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+                checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
+APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "SampleParallel", false)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, OrkutTP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, OrkutLB, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, OrkutSP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "SampleParallel", false)

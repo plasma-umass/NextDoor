@@ -46,7 +46,7 @@ struct MultiRWApp {
     return v;
   }
 
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
+  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
   __device__ inline
   VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
     SampleType* sample,
@@ -59,7 +59,7 @@ struct MultiRWApp {
     if (numEdges == 1) {
       VertexID_t v;
       if (CACHE_EDGES)
-        v = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(0, transitEdges, cachedEdges, globalLoadBV);
+        v = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(0, transitEdges, cachedEdges, globalLoadBV);
       else 
         v = transitEdges[0];
       if (step > 0) {
@@ -72,7 +72,7 @@ struct MultiRWApp {
     EdgePos_t x = RandNumGen::rand_int(state, numEdges);
     VertexID_t v;
     if (CACHE_EDGES)
-      v = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(x, transitEdges, cachedEdges, globalLoadBV);
+      v = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(x, transitEdges, cachedEdges, globalLoadBV);
     else
       v = transitEdges[x];
       
@@ -134,7 +134,7 @@ struct MultiRWApp {
     SampleType sample;
     //printf("sample %d\n", sampleID);
     for (int i = 0; i < NUM_ROOT_VERTICES; i++) {
-      sample.rootVertices[i] = i % graph->get_n_vertices();
+      sample.rootVertices[i] = rand() % graph->get_n_vertices();
       // if (sampleID + i < graph->get_n_vertices()) {
       //   sample.rootVertices[i] = sampleID + i;
       // } else {
@@ -145,12 +145,12 @@ struct MultiRWApp {
   }
 };
 
-#define RUNS 1
+#define RUNS 5
 #define CHECK_RESULTS false
 
 
-template<class SampleType>
-bool checkMultiRWResult(NextDoorData<SampleType>& nextDoorData)
+template<class SampleType, typename App>
+bool checkMultiRWResult(NextDoorData<SampleType, App>& nextDoorData)
 {
   //Check result by traversing all sampled neighbors and making
   //sure that if neighbors at kth-hop is an adjacent vertex of one
@@ -282,13 +282,16 @@ bool checkMultiRWResult(NextDoorData<SampleType>& nextDoorData)
 // APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
+// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
+// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
+// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
 //APP_TEST(MultiRW, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
-APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
+//APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+ //               checkMultiRWResult, "TransitParallel", false)
+//APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+//                checkMultiRWResult, "TransitParallel", true)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "SampleParallel", false)
+// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
+// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
+// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
