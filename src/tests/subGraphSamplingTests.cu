@@ -112,10 +112,6 @@ struct SubGraphSamplingAppI {
 
     VertexID_t v = sample.vertices[transitIdx];
 
-    if (sampleID == 0) {
-      printf("transitIdx %d v %d\n", transitIdx, v);
-    }
-
     return v;
   }
 
