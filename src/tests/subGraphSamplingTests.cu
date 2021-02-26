@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <nlohmann/json.hpp>
 
-#define VERTICES_PER_SAMPLE 100
+#define VERTICES_PER_SAMPLE 32
 
 nlohmann::json partitionsJson;
 
@@ -50,17 +50,21 @@ struct SubGraphSamplingAppI {
     int v2Idx = neighbrID; //for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) //
     {
       VertexID_t v2 = sample->vertices[v2Idx];
-      bool hasEdge = csr->has_edge_logn(v1, v2);
+      bool hasEdge = utils::binarySearch(transitEdges, v2, numEdges);
       // if (sampleIdx == 1929) {
       //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d\n", sampleIdx, v1, v2, hasEdge, v2Idx);
       // }
+
       if (hasEdge) {
         int len = ::atomicAdd(&sample->adjacencyMatrixLen, 1) + sample->adjMatrixPos;
         //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
         sample->adjacencyMatrixRow[len] = v1;
         sample->adjacencyMatrixCol[len] = v2;
         //sample->adjacencyMatrixVal[len] = 1.0f;
-
+        // if (sampleIdx == 49 && v1==1569 && v2==1570) { 
+        //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, 
+        //          sample->adjMatrixLength, sample->adjMatrixPos);
+        // }
         // if (sampleIdx == 1929 || (len >= 32765 && len <= 32766)) { //v1==76921 && v2==205491 && 
         //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, sample->adjMatrixLength);
         // }
@@ -81,10 +85,34 @@ struct SubGraphSamplingAppI {
                 curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
                 bool* globalLoadBV)
   {
-    EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-    if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(id, transitEdges, cachedEdges, globalLoadBV);
-    return transitEdges[id];
+    VertexID_t v1 = transit;
+    if (step == 0) {
+      ::atomicAdd(&sample->adjMatrixLength, numEdges);
+      return v1;
+    }
+
+    int v2Idx = neighbrID; //for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) //
+    {
+      VertexID_t v2 = sample->vertices[v2Idx];
+      bool hasEdge = utils::binarySearch(transitEdges, v2, numEdges);
+      // if (sampleIdx == 1929) {
+      //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d\n", sampleIdx, v1, v2, hasEdge, v2Idx);
+      // }
+      if (hasEdge) {
+        int len = ::atomicAdd(&sample->adjacencyMatrixLen, 1) + sample->adjMatrixPos;
+        //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
+        sample->adjacencyMatrixRow[len] = v1;
+        sample->adjacencyMatrixCol[len] = v2;
+        //sample->adjacencyMatrixVal[len] = 1.0f;
+
+        // if (sampleIdx == 1929 || (len >= 32765 && len <= 32766)) { //v1==76921 && v2==205491 && 
+        //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, sample->adjMatrixLength);
+        // }
+      }
+
+    }
+
+    return -1;
   }
 
   __host__ __device__ int samplingType()
@@ -125,7 +153,7 @@ struct SubGraphSamplingAppI {
     std::vector<VertexID_t> initialValue;
 
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      VertexID_t v = rand() % graph->get_n_vertices();
+      VertexID_t v = sampleIdx * VERTICES_PER_SAMPLE + i;//rand() % graph->get_n_vertices();
       initialValue.push_back(v);
       sample.vertices[i] = v;
     }
@@ -194,7 +222,7 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
       }
     }
 
-    // if (sampleIdx == 1929) {
+    // if (sampleIdx == 49) {
     // for (int e = 0; e < sample.adjacencyMatrixLen; e++) {
     //   VertexID_t v1 = hRowStorage[e + sample.adjMatrixPos];
     //   VertexID_t v2 = hColStorage[e + sample.adjMatrixPos];
@@ -244,7 +272,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 {
   Graph graph; 
   CSR* csr;
-  if ((csr = loadGraph(graph, (char*)graph_file, (char*)"adj-list", (char*)"text")) == nullptr) {
+  if ((csr = loadGraph(graph, (char*)graph_file, (char*)graph_type, (char*)graph_format)) == nullptr) {
     return false;
   }
 
@@ -301,8 +329,15 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 
 #define SubGraphAPP_TEST(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
   TEST(SubGraphSampling, TestName) { \
-    EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, KernelType, false, chkResultsFunc));\
+    EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc));\
   }
+
+#define SubGraphAPP_TEST_BINARY(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing)\
+  TEST(SubGraphSampling, TestName) { \
+  bool b = foo(Path, "edge-list", "binary", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc);\
+  EXPECT_TRUE(b);\
+}
+
 
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
 // APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
@@ -311,7 +346,12 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
 //SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-SubGraphAPP_TEST(RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+//SubGraphAPP_TEST(RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+//SubGraphAPP_TEST(RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+
 //APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
 // SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
 // //APP_TEST(SubGraph, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)

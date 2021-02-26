@@ -18,6 +18,38 @@
 #define MIN(x,y) (((x)>(y))?(y):(x))
 
 namespace utils {
+  template<typename T> 
+  __host__ __device__ __forceinline__
+  bool binarySearch (const T* array, T x, int size) 
+  {
+    EdgePos_t l = 0;
+    EdgePos_t r = size - 1;
+    
+    while (l <= r) {
+      EdgePos_t m = l + (r-l)/2;
+      if (array[m] == x)
+        return true;
+      
+      if (array[m] < x)
+        l = m + 1;
+      else
+        r = m - 1;
+    }
+    return false;
+  }
+
+  template<typename T> 
+  __host__ __device__ __forceinline__
+  bool linearSearch (const T* array, T x, int size) 
+  {
+    for (EdgePos_t i = 0; i < size; i++) {
+      if (array[i] == x) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   __device__
   EdgePos_t atomicAdd (EdgePos_t* ptr, const EdgePos_t val)
