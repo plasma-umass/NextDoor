@@ -225,6 +225,11 @@ __host__ __device__ int numberOfTransits(int step) {
   return -1;
 }
 
+__host__ __device__ bool isValidSampledVertex(VertexID_t neighbor, VertexID_t InvalidVertex) 
+{
+  return neighbor != InvalidVertex && neighbor != -1;
+}
+
 #define STORE_TRANSIT_INDEX false
 template<class SamplingType, typename App>
 __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size_t threadsExecuted, const size_t currExecutionThreads,
@@ -246,6 +251,8 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
   threadId += threadsExecuted;
   EdgePos_t transitIdx = threadId/App().stepSize(step);
   EdgePos_t transitNeighborIdx = threadId % App().stepSize(step);
+  EdgePos_t numTransits = numberOfTransits<App>(step);
+
   VertexID_t sampleIdx = transitToSamplesValues[transitIdx];
   assert(sampleIdx < NumSamples);
   VertexID_t transit = transitToSamplesKeys[transitIdx];
@@ -296,7 +303,7 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
   if (step != App().steps() - 1) {
     //No need to store at last step
     if (App().hasExplicitTransits()) {
-      VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, randState);
+      VertexID_t transit = App().stepTransits(step+1, sampleIdx, samples[sampleIdx], threadId%numTransits, randState);
       samplesToTransitValues[threadId] = transit;
     } else {
       samplesToTransitValues[threadId] = neighbor;
@@ -306,53 +313,54 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
 
   EdgePos_t insertionPos = 0;
 
-  if (numberOfTransits<App>(step) > 1) {    
-    //insertionPos = finalSampleSizeTillPreviousStep + transitNeighborIdx; //
-    if (step == 0) {
-      insertionPos = transitNeighborIdx;
-    } else {
-      EdgePos_t numTransits = numberOfTransits<App>(step);
-      size_t finalSampleSizeTillPreviousStep = 0;
-      size_t neighborsToSampleAtStep = 1;
-      for (int _s = 0; _s < step; _s++) {
-        neighborsToSampleAtStep *= App().stepSize(_s);
-        finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
+  if (isValidSampledVertex(neighbor, invalidVertex)) {
+    if (numberOfTransits<App>(step) > 1) {    
+      //insertionPos = finalSampleSizeTillPreviousStep + transitNeighborIdx; //
+      if (step == 0) {
+        insertionPos = transitNeighborIdx;
+      } else {
+        size_t finalSampleSizeTillPreviousStep = 0;
+        size_t neighborsToSampleAtStep = 1;
+        for (int _s = 0; _s < step; _s++) {
+          neighborsToSampleAtStep *= App().stepSize(_s);
+          finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
+        }
+        insertionPos = finalSampleSizeTillPreviousStep + utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
       }
-      insertionPos = finalSampleSizeTillPreviousStep + utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
+    } else {
+      insertionPos = step;
     }
-  } else {
-    insertionPos = step;
-  }
 
-  // if (insertionPo
+    // if (insertionPo
 
-  // if (insertionPos < finalSampleSize) {
-  //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
-  // }
-  assert(finalSampleSize > 0);
-  if (insertionPos >= finalSampleSize) {
-    printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sampleIdx);
-  }
-  assert(insertionPos < finalSampleSize);
-  if (numberOfTransits<App>(step) == 1 and combineTwoSampleStores) {
-    if (step % 2 == 1) {
-      finalSamples[sampleIdx*finalSampleSize + insertionPos - 1] = transit;
-      finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
-    } else if (step == App().steps() - 1) {
-      finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
-    }
-  }
-  else {
-    // if (STORE_TRANSIT_INDEX) {
-    //   //Store Index of transit in each sample's output
-    //   if (step == 0) {
-    //     transitIndexInSample[threadId] = insertionPos;
-    //   } else if (step != App().steps() - 1) {
-    //     transitIndexInSample[threadId] = prevTransitIndexInSample[];
-    //   }
+    // if (insertionPos < finalSampleSize) {
+    //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
     // }
+    assert(finalSampleSize > 0);
+    if (insertionPos >= finalSampleSize) {
+      printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sampleIdx);
+    }
+    assert(insertionPos < finalSampleSize);
+    if (numberOfTransits<App>(step) == 1 and combineTwoSampleStores) {
+      if (step % 2 == 1) {
+        finalSamples[sampleIdx*finalSampleSize + insertionPos - 1] = transit;
+        finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+      } else if (step == App().steps() - 1) {
+        finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+      }
+    }
+    else {
+      // if (STORE_TRANSIT_INDEX) {
+      //   //Store Index of transit in each sample's output
+      //   if (step == 0) {
+      //     transitIndexInSample[threadId] = insertionPos;
+      //   } else if (step != App().steps() - 1) {
+      //     transitIndexInSample[threadId] = prevTransitIndexInSample[];
+      //   }
+      // }
 
-    finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+      finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+    }
   }
 
   // if (sample == 100) {
@@ -2231,6 +2239,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
     //std::cout << "step " << step << std::endl;
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
+      std::cout << "step " << step << std::endl;
       for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
         size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
         samplingKernel<SampleType, App><<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 

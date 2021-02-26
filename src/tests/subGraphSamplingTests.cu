@@ -47,11 +47,11 @@ struct SubGraphSamplingAppI {
       return v1;
     }
 
-    int v2Idx = neighbrID;//for (int v2Idx = neighbrID; v2Idx <= neighbrID; v2Idx++) 
+    int v2Idx = neighbrID; //for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) //
     {
       VertexID_t v2 = sample->vertices[v2Idx];
       bool hasEdge = csr->has_edge_logn(v1, v2);
-      // if (v1==v2 && sampleIdx == 0) {
+      // if (sampleIdx == 1929) {
       //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d\n", sampleIdx, v1, v2, hasEdge, v2Idx);
       // }
       if (hasEdge) {
@@ -60,6 +60,10 @@ struct SubGraphSamplingAppI {
         sample->adjacencyMatrixRow[len] = v1;
         sample->adjacencyMatrixCol[len] = v2;
         //sample->adjacencyMatrixVal[len] = 1.0f;
+
+        // if (sampleIdx == 1929 || (len >= 32765 && len <= 32766)) { //v1==76921 && v2==205491 && 
+        //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, sample->adjMatrixLength);
+        // }
       }
 
     }
@@ -190,6 +194,15 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
       }
     }
 
+    // if (sampleIdx == 1929) {
+    // for (int e = 0; e < sample.adjacencyMatrixLen; e++) {
+    //   VertexID_t v1 = hRowStorage[e + sample.adjMatrixPos];
+    //   VertexID_t v2 = hColStorage[e + sample.adjMatrixPos];
+
+    //   printf("Sample '%d': '%d' -> '%d' at '%d'\n", sampleIdx, v1, v2, e);
+    // } 
+    // }
+
     //Go through edges between two vertices in graph and see if they exist in sample
     for (int vidx1 = 0; vidx1 < VERTICES_PER_SAMPLE; vidx1++) {
       VertexID_t v1 = sample.vertices[vidx1];
@@ -288,7 +301,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 
 #define SubGraphAPP_TEST(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
   TEST(SubGraphSampling, TestName) { \
-    EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, "SampleParallel", false, chkResultsFunc));\
+    EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, KernelType, false, chkResultsFunc));\
   }
 
 // APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
@@ -297,7 +310,8 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 // APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
 // APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+//SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST(RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 //APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
 // SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
 // //APP_TEST(SubGraph, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
