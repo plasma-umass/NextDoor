@@ -31,47 +31,6 @@
 
 typedef VertexID VertexID_t;
 
-//TODO-List:
-//[] Divide main() function in several small functions.
-//[] Divide the code in several include files that can be included in the API.
-//[] In GPU Kernels, do refactoring and move them to other places.
-//[] Use vectors instead of dynamic arrays and new.
-//[] Convert these vectors to a new array type that does not do initialization of data.
-//[] Use MKL or cuSPARSE to do the matrix transpose or sorting
-//[] A configuration that specifies all the parameters.
-//[] Use Templates for cleaner code of Sampler
-
-//Supported:
-//citeseer.graph
-// const int N = 3312;
-// const int N_EDGES = 9074;
-//micro.graph
-//const int N = 100000;
-//const int N_EDGES = 2160312;
-//rmat.graph
-// const int N = 1024;
-// const int N_EDGES = 29381;
-//ego-facebook
-// const int N = 4039;
-// const int N_EDGES = 88244;
-//ego-twitter
-//const int N = 81306;
-//const int N_EDGES = 2420766;
-//ego-gplus
-//const int N = 107614;
-//const int N_EDGES = 13652253;
-//soc-pokec-relationships
-//const int N = 1632803;
-//const int N_EDGES = 30480021;
-//soc-LiveJournal1
-//const int N = 4847571;
-//const int N_EDGES = 68556521;
-
-//Not supportred:
-//com-orkut.ungraph
-// const int N = 3072441;
-// const int N_EDGES = 117185083;
-
 #include "csr.hpp"
 #include "utils.hpp"
 #include "sampler.cuh"
@@ -83,16 +42,12 @@ using namespace GPUUtils;
 
 #define CHECK_RESULT
 
-//For mico, 512 works best
 const size_t N_THREADS = 256;
 
-//TODO try for larger random walks to improve results
-
-#define WARP_HOP
 
 const int ALL_NEIGHBORS = -1;
 
-const bool useGridKernel = true;
+const bool useGridKernel = false;
 const bool useSubWarpKernel = false;
 const bool useThreadBlockKernel = false;
 const bool combineTwoSampleStores = true;
@@ -273,31 +228,10 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
 
       neighbor = App().next(step, graph.device_csr, &transit, sampleIdx, &samples[sampleIdx], maxWeight, transitEdges, transitEdgeWeights, 
                       numTransitEdges, transitNeighborIdx, randState);
-#if 0
-      //search if neighbor has already been selected.
-      //we can do that in register if required
-      newNeigbhors[threadIdx.x] = neighbor;
-
-      bool found = false;
-      for (int i = 0; i < N_THREADS; i++) {
-        if (newNeigbhors[i] == neighbor) {
-          found = true;
-          // break;
-        }
-      }
-
-      __syncwarp();
-      if (found) {
-        neighbor = App().next(step, transit, sample, transitEdges, numTransitEdges, 
-          transitNeighborIdx, randState);;
-      }
-#endif
     }
   }
 
   __syncwarp();
-
-  EdgePos_t totalSizeOfSample = stepSizeAtStep<App>(step - 1);
 
   EdgePos_t insertionPos = 0;
 
@@ -305,67 +239,68 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
   if (step != App().steps() - 1) {
     //No need to store at last step
     if (App().hasExplicitTransits()) {
-      VertexID_t transit = App().stepTransits(step+1, sampleIdx, samples[sampleIdx], threadId%numTransits, randState);
-      samplesToTransitValues[threadId] = transit != -1 ? transit : invalidVertex;
+      VertexID_t newTransit = App().stepTransits(step+1, sampleIdx, samples[sampleIdx], threadId%numTransits, randState);
+      samplesToTransitValues[threadId] = newTransit != -1 ? newTransit : invalidVertex;
     } else {
       samplesToTransitValues[threadId] = neighbor != -1 ? neighbor : invalidVertex;
     }
     samplesToTransitKeys[threadId] = sampleIdx;
   }
 
-  if (isValidSampledVertex(neighbor, invalidVertex)) {
-    if (numberOfTransits<App>(step) > 1) {    
-      //insertionPos = finalSampleSizeTillPreviousStep + transitNeighborIdx; //
-      if (step == 0) {
-        insertionPos = transitNeighborIdx;
-      } else {
-        size_t finalSampleSizeTillPreviousStep = 0;
-        size_t neighborsToSampleAtStep = 1;
-        for (int _s = 0; _s < step; _s++) {
-          neighborsToSampleAtStep *= App().stepSize(_s);
-          finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
-        }
-        insertionPos = finalSampleSizeTillPreviousStep + utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
-      }
+  //FIXME: in deepwalk since there is an invalid vertex at step k, it will not store the
+  //transits of step k -1 due to coalescing the stores. 
+  if (numberOfTransits<App>(step) > 1 && isValidSampledVertex(neighbor, invalidVertex)) {   
+    //insertionPos = finalSampleSizeTillPreviousStep + transitNeighborIdx; //
+    if (step == 0) {
+      insertionPos = transitNeighborIdx;
     } else {
-      insertionPos = step;
+      size_t finalSampleSizeTillPreviousStep = 0;
+      size_t neighborsToSampleAtStep = 1;
+      for (int _s = 0; _s < step; _s++) {
+        neighborsToSampleAtStep *= App().stepSize(_s);
+        finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
+      }
+      insertionPos = finalSampleSizeTillPreviousStep + utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
     }
+  } else {
+    insertionPos = step;
+  }
 
-    // if (insertionPo
+  // if (insertionPo
 
-    // if (insertionPos < finalSampleSize) {
-    //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
-    // }
-    assert(finalSampleSize > 0);
-    if (insertionPos >= finalSampleSize) {
-      printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sampleIdx);
-    }
-    assert(insertionPos < finalSampleSize);
-    if (numberOfTransits<App>(step) == 1 and combineTwoSampleStores) {
-      if (step % 2 == 1) {
-        finalSamples[sampleIdx*finalSampleSize + insertionPos - 1] = transit;
-        finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
-      } else if (step == App().steps() - 1) {
-        finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+  // if (insertionPos < finalSampleSize) {
+  //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
+  // }
+  assert(finalSampleSize > 0);
+  if (insertionPos >= finalSampleSize) {
+    printf("insertionPos %d finalSampleSize %ld sample %d\n", insertionPos, finalSampleSize, sampleIdx);
+  }
+  assert(insertionPos < finalSampleSize);
+  if (numberOfTransits<App>(step) == 1 and combineTwoSampleStores) {
+    if (step == 0 || step == 1) {
+      if (sampleIdx == 89) {
+        printf("step %d transit %d neighbor %d insertionPos %d\n", step, transit, neighbor, insertionPos);
       }
     }
-    else {
-      // if (STORE_TRANSIT_INDEX) {
-      //   //Store Index of transit in each sample's output
-      //   if (step == 0) {
-      //     transitIndexInSample[threadId] = insertionPos;
-      //   } else if (step != App().steps() - 1) {
-      //     transitIndexInSample[threadId] = prevTransitIndexInSample[];
-      //   }
-      // }
-
+    if (step % 2 == 1) {
+      finalSamples[sampleIdx*finalSampleSize + insertionPos - 1] = transit;
+      if (isValidSampledVertex(neighbor, invalidVertex)) finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+    } else if (step == App().steps() - 1 && isValidSampledVertex(neighbor, invalidVertex)) {
       finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
     }
   }
-
-  // if (sample == 100) {
-  //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
-  // }
+  else {
+    // if (STORE_TRANSIT_INDEX) {
+    //   //Store Index of transit in each sample's output
+    //   if (step == 0) {
+    //     transitIndexInSample[threadId] = insertionPos;
+    //   } else if (step != App().steps() - 1) {
+    //     transitIndexInSample[threadId] = prevTransitIndexInSample[];
+    //   }
+    // }
+    if (isValidSampledVertex(neighbor, invalidVertex))
+      finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+  }
 }
 
 template<class SampleType, typename App, int THREADS, bool COALESCE_CURAND_LOAD>
