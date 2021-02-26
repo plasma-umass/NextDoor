@@ -3,7 +3,10 @@
 #include <stdlib.h>
 #include <nlohmann/json.hpp>
 
-#define VERTICES_PER_SAMPLE 32
+#define VERTICES_IN_CLUSTERS 16
+#define CLUSTERS_IN_SAMPLE 2
+#define VERTICES_PER_SAMPLE (VERTICES_IN_CLUSTERS*CLUSTERS_IN_SAMPLE)
+#define NUM_SAMPLES 1500000
 
 nlohmann::json partitionsJson;
 
@@ -14,7 +17,7 @@ public:
 
   int adjMatrixLength;
   int adjMatrixPos;
-  VertexID_t vertices[VERTICES_PER_SAMPLE];
+  VertexID_t vertices[VERTICES_IN_CLUSTERS*CLUSTERS_IN_SAMPLE];
   int adjacencyMatrixLen;
   int *adjacencyMatrixRow;
   int *adjacencyMatrixCol;
@@ -24,6 +27,7 @@ public:
 int * dRowStorage;
 int * dColStorage;
 int* dAdjMatrixTotalLen;
+std::vector<std::vector<VertexID_t>> clusters;
 
 struct SubGraphSamplingAppI {
   __host__ __device__ int steps() {return 2;}
@@ -127,7 +131,7 @@ struct SubGraphSamplingAppI {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
+    return NUM_SAMPLES;
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -151,11 +155,15 @@ struct SubGraphSamplingAppI {
   __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
   {
     std::vector<VertexID_t> initialValue;
-
-    for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      VertexID_t v = sampleIdx * VERTICES_PER_SAMPLE + i;//rand() % graph->get_n_vertices();
-      initialValue.push_back(v);
-      sample.vertices[i] = v;
+    int idx = 0;
+    for (int i = 0; i < CLUSTERS_IN_SAMPLE; i++) {
+      VertexID_t clusterIdx = (sampleIdx * CLUSTERS_IN_SAMPLE + i) % clusters.size();//rand() % graph->get_n_vertices();
+      //initialValue.insert(initialValue.begin(), clusters[clusterIdx].begin(), clusters[clusterIdx].end());
+      for (auto v : clusters[clusterIdx]) {
+        sample.vertices[idx] = v;
+        idx++;
+        initialValue.push_back(v);
+      }
     }
 
     return initialValue;
@@ -204,13 +212,15 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
   size_t numNeighborsToSampleAtStep = 0;
   bool foundError = false;
   int sampleIdx = 0;
-  int* hRowStorage = new int[csr->get_n_edges()];
-  int* hColStorage = new int[csr->get_n_edges()];
+  int* hRowStorage = new int[csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
+  int* hColStorage = new int[csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
 
-  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
-  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
+  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
+  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
 
-  for (SampleType& sample : samples) {
+  #pragma omp parallel for shared(foundError)
+  for (int sampleIdx = 0; sampleIdx < samples.size(); sampleIdx++) {
+    auto sample = samples[sampleIdx];
     //Go through all edges between two vertices and see if they exist in the graph
     for (int e = 0; e < sample.adjacencyMatrixLen; e++) {
       VertexID_t v1 = hRowStorage[e + sample.adjMatrixPos];
@@ -256,8 +266,6 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
         }
       }
     }
-
-    sampleIdx++;
   }
 
   printf("Results Checked? %d\n", !foundError);
@@ -290,6 +298,14 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   // }
 
   // std::cout << "maximumSize " << maximumSize << std::endl; 
+  
+  //Create Clusters
+  clusters = std::vector<std::vector<VertexID_t>>(csr->get_n_vertices()/VERTICES_IN_CLUSTERS);
+  for (int clusterIdx = 0; clusterIdx < csr->get_n_vertices()/VERTICES_IN_CLUSTERS; clusterIdx++) {
+    for (int v = 0; v < VERTICES_IN_CLUSTERS; v++) {
+      clusters[clusterIdx].push_back(clusterIdx * VERTICES_IN_CLUSTERS + v);
+    }
+  }
 
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   
@@ -298,8 +314,8 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   CHK_CU(cudaMalloc(&dAdjMatrixTotalLen, sizeof(int)));
   CHK_CU(cudaMemset(dAdjMatrixTotalLen, 0, sizeof(int)));
-  CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()));
-  CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()));
+  CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
+  CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
   //CHK_CU(cudaMalloc(&SubGraphSample::rowStorage, sizeof(VertexID_t) * graph.get_n_edges()));
   allocNextDoorDataOnGPU<SubGraphSample, SubGraphSamplingAppI>(csr, nextDoorData);
   
@@ -348,9 +364,9 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 //SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
 //SubGraphAPP_TEST(RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 //SubGraphAPP_TEST(RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-SubGraphAPP_TEST_BINARY(LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+//SubGraphAPP_TEST_BINARY(LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
 SubGraphAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-SubGraphAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+//SubGraphAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 
 //APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
 // SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
@@ -361,3 +377,39 @@ SubGraphAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/
 // SubGraphAPP_TEST(OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 // //APP_TEST(SubGraphSample, SubGraph, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
 // SubGraphAPP_TEST(OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+
+/**
+ * [==========] Running 2 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 2 tests from SubGraphSampling
+[ RUN      ] SubGraphSampling.LiveJournalSP
+Graph Binary Loaded
+Graph has 68555726 edges and 4847569 vertices 
+Final Size of each sample: 33
+Maximum Neighbors Sampled at each step: 32
+Number of Samples: 1500000
+2002:free memory 4006215680
+Maximum Threads Per Kernel: 5242880
+2023:free memory 3442081792
+SampleParallel: End to end time 0.192252 secs
+checking results
+* [==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from SubGraphSampling
+[ RUN      ] SubGraphSampling.LiveJournalTP
+Graph Binary Loaded
+Graph has 68555726 edges and 4847569 vertices 
+Final Size of each sample: 33
+Maximum Neighbors Sampled at each step: 32
+Number of Samples: 1500000
+2002:free memory 4006215680
+Maximum Threads Per Kernel: 5242880
+2023:free memory 3442081792
+step 0
+step 1
+Transit Parallel: End to end time 0.11525 secs
+InversionTime: 0.012413, LoadBalancingTime: 0, GridKernelTime: 0, ThreadBlockKernelTime: 0, SubWarpKernelTime: 0, IdentityKernelTime: 0
+checking results
+
+ * 
+*/
