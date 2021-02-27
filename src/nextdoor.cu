@@ -47,7 +47,7 @@ const size_t N_THREADS = 256;
 
 const int ALL_NEIGHBORS = -1;
 
-const bool useGridKernel = false;
+const bool useGridKernel = true;
 const bool useSubWarpKernel = false;
 const bool useThreadBlockKernel = false;
 const bool combineTwoSampleStores = true;
@@ -1304,7 +1304,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
   if (threadId >= currExecutionThreads)
     return;
   
-  // curandState* randState = &randStates[threadId];
+  curandState* randState = &randStates[threadId];
   threadId += threadsExecuted;
   if (threadId >= totalThreads)
     return;
@@ -1317,7 +1317,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
   if (App().samplingType() == CollectiveNeighborhood) {
     assert(!App().hasExplicitTransits());
   } else {
-    VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, nullptr);
+    VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, randState);
     samplesToTransitValues[threadId] = transit;
 
     if (StoreAsMap) {

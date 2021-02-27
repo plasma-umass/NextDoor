@@ -34,12 +34,13 @@ struct SubGraphSamplingAppI {
     return VERTICES_PER_SAMPLE;
   }
 
-  template<class SampleType>
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
   __device__ inline
-  VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx, 
-                SampleType* sample, const float max_weight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+  VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
     VertexID_t v1 = transits[0];
     if (step == 0) {
@@ -65,45 +66,6 @@ struct SubGraphSamplingAppI {
         //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, 
         //          sample->adjMatrixLength, sample->adjMatrixPos);
         // }
-        // if (sampleIdx == 1929 || (len >= 32765 && len <= 32766)) { //v1==76921 && v2==205491 && 
-        //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, sample->adjMatrixLength);
-        // }
-      }
-
-    }
-
-    return -1;
-  }
-
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
-  __device__ inline
-  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx,
-                SampleType* sample, 
-                const float max_weight,
-                CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE>& cachedEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state, float* cachedWeights)
-  {
-    VertexID_t v1 = transit;
-    if (step == 0) {
-      ::atomicAdd(&sample->adjMatrixLength, numEdges);
-      return v1;
-    }
-
-    int v2Idx = neighbrID; //for (int v2Idx = 0; v2Idx < VERTICES_PER_SAMPLE; v2Idx++) //
-    {
-      VertexID_t v2 = sample->vertices[v2Idx];
-      bool hasEdge = utils::binarySearch(cachedEdges, v2, numEdges);
-      // if (sampleIdx == 1929) {
-      //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d\n", sampleIdx, v1, v2, hasEdge, v2Idx);
-      // }
-      
-      if (hasEdge) {
-        int len = sample->adjMatrixPos + ::atomicAdd(&sample->adjacencyMatrixLen, 1);
-        //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
-        sample->adjacencyMatrixRow[len] = v1;
-        sample->adjacencyMatrixCol[len] = v2;
-
         // if (sampleIdx == 1929 || (len >= 32765 && len <= 32766)) { //v1==76921 && v2==205491 && 
         //   printf("sampleIdx %d v1 %d v2 %d hasEdge %d v2Idx %d len %d %d %d\n", sampleIdx, v1, v2, hasEdge, v2Idx, len, sample->adjacencyMatrixLen, sample->adjMatrixLength);
         // }

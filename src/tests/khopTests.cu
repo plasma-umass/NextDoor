@@ -9,32 +9,16 @@ struct KHopApp {
     return ((k == 0) ? 10 : 25);
   }
 
-  template<class SampleType>
-
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
   __device__ inline
-  VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
-    SampleType* sample, 
-    const float max_weight,
-    const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-    const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+  VertexID next(int step, CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
     EdgePos_t id = RandNumGen::rand_int(state, numEdges);
     return transitEdges[id];
-  }
-
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
-  __device__ inline
-  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
-                SampleType* sample, const float max_weight,
-                CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE>& transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state, float* cachedWeights)
-  {
-    const EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-    return transitEdges[id];
-    // if (CACHE_EDGES)
-    //   return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(id, transitEdges, cachedEdges, globalLoadBV);
-    // return transitEdges[id];
   }
 
   __host__ __device__ int samplingType()

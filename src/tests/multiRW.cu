@@ -19,13 +19,13 @@ struct MultiRWApp {
     return 1;
   }
 
-  template<class SampleType>
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
   __device__ inline
-  VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+  VertexID next(int step, CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
                 SampleType* sample, 
                 const float max_weight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
     if (numEdges == 1) {
       VertexID_t v = transitEdges[0];
@@ -39,43 +39,6 @@ struct MultiRWApp {
     EdgePos_t x = RandNumGen::rand_int(state, numEdges);
     VertexID_t v = transitEdges[x];
 
-    if (step > 0) {
-      sample->rootVertices[sample->lastRootIdx] = v;
-    }
-
-    return v;
-  }
-
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
-  __device__ inline
-  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
-    SampleType* sample,
-                const float max_weight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
-                bool* globalLoadBV)
-  {
-    if (numEdges == 1) {
-      VertexID_t v;
-      if (CACHE_EDGES)
-        v = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(0, transitEdges, cachedEdges, globalLoadBV);
-      else 
-        v = transitEdges[0];
-      if (step > 0) {
-        sample->rootVertices[sample->lastRootIdx] = v;
-      }
-
-      return v;
-    }
-    
-    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
-    VertexID_t v;
-    if (CACHE_EDGES)
-      v = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, CSR::Edge, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(x, transitEdges, cachedEdges, globalLoadBV);
-    else
-      v = transitEdges[x];
-      
     if (step > 0) {
       sample->rootVertices[sample->lastRootIdx] = v;
     }
@@ -286,10 +249,10 @@ bool checkMultiRWResult(NextDoorData<SampleType, App>& nextDoorData)
 // APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
 // APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
 //APP_TEST(MultiRW, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-//APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
- //               checkMultiRWResult, "TransitParallel", false)
-//APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
-//                checkMultiRWResult, "TransitParallel", true)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+               checkMultiRWResult, "TransitParallel", false)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "TransitParallel", true)
 APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
                 checkMultiRWResult, "SampleParallel", false)
 // APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
