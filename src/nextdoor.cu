@@ -1060,8 +1060,6 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         continue;
       }
       __syncthreads();
-      transitIdx = shMem.mapStartPos[transitI] + threadIdx.x/subWarpSize; //threadId/stepSize(step);
-      EdgePos_t transitNeighborIdx = threadIdx.x % subWarpSize;
       //TODO: Specialize this for subWarpSizez = 1.
       VertexID_t transit = shMem.subWarpTransits[transitI][threadIdx.x/subWarpSize];
 
@@ -1079,19 +1077,14 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         //assert(transit == invalidVertex || (transit != invalidVertex && kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel));
         shMem.invalidateCache = shMem.transitForTB != transit || transitI == 0;
         shMem.transitForTB = transit;
-
-        // if (transit == 612657) {
-        //   printf("transit %d fullBlockIdx  %d\n", transit, fullBlockIdx);
-        // }
-      }
-
-      if (threadIdx.x == 0 && shMem.invalidateCache) {
-        //assert(graph.device_csr->has_vertex(transit));
-        //TODO: fuse below functions into one to decrease reads
-        shMem.numEdgesInShMem = csr->get_n_edges_for_vertex(transit);
-        shMem.glTransitEdges = (CSR::Edge*)csr->get_edges(transit);
-        shMem.glTransitEdgeWeights = (float*)csr->get_weights(transit);
-        shMem.maxWeight = csr->get_max_weight(transit);
+        if (shMem.invalidateCache) {
+          //assert(graph.device_csr->has_vertex(transit));
+          //TODO: fuse below functions into one to decrease reads
+          shMem.numEdgesInShMem = csr->get_n_edges_for_vertex(transit);
+          shMem.glTransitEdges = (CSR::Edge*)csr->get_edges(transit);
+          shMem.glTransitEdgeWeights = (float*)csr->get_weights(transit);
+          shMem.maxWeight = csr->get_max_weight(transit);
+        }
       }
 
       __syncthreads();
@@ -1118,7 +1111,8 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
 
       if (transit == shMem.transitForTB) {
         //A thread will run next only when it's transit is same as transit of the threadblock.
-
+        transitIdx = shMem.mapStartPos[transitI] + threadIdx.x/subWarpSize; //threadId/stepSize(step);
+        EdgePos_t transitNeighborIdx = threadIdx.x % subWarpSize;
         VertexID_t sampleIdx = shMem.subWarpSampleIdx[transitI][threadIdx.x/subWarpSize];;
 
         // if (threadIdx.x % subWarpSize == 0) {
@@ -2393,7 +2387,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
         if (useGridKernel && *gridKernelTransitsNum > 0) {
           // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
-            const bool CACHE_EDGES = false;
+            const bool CACHE_EDGES = true;
             const bool CACHE_WEIGHTS = false;
             const int CACHE_SIZE = (CACHE_EDGES || CACHE_WEIGHTS) ? 3*1024-10 : 0;
           
