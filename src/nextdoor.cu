@@ -975,12 +975,12 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   union unionShMem {
     struct {
       unsigned char edgeAndWeightCache[EDGE_CACHE_SIZE+WEIGHT_CACHE_SIZE];
-      VertexID_t numEdgesInShMem;
       bool invalidateCache;
       VertexID_t transitForTB;
-      CSR::Edge* glTransitEdges;
-      float* glTransitEdgeWeights;
-      float maxWeight;
+      VertexID_t numEdgesInShMem[TRANSITS_PER_THREAD];
+      CSR::Edge* glTransitEdges[TRANSITS_PER_THREAD];
+      float* glTransitEdgeWeights[TRANSITS_PER_THREAD];
+      float maxWeight[TRANSITS_PER_THREAD];
       EdgePos_t mapStartPos[TRANSITS_PER_THREAD];
       EdgePos_t subWarpTransits[TRANSITS_PER_THREAD][THREADS/SUB_WARP_SIZE];
       EdgePos_t subWarpSampleIdx[TRANSITS_PER_THREAD][THREADS/SUB_WARP_SIZE];
@@ -1054,13 +1054,19 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
 
       shMem.subWarpTransits[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transit;
       shMem.subWarpSampleIdx[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
+      if (threadIdx.x % (THREADS/SUB_WARP_SIZE) == 0) {
+        shMem.numEdgesInShMem[transitI] = csr->get_n_edges_for_vertex(transit);
+        shMem.glTransitEdges[transitI] = (CSR::Edge*)csr->get_edges(transit);
+        shMem.glTransitEdgeWeights[transitI] = (float*)csr->get_weights(transit);
+        shMem.maxWeight[transitI] = csr->get_max_weight(transit);
+      }
     }
+
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
       if (TRANSITS_PER_THREAD * (fullBlockIdx) + transitI >= gridKernelTBPositionsNum) {
         continue;
       }
       __syncthreads();
-      //TODO: Specialize this for subWarpSizez = 1.
       VertexID_t transit = shMem.subWarpTransits[transitI][threadIdx.x/subWarpSize];
 
       // if (subWarpSize > 1 && fullBlockIdx % subWarpSize != 0 and threadIdx.x == 0) {
@@ -1077,33 +1083,25 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         //assert(transit == invalidVertex || (transit != invalidVertex && kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel));
         shMem.invalidateCache = shMem.transitForTB != transit || transitI == 0;
         shMem.transitForTB = transit;
-        if (shMem.invalidateCache) {
-          //assert(graph.device_csr->has_vertex(transit));
-          //TODO: fuse below functions into one to decrease reads
-          shMem.numEdgesInShMem = csr->get_n_edges_for_vertex(transit);
-          shMem.glTransitEdges = (CSR::Edge*)csr->get_edges(transit);
-          shMem.glTransitEdgeWeights = (float*)csr->get_weights(transit);
-          shMem.maxWeight = csr->get_max_weight(transit);
-        }
       }
 
       __syncthreads();
       if (CACHE_EDGES && shMem.invalidateCache) {
-        for (int i = threadIdx.x; i < min(CACHE_SIZE, shMem.numEdgesInShMem); i += blockDim.x) {
+        for (int i = threadIdx.x; i < min(CACHE_SIZE, shMem.numEdgesInShMem[transitI]); i += blockDim.x) {
           if (ONDEMAND_CACHING) {
             if (i < STATIC_CACHE_SIZE)
-              edgesInShMem[i] = shMem.glTransitEdges[i];
+              edgesInShMem[i] = shMem.glTransitEdges[transitI][i];
             else 
               edgesInShMem[i] = -1;
           } else {
-            edgesInShMem[i] = shMem.glTransitEdges[i];
+            edgesInShMem[i] = shMem.glTransitEdges[transitI][i];
           }
         }
       }
   
       if (CACHE_WEIGHTS && shMem.invalidateCache) {
-        for (int i = threadIdx.x; i < min(CACHE_SIZE, shMem.numEdgesInShMem); i += blockDim.x) {
-          edgeWeightsInShMem[i] = (ONDEMAND_CACHING) ? -1 : shMem.glTransitEdgeWeights[i];
+        for (int i = threadIdx.x; i < min(CACHE_SIZE, shMem.numEdgesInShMem[transitI]); i += blockDim.x) {
+          edgeWeightsInShMem[i] = (ONDEMAND_CACHING) ? -1 : shMem.glTransitEdgeWeights[transitI][i];
         }
       }
 
@@ -1129,15 +1127,15 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         // assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
         
         //TODO: Set this based on the input template parameters.
-        CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> cachedEdges = {shMem.glTransitEdges, edgesInShMem};
+        CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> cachedEdges = {shMem.glTransitEdges[transitI], edgesInShMem};
 
         VertexID_t neighbor = invalidVertex;
         // if (graph.device_csr->has_vertex(transit) == false)
         //   printf("transit %d\n", transit);
-        if (shMem.numEdgesInShMem > 0)
-          neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(step, transit, sampleIdx, &samples[sampleIdx], shMem.maxWeight, 
-                                                                cachedEdges, shMem.glTransitEdgeWeights,
-                                                                shMem.numEdgesInShMem, transitNeighborIdx, &localRandState,
+        if (shMem.numEdgesInShMem[transitI] > 0)
+          neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(step, transit, sampleIdx, &samples[sampleIdx], shMem.maxWeight[transitI], 
+                                                                cachedEdges, shMem.glTransitEdgeWeights[transitI],
+                                                                shMem.numEdgesInShMem[transitI], transitNeighborIdx, &localRandState,
                                                                 edgeWeightsInShMem);
         __syncwarp();
         // template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
@@ -2387,13 +2385,13 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
         if (useGridKernel && *gridKernelTransitsNum > 0) {
           // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
-            const bool CACHE_EDGES = true;
+            const bool CACHE_EDGES = false;
             const bool CACHE_WEIGHTS = false;
             const int CACHE_SIZE = (CACHE_EDGES || CACHE_WEIGHTS) ? 3*1024-10 : 0;
           
             switch (subWarpSizeAtStep<App>(step)) {
               case 32:
-                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,false,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
+                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,false,0,32><<<maxThreadBlocksPerKernel, 256>>>(step,
                   gpuCSRPartition, nextDoorData.INVALID_VERTEX,
                   (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
                   totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
