@@ -2,35 +2,12 @@
 
 #include <stdlib.h>    
 
-struct DeepWalkApp {
+struct RandomWalkApp {
   __host__ __device__ int steps() {return 100;}
 
   __host__ __device__ 
   int stepSize(int k) {
     return 1;
-  }
-
-  template<typename SampleType, typename EdgeArray, typename WeightArray>
-  __device__ inline
-  VertexID next(int step, CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
-                SampleType* sample, 
-                const float max_weight,
-                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
-                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
-  {
-    if (numEdges == 1) {
-      return transitEdges[0];
-    }
-    
-    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
-    float y = curand_uniform(state)*max_weight;
-
-    while (y > transitEdgeWeights[x]) {
-      x = RandNumGen::rand_int(state, numEdges);
-      y = curand_uniform(state)*max_weight;
-    }
-
-    return transitEdges[x];
   }
 
   __host__ __device__ int samplingType()
@@ -87,14 +64,111 @@ struct DeepWalkApp {
   }
 };
 
+struct DeepWalkApp : public RandomWalkApp {
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
+  __device__ inline
+  VertexID next(int step, CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
+  {
+    if (numEdges == 1) {
+      return transitEdges[0];
+    }
+    
+    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
+    float y = curand_uniform(state)*max_weight;
+
+    while (y > transitEdgeWeights[x]) {
+      x = RandNumGen::rand_int(state, numEdges);
+      y = curand_uniform(state)*max_weight;
+    }
+
+    return transitEdges[x];
+  }
+};
+
+struct PPRApp : public RandomWalkApp {
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
+  __device__ inline
+  VertexID next(int step, CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
+  {
+    if (numEdges == 1) {
+      return transitEdges[0];
+    }
+    
+    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
+    float y = curand_uniform(state)*max_weight;
+
+    while (y > transitEdgeWeights[x]) {
+      x = RandNumGen::rand_int(state, numEdges);
+      y = curand_uniform(state)*max_weight;
+    }
+
+    return transitEdges[x];
+  }
+};
+
 class DummySample
 {
 
 };
 
-#define RUNS 1
-#define CHECK_RESULTS true
+struct Node2VecApp : public RandomWalkApp {
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
+  __device__ inline
+  VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx,
+                SampleType* sample, 
+                const float max_weight,
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
+  {
+    if (numEdges == 1 || step == 0) {
+      sample->t = *transits;
+      return transitEdges[0];
+    }  
+    
+    const float p = 2.0f;
+    const float q = 0.5f;
 
+    do {
+      EdgePos_t x = RandNumGen::rand_int(state, numEdges);
+      VertexID v = transitEdges[x];
+      float y = curand_uniform(state)*max(max(p, 1/q), 1.0f);
+      const CSR::Edge* tEdges = csr->get_edges(sample->t);
+      EdgePos_t tNumEdges = csr->get_n_edges_for_vertex(sample->t);
+      float h;
+      if (x == sample->t) {
+        h = p;
+      } else if (utils::binarySearch(tEdges, v, tNumEdges)) {
+        h = 1/q;
+      } else {
+        h = 1.0f;
+      }
+
+      if (y < h) {
+        sample->t = *transits;
+        return v;
+      }
+    } while (true);
+  }
+};
+
+class Node2VecSample {
+public:
+  VertexID t;
+};
+
+
+#define RUNS 1
+#define CHECK_RESULTS false
+
+/**DeepWalk**/
 // APP_TEST(DeepWalk, DeepWalkApp, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
 // APP_TEST(DeepWalk, DeepWalkApp, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
 // APP_TEST(DeepWalk, DeepWalkApp, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
@@ -105,9 +179,16 @@ class DummySample
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS,  checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
 //APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
 // APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
-APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
 // APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutTP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
 // APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutLB, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
 // APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutSP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+
+
+/**Node2Vec**/
+
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, nullptr, "TransitParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, nullptr, "TransitParallel", true)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, nullptr, "SampleParallel", false)
