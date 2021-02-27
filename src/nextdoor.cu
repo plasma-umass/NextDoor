@@ -983,6 +983,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       float maxWeight;
       EdgePos_t mapStartPos[TRANSITS_PER_THREAD];
       EdgePos_t subWarpTransits[TRANSITS_PER_THREAD][THREADS/SUB_WARP_SIZE];
+      EdgePos_t subWarpSampleIdx[TRANSITS_PER_THREAD][THREADS/SUB_WARP_SIZE];
     };
     unsigned char shMemAlloc[sizeof(curandState)*THREADS];
   };
@@ -1052,6 +1053,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       }
 
       shMem.subWarpTransits[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transit;
+      shMem.subWarpSampleIdx[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
     }
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
       if (TRANSITS_PER_THREAD * (fullBlockIdx) + transitI >= gridKernelTBPositionsNum) {
@@ -1117,13 +1119,13 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       if (transit == shMem.transitForTB) {
         //A thread will run next only when it's transit is same as transit of the threadblock.
 
-        VertexID_t sampleIdx = -1;//transitToSamplesValues[transitIdx];
+        VertexID_t sampleIdx = shMem.subWarpSampleIdx[transitI][threadIdx.x/subWarpSize];;
 
-        if (threadIdx.x % subWarpSize == 0) {
-          sampleIdx = transitToSamplesValues[transitIdx];
-        }
+        // if (threadIdx.x % subWarpSize == 0) {
+        //   sampleIdx = transitToSamplesValues[transitIdx];
+        // }
         
-        sampleIdx = __shfl_sync(FULL_WARP_MASK, sampleIdx, 0, subWarpSize);
+        // sampleIdx = __shfl_sync(FULL_WARP_MASK, sampleIdx, 0, subWarpSize);
 
         if (transitNeighborIdx >= App().stepSize(step)) 
           continue;
