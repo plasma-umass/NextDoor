@@ -95,7 +95,7 @@ class KHopSample
 
 };
 
-#define RUNS 5
+#define RUNS 10
 #define CHECK_RESULTS false
 #define COMMA ,
 

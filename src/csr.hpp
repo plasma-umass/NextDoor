@@ -66,13 +66,16 @@ public:
       id = vertex.get_id ();
     }
 
-    __host__ __device__ EdgePos_t get_start_edge_idx () {return start_edge_id;}
-    __host__ __device__ EdgePos_t get_end_edge_idx () {return end_edge_id;}
+    __host__ __device__ EdgePos_t get_start_edge_idx () const {return start_edge_id;}
+    __host__ __device__ EdgePos_t get_end_edge_idx () const {return end_edge_id;}
     __host__ __device__ float get_max_weight() {return max_weight;}
     __host__ __device__ VertexID get_id () {return id;}
     __host__ __device__ void set_start_edge_id (EdgePos_t start) {start_edge_id = start;}
     __host__ __device__ void set_end_edge_id (EdgePos_t end) {end_edge_id = end;}
     __host__ __device__ void set_max_weight(float w) {max_weight = w;}
+    __host__ __device__ EdgePos_t num_edges() const {
+      return (get_end_edge_idx () != -1) ? (get_end_edge_idx () - get_start_edge_idx () + 1) : 0;
+    }
   };
 
   typedef VertexID Edge;
