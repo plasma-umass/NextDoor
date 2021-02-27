@@ -1102,7 +1102,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       if (transit == shMem.transitForTB) {
         //A thread will run next only when it's transit is same as transit of the threadblock.
         transitIdx = shMem.mapStartPos[transitI] + threadIdx.x/subWarpSize; //threadId/stepSize(step);
-        EdgePos_t transitNeighborIdx = threadIdx.x % subWarpSize;
+        VertexID_t transitNeighborIdx = threadIdx.x % subWarpSize;
         VertexID_t sampleIdx = shMem.subWarpSampleIdx[transitI][threadIdx.x/subWarpSize];;
 
         // if (threadIdx.x % subWarpSize == 0) {
@@ -1119,17 +1119,19 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         // assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
         
         //TODO: Set this based on the input template parameters.
-        CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> cachedEdges = {glTransitEdges, edgesInShMem};
+        typedef CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> CachedEdges;
+        typedef CachedArray<float, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> CachedWeights;
+
+        CachedEdges cachedEdges = {glTransitEdges, edgesInShMem};
+        CachedWeights cachedWeights = {glTransitEdgeWeights, edgeWeightsInShMem};
 
         VertexID_t neighbor = invalidVertex;
         // if (graph.device_csr->has_vertex(transit) == false)
         //   printf("transit %d\n", transit);
         if (numEdgesInShMem > 0)
-          neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
-                                                                cachedEdges, glTransitEdgeWeights,
-                                                                numEdgesInShMem, transitNeighborIdx, &localRandState,
-                                                                edgeWeightsInShMem);
-        // }
+          neighbor = App().template next<SampleType, CachedEdges, CachedWeights>(step, csr, &transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+                                                                cachedEdges, cachedWeights,
+                                                                numEdgesInShMem, transitNeighborIdx, &localRandState);
         // //EdgePos_t totalSizeOfSample = stepSizeAtStep<App>(step - 1);
         // if ((transit == 612657 || transit == 348930) && sampleIdx == 17175) {
         //   printf("transit %d fullBlockIdx  %d sampleIdx %d neighbor %d\n", transit, fullBlockIdx, sampleIdx, neighbor);
@@ -1441,8 +1443,8 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
           const float* transitEdgeWeights = (App().samplingType() == CollectiveNeighborhood) ? nullptr : graph.device_csr->get_weights(*transits);
           const float maxWeight = (App().samplingType() == CollectiveNeighborhood) ? 0.0 : graph.device_csr->get_max_weight(*transits);
   
-          neighbor = App().next(step, graph.device_csr, transits, sampleIdx, &samples[sampleIdx], maxWeight, transitEdges, transitEdgeWeights, 
-                                numTransitEdges, neighbrID, &localRandState);
+          neighbor = App().template next<SampleType, const CSR::Edge*, const float*> (step, graph.device_csr, transits, sampleIdx, &samples[sampleIdx], maxWeight, 
+            transitEdges, transitEdgeWeights, numTransitEdges, neighbrID, &localRandState);
       #if 0
           //search if neighbor has already been selected.
           //we can do that in register if required

@@ -10,13 +10,13 @@ struct DeepWalkApp {
     return 1;
   }
 
-  template<class SampleType>
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
   __device__ inline
-  VertexID next(int step,CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
+  VertexID next(int step, CSRPartition* csr, const VertexID* transit, const VertexID sampleIdx,
                 SampleType* sample, 
                 const float max_weight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+                EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+                const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
     if (numEdges == 1) {
       return transitEdges[0];
@@ -28,41 +28,6 @@ struct DeepWalkApp {
     while (y > transitEdgeWeights[x]) {
       x = RandNumGen::rand_int(state, numEdges);
       y = curand_uniform(state)*max_weight;
-    }
-
-    return transitEdges[x];
-  }
-
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
-  __device__ inline
-  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
-    SampleType* sample,
-                const float max_weight,
-                CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE>& transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state, float* cachedWeights)
-  {
-    if (numEdges == 1) {
-      return transitEdges[0];
-    }
-    
-    EdgePos_t x = RandNumGen::rand_int(state, numEdges);
-    float y = curand_uniform(state)*max_weight;
-    float weight;
-    if (CACHE_WEIGHTS) {
-      weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, float, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(x, transitEdgeWeights, cachedWeights, nullptr);
-    } else {
-      weight = transitEdgeWeights[x];
-    }
-
-    while (y > weight) {
-      x = RandNumGen::rand_int(state, numEdges);
-      y = curand_uniform(state)*max_weight;
-      if (CACHE_WEIGHTS) {
-        weight = cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS, float, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(x, transitEdgeWeights, cachedWeights, nullptr);
-      } else {
-        weight = transitEdgeWeights[x];
-      }
     }
 
     return transitEdges[x];
@@ -121,22 +86,6 @@ struct DeepWalkApp {
     return sample;
   }
 };
-
-/*
-  float2 randNums = curand_normal2(state);
-  EdgePos_t x =  min((EdgePos_t)(randNums.x*numEdges), numEdges-1);
-  float y = randNums.y*max_weight;
-
-  while (y > transitEdgeWeights[x]) {
-    randNums = curand_normal2(state);
-    x =  min((EdgePos_t)(randNums.x*numEdges), numEdges-1);
-    y = randNums.y*max_weight;
-  }
-
-  return transitEdges[x];
-*/
-
-//nvprof bin/test_rw_10.2_x86_64 by-pass --graph-file=/mnt/homes/abhinav/GPUesque-for-eval/input/reddit_sampled_matrix --walks-per-node=1 --walk-length=10 --walk-mode=0
 
 class DummySample
 {
