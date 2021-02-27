@@ -47,7 +47,7 @@ const size_t N_THREADS = 256;
 
 const int ALL_NEIGHBORS = -1;
 
-const bool useGridKernel = true;
+const bool useGridKernel = false;
 const bool useSubWarpKernel = false;
 const bool useThreadBlockKernel = false;
 const bool combineTwoSampleStores = true;
@@ -325,11 +325,6 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
   }
   assert(insertionPos < finalSampleSize);
   if (numberOfTransits<App>(step) == 1 and combineTwoSampleStores) {
-    if (step == 0 || step == 1) {
-      if (sampleIdx == 89) {
-        printf("step %d transit %d neighbor %d insertionPos %d\n", step, transit, neighbor, insertionPos);
-      }
-    }
     if (step % 2 == 1) {
       finalSamples[sampleIdx*finalSampleSize + insertionPos - 1] = transit;
       if (isValidSampledVertex(neighbor, invalidVertex)) finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
@@ -460,74 +455,71 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     }
 
     __syncwarp();
-
-  if (isValidSampledVertex(neighbor, invalidVertex)) {
-    //FIXME: in deepwalk if there is an invalid vertex at step k, it will not store the
-    //transits of step k -1 due to coalescing the stores. 
-    if (step != App().steps() - 1) {
-      //No need to store at last step
-      if (App().hasExplicitTransits()) {
-        assert(false);
-        VertexID_t transit = App().stepTransits(step + 1, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
-        samplesToTransitValues[threadId] = transit;
-      } else {
-        samplesToTransitValues[threadId] = neighbor;
-      }
-      samplesToTransitKeys[threadId] = sampleIdx;
-    }
-    
-    EdgePos_t finalSampleSizeTillPreviousStep = 0;
-    EdgePos_t neighborsToSampleAtStep = 1;
-    EdgePos_t insertionPos = 0; 
-    if (numberOfTransits<App>(step) > 1) {    
-      if (step == 0) {
-        insertionPos = transitNeighborIdx;
-      } else {
-        EdgePos_t numTransits = numberOfTransits<App>(step);
-        for (int _s = 0; _s < step; _s++) {
-          neighborsToSampleAtStep *= App().stepSize(_s);
-          finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
-        }
-        EdgePos_t insertionStartPosForTransit = 0;
-        if (threadIdx.x % subWarpSize == 0) {
-            insertionStartPosForTransit = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], App().stepSize(step));
-        }
-        insertionStartPosForTransit = __shfl_sync(FULL_WARP_MASK, insertionStartPosForTransit, 0, subWarpSize);
-        insertionPos = finalSampleSizeTillPreviousStep + insertionStartPosForTransit + transitNeighborIdx;
-      }
+  
+  if (step != App().steps() - 1) {
+    //No need to store at last step
+    if (App().hasExplicitTransits()) {
+      VertexID_t newTransit = App().stepTransits(step + 1, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
+      samplesToTransitValues[threadId] = newTransit != -1 ? newTransit : invalidVertex;;
     } else {
-      insertionPos = step;
+      samplesToTransitValues[threadId] = neighbor != -1 ? neighbor : invalidVertex;;
     }
+    samplesToTransitKeys[threadId] = sampleIdx;
+  }
 
-    // if (insertionPos < finalSampleSize) {
-    //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
-    // }
-    // if (sampleIdx == 1747842) {
-    //   printf("490: insertionPos %d finalSampleSize %ld sampleIdx %d transit %d\n", insertionPos, finalSampleSize, sampleIdx, transit);
-    // }
-    assert(insertionPos < finalSampleSize);
-
-    if (combineTwoSampleStores && numberOfTransits<App>(step) == 1) {
-      //TODO: We can combine stores even when numberOfTransits<App>(step) > 1
-      if (step % 2 == 1) {
-        int2 *ptr = (int2*)&finalSamples[sampleIdx*finalSampleSize + insertionPos - 1];
-        int2 res;
-        res.x = transit;
-        res.y = neighbor;
-        *ptr = res;
-        //finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
-      } else if (step == App().steps() - 1) {
-        finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
-      }
+  //FIXME: in deepwalk if there is an invalid vertex at step k, it will not store the
+  //transits of step k -1 due to coalescing the stores. 
+  EdgePos_t finalSampleSizeTillPreviousStep = 0;
+  EdgePos_t neighborsToSampleAtStep = 1;
+  EdgePos_t insertionPos = 0; 
+  if (numberOfTransits<App>(step) > 1 && isValidSampledVertex(neighbor, invalidVertex)) {    
+    if (step == 0) {
+      insertionPos = transitNeighborIdx;
     } else {
+      EdgePos_t numTransits = numberOfTransits<App>(step);
+      for (int _s = 0; _s < step; _s++) {
+        neighborsToSampleAtStep *= App().stepSize(_s);
+        finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
+      }
+      EdgePos_t insertionStartPosForTransit = 0;
+      if (threadIdx.x % subWarpSize == 0) {
+          insertionStartPosForTransit = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], App().stepSize(step));
+      }
+      insertionStartPosForTransit = __shfl_sync(FULL_WARP_MASK, insertionStartPosForTransit, 0, subWarpSize);
+      insertionPos = finalSampleSizeTillPreviousStep + insertionStartPosForTransit + transitNeighborIdx;
+    }
+  } else {
+    insertionPos = step;
+  }
+
+  // if (insertionPos < finalSampleSize) {
+  //   printf("insertionPos %d finalSampleSize %d\n", insertionPos, finalSampleSize);
+  // }
+  // if (sampleIdx == 1747842) {
+  //   printf("490: insertionPos %d finalSampleSize %ld sampleIdx %d transit %d\n", insertionPos, finalSampleSize, sampleIdx, transit);
+  // }
+  assert(insertionPos < finalSampleSize);
+
+  if (combineTwoSampleStores && numberOfTransits<App>(step) == 1) {
+    //TODO: We can combine stores even when numberOfTransits<App>(step) > 1
+    if (step % 2 == 1) {
+      int2 *ptr = (int2*)&finalSamples[sampleIdx*finalSampleSize + insertionPos - 1];
+      int2 res;
+      res.x = transit;
+      res.y = neighbor;
+      *ptr = res;
+      //finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+    } else if (step == App().steps() - 1) {
       finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
     }
-    // if (sample == 100) {
-    //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
-    // }
-    //TODO: We do not need atomic instead store indices of transit in another array,
-    //wich can be accessed based on sample and transitIdx.
-    }
+  } else {
+    finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+  }
+  // if (sample == 100) {
+  //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
+  // }
+  //TODO: We do not need atomic instead store indices of transit in another array,
+  //wich can be accessed based on sample and transitIdx.
   }
 }
 
@@ -1625,7 +1617,6 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
 
   if (kernelType == IdentityKernel && transit != invalidVertex && trCount !=-1) {
     *identityKernelTransitsNum = 1;
-    printf("transit %d trCount %d\n", transit, trCount);
   }
 
   __syncthreads();
@@ -2266,7 +2257,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
     //std::cout << "step " << step << std::endl;
     if (step == 0 || !enableLoadBalancing) {
       //When not doing load balancing call baseline transit parallel
-      std::cout << "step " << step << std::endl;
       for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
         size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
         samplingKernel<SampleType, App><<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 
@@ -2284,7 +2274,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       CHK_CU(cudaMemset(dKernelTransitNums, 0, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
       CHK_CU(cudaMemset(dInvalidVertexStartPosInMap, 0xFF, sizeof(EdgePos_t)));
       const size_t totalTransits = App().numSamples(csr)*numTransits;
-      std::cout << "totalTransits " << totalTransits << " numTransits " << numTransits << std::endl;
+      
       //Find the index of first invalid transit vertex. 
       invalidVertexStartPos<<<DIVUP(totalTransits, 256), 256>>>(step, nextDoorData.dTransitToSampleMapKeys, 
                                                                 totalTransits, nextDoorData.INVALID_VERTEX, dInvalidVertexStartPosInMap);
@@ -2297,7 +2287,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         *invalidVertexStartPosInMap = totalTransits;
       }
       totalThreads = *invalidVertexStartPosInMap;
-      std::cout << "invalidVertexStartPosInMap " << *invalidVertexStartPosInMap << std::endl;
       void* dRunLengthEncodeTmpStorage = nullptr;
       size_t dRunLengthEncodeTmpStorageSize = 0;
 
@@ -2317,7 +2306,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       
       CHK_CU(cudaMemcpy(uniqueTransitNumRuns, dUniqueTransitsNumRuns, sizeof(*uniqueTransitNumRuns), cudaMemcpyDeviceToHost));
       
-      std::cout << "uniqueTransitNumRuns " << (*uniqueTransitNumRuns) << std::endl;
       void* dExclusiveSumTmpStorage = nullptr;
       size_t dExclusiveSumTmpStorageSize = 0;
       
@@ -2354,7 +2342,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         // std::cout << "final totalThreads " << totalThreads << std::endl;
         const size_t maxThreadBlocksPerKernel = 4096;
         double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-        printf("identityKernelTransitsNum %d\n", *identityKernelTransitsNum);
         if (*identityKernelTransitsNum > 0 ) {
           identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
             gpuCSRPartition, nextDoorData.INVALID_VERTEX,
