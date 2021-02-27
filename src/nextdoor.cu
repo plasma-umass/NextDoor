@@ -403,7 +403,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
       continue;
     }
 
-    if ((useGridKernel && kernelTy == TransitKernelTypes::GridKernel) || 
+    if ((useGridKernel && kernelTy == TransitKernelTypes::GridKernel && numberOfTransits<App>(step) > 1) || 
         (useSubWarpKernel && kernelTy == TransitKernelTypes::SubWarpKernel) || 
         (useThreadBlockKernel && kernelTy == TransitKernelTypes::ThreadBlockKernel)) {
       continue;
@@ -1051,29 +1051,13 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
     __syncthreads();
     const int threadsToLoadTransit = sizeof(CSR::Vertex)/sizeof(int);
     if (threadIdx.x < threadsToLoadTransit * TRANSITS_PER_THREAD) {
+      //Load Transit Vertex Information in a Coalesced manner
       int transitI = threadIdx.x / threadsToLoadTransit;
       VertexID transit = shMem.subWarpTransits[transitI][0];
       const CSR::Vertex* transitVertex = csr->get_vertices() + transit;
       int tid = threadIdx.x % threadsToLoadTransit;
       int data = ((const int*)transitVertex)[tid];
       *(((int*)&shMem.transitVertices[transitI * sizeof(CSR::Vertex)]) + tid) = data;
-      // if (tid == 0) {
-      //   CSR::Vertex* shMemTransitVertex = ((CSR::Vertex*)(&shMem.transitVertices[transitI * sizeof(CSR::Vertex)]));
-      //   shMem.numEdgesInShMem[transitI] = shMemTransitVertex->num_edges();
-      //   // if (shMemTransitVertex->num_edges() != csr->get_n_edges_for_vertex(transit)) {
-      //   //   printf("transit %d shstart %d shend %d glstart %d glend %d\n", transit, shMemTransitVertex->get_start_edge_idx(),
-      //   //   shMemTransitVertex->get_end_edge_idx(), csr->get_start_edge_idx(transit), csr->get_end_edge_idx(transit));
-      //   //   return;
-      //   // }
-      //   // shMem.glTransitEdges[transitI] = (CSR::Edge*)csr->get_edges(transit);
-      //   // shMem.glTransitEdgeWeights[transitI] = (float*)csr->get_weights(transit);
-      //   // shMem.maxWeight[transitI] = csr->get_max_weight(transit);
-
-      //   shMem.numEdgesInShMem[transitI] = shMemTransitVertex->num_edges();
-      //   shMem.glTransitEdges[transitI] = (CSR::Edge*)csr->get_edges() + shMemTransitVertex->get_start_edge_idx();
-      //   shMem.glTransitEdgeWeights[transitI] = (float*)(CSR::Edge*)csr->get_weights() + shMemTransitVertex->get_start_edge_idx();
-      //   shMem.maxWeight[transitI] = shMemTransitVertex->get_max_weight();
-      // }
     }
 
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
@@ -1087,18 +1071,8 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       const CSR::Edge* glTransitEdges = (CSR::Edge*)csr->get_edges() + shMemTransitVertex->get_start_edge_idx();
       const float* glTransitEdgeWeights = (float*)(CSR::Edge*)csr->get_weights() + shMemTransitVertex->get_start_edge_idx();
       float maxWeight = shMemTransitVertex->get_max_weight();
-      // if (subWarpSize > 1 && fullBlockIdx % subWarpSize != 0 and threadIdx.x == 0) {
-      //   //If a thread block at index i is assigned a transit, which is not the same as the transit
-      //   //assigned to thread block (i/subWarpSize)*subWarpSize then we do not continue with the
-      //   //sampling in this thread block.
-      //   VertexID_t firstTBTransitIdx = mapStartPos - (fullBlockIdx % subWarpSize) * (blockDim.x / subWarpSize);
-      //   if (transitToSamplesKeys[firstTBTransitIdx] != transit) {
-      //     transit = invalidVertex;
-      //   }
-      // }
 
       if (threadIdx.x == 0) {
-        //assert(transit == invalidVertex || (transit != invalidVertex && kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel));
         shMem.invalidateCache = shMem.transitForTB != transit || transitI == 0;
         shMem.transitForTB = transit;
       }
@@ -2399,7 +2373,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
         double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
 
-        if (useGridKernel && *gridKernelTransitsNum > 0) {
+        if (useGridKernel && *gridKernelTransitsNum > 0 && numberOfTransits<App>(step) > 1) {
+          //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
           // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
             const bool CACHE_EDGES = true;
             const bool CACHE_WEIGHTS = false;
