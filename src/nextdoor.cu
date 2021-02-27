@@ -982,7 +982,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       float* glTransitEdgeWeights;
       float maxWeight;
       EdgePos_t mapStartPos[TRANSITS_PER_THREAD];
-      EdgePos_t subWarpTransits[THREADS/SUB_WARP_SIZE];
+      EdgePos_t subWarpTransits[TRANSITS_PER_THREAD][THREADS/SUB_WARP_SIZE];
     };
     unsigned char shMemAlloc[sizeof(curandState)*THREADS];
   };
@@ -1037,21 +1037,22 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       }
     }
     __syncthreads();
-    // if (threadIdx.x < THREADS/SUB_WARP_SIZE) {
-    //   for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
-    //     transitIdx = shMem.mapStartPos[transitI] + threadIdx.x;
-    //     //TODO: Specialize this for subWarpSizez = 1.
-    //     VertexID_t transit = invalidVertex;
-    //     if (subWarpSize == 1) {
-    //       transit = transitToSamplesKeys[transitIdx];
-    //     } else {
-    //       //TODO: Coalesce this load by loading for all subWarps in thread block into shared memory.
-    //       transit = transitToSamplesKeys[transitIdx];
-    //     }
+    if (threadIdx.x < THREADS/SUB_WARP_SIZE) {
+      //Coalesce loads of transits per sub-warp by loading transits for all sub-warps in one warp.
+      for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
+        transitIdx = shMem.mapStartPos[transitI] + threadIdx.x;
+        //TODO: Specialize this for subWarpSizez = 1.
+        VertexID_t transit = invalidVertex;
+        if (subWarpSize == 1) {
+          transit = transitToSamplesKeys[transitIdx];
+        } else {
+          //TODO: Coalesce this load by loading for all subWarps in thread block into shared memory.
+          transit = transitToSamplesKeys[transitIdx];
+        }
 
-    //     shMem.subWarpTransits[threadIdx.x] = transit;
-    //   }
-    // }
+        shMem.subWarpTransits[transitI][threadIdx.x] = transit;
+      }
+    }
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
       if (TRANSITS_PER_THREAD * (fullBlockIdx) + transitI >= gridKernelTBPositionsNum) {
         continue;
@@ -1060,17 +1061,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       transitIdx = shMem.mapStartPos[transitI] + threadIdx.x/subWarpSize; //threadId/stepSize(step);
       EdgePos_t transitNeighborIdx = threadIdx.x % subWarpSize;
       //TODO: Specialize this for subWarpSizez = 1.
-      VertexID_t transit = invalidVertex;
-      if (subWarpSize == 1) {
-        transit = transitToSamplesKeys[transitIdx];
-      } else {
-        //TODO: Coalesce this load by loading for all subWarps in thread block into shared memory.
-        if (threadIdx.x % subWarpSize == 0) {
-          transit = transitToSamplesKeys[transitIdx];
-        }
-        
-        transit = __shfl_sync(FULL_WARP_MASK, transit, 0, subWarpSize);
-      }
+      VertexID_t transit = shMem.subWarpTransits[transitI][threadIdx.x/subWarpSize];
 
       // if (subWarpSize > 1 && fullBlockIdx % subWarpSize != 0 and threadIdx.x == 0) {
       //   //If a thread block at index i is assigned a transit, which is not the same as the transit
