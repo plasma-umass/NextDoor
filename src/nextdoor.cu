@@ -107,6 +107,56 @@ __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, Sample
 
 __constant__ char csrPartitionBuff[sizeof(CSRPartition)];
 
+template<typename T, size_t CACHE_SIZE, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
+struct CachedArray {
+  const T* glArray;
+  T* shArray;
+  
+  __device__
+  T operator[](int id)
+  {
+    return at(id);
+  }
+
+  __device__
+  T at(int id)
+  {
+    if (id >= CACHE_SIZE) {
+      return glArray[id];
+    }
+    
+    VertexID_t e;
+
+    // if (false && COALESCE_GL_LOADS) {
+    //   e = cachedEdges[id];
+    //   if (e == -1)
+    //     cachedEdges[id] = -2;
+
+    //   int subWarpThreadIdx = threadIdx.x % LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+    //   //int subWarp = threadIdx.x / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
+    //   for (int i = subWarpThreadIdx; i < CACHE_SIZE; i += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
+    //     if (cachedEdges[i] == -2) {
+    //       cachedEdges[i] = transitEdges[i];
+    //     }
+    //   }
+      
+    //   e = cachedEdges[id];
+    // } else 
+    {
+      e = shArray[id];
+      if (id < STATIC_CACHE_SIZE)
+        return e;
+
+      if (ONDEMAND_CACHING and e == -1) {
+        e = glArray[id];
+        shArray[id] = e;
+      }
+    }
+
+    return e;
+  }
+};
+
 template<typename App>
 __host__ __device__
 EdgePos_t newNeighborsSize(int hop, EdgePos_t num_edges)
@@ -247,8 +297,6 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
     samplesToTransitKeys[threadId] = sampleIdx;
   }
 
-  //FIXME: in deepwalk since there is an invalid vertex at step k, it will not store the
-  //transits of step k -1 due to coalescing the stores. 
   if (numberOfTransits<App>(step) > 1 && isValidSampledVertex(neighbor, invalidVertex)) {   
     //insertionPos = finalSampleSizeTillPreviousStep + transitNeighborIdx; //
     if (step == 0) {
@@ -413,9 +461,9 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
 
     __syncwarp();
 
-  //  EdgePos_t totalSizeOfSample = stepSizeAtStep<App>(step - 1);
-
   if (isValidSampledVertex(neighbor, invalidVertex)) {
+    //FIXME: in deepwalk if there is an invalid vertex at step k, it will not store the
+    //transits of step k -1 due to coalescing the stores. 
     if (step != App().steps() - 1) {
       //No need to store at last step
       if (App().hasExplicitTransits()) {
@@ -637,13 +685,14 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
     // if (graph.device_csr->has_vertex(transit) == false)
     //   printf("transit %d\n", transit);
     assert(csr->has_vertex(transit));
-    
+    // CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> cachedEdges = {shMem.glTransitEdges, edgesInShMem};
     if (numTransitEdges != 0) {
-      neighbor = App().template nextCached<SampleType, CACHE_SIZE_PER_SUBWARP, CACHE_EDGES, CACHE_WEIGHTS, COALESCE_GL_LOADS, false, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
-                                                                                    glTransitEdges, glTransitEdgeWeights, 
-                                                                                    numTransitEdges, transitNeighborIdx, &localRandState,
-                                                                                    edgesInShMem, edgeWeightsInShMem,
-                                                                                    globalLoadBV);
+      assert(false);//TODO: Disable for now.
+      // neighbor = App().template nextCached<SampleType, CACHE_SIZE_PER_SUBWARP, CACHE_EDGES, CACHE_WEIGHTS, COALESCE_GL_LOADS, false, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+      //                                                                               cachedEdges, glTransitEdgeWeights, 
+      //                                                                               numTransitEdges, transitNeighborIdx, &localRandState,
+      //                                                                               edgeWeightsInShMem,
+      //                                                                               globalLoadBV);
     }
 
     // __syncwarp();
@@ -848,11 +897,12 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       // if (graph.device_csr->has_vertex(transit) == false)
       //   printf("transit %d\n", transit);
       if (numEdgesInShMem > 0)
-        neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, false, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
-                                                              glTransitEdges, glTransitEdgeWeights, 
-                                                              numEdgesInShMem, transitNeighborIdx, &localRandState,
-                                                              edgesInShMem, edgeWeightsInShMem,
-                                                              &globalLoadBV[0]);
+      assert(false);//TODO: Disabled for now.
+        // neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, false, 0>(step, transit, sampleIdx, &samples[sampleIdx], maxWeight, 
+        //                                                       glTransitEdges, glTransitEdgeWeights, 
+        //                                                       numEdgesInShMem, transitNeighborIdx, &localRandState,
+        //                                                       edgesInShMem, edgeWeightsInShMem,
+        //                                                       &globalLoadBV[0]);
       __syncwarp();
 
       //EdgePos_t totalSizeOfSample = stepSizeAtStep<App>(step - 1);
@@ -1074,17 +1124,26 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         //   printf("transit %d transitIdx %d gridDim.x %d\n", transit, transitIdx, gridDim.x);
         // }
         // assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
+        
+        //TODO: Set this based on the input template parameters.
+        CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> cachedEdges = {shMem.glTransitEdges, edgesInShMem};
 
         VertexID_t neighbor = invalidVertex;
         // if (graph.device_csr->has_vertex(transit) == false)
         //   printf("transit %d\n", transit);
         if (shMem.numEdgesInShMem > 0)
           neighbor = App().template nextCached<SampleType, CACHE_SIZE, CACHE_EDGES, CACHE_WEIGHTS, 0, ONDEMAND_CACHING, STATIC_CACHE_SIZE>(step, transit, sampleIdx, &samples[sampleIdx], shMem.maxWeight, 
-                                                                shMem.glTransitEdges, shMem.glTransitEdgeWeights, 
+                                                                cachedEdges, shMem.glTransitEdgeWeights,
                                                                 shMem.numEdgesInShMem, transitNeighborIdx, &localRandState,
-                                                                edgesInShMem, edgeWeightsInShMem,
-                                                                nullptr);
+                                                                edgeWeightsInShMem);
         __syncwarp();
+        // template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
+        // __device__ inline
+        // VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx, 
+        //               SampleType* sample, const float max_weight,
+        //               CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE>& transitEdges, const float* transitEdgeWeights,
+        //               const EdgePos_t numEdges, const EdgePos_t neighbrID, 
+        //               curandState* state, VertexID_t* cachedEdges, float* cachedWeights)
         // if (transit == 1935 && sampleIdx == 96) {
         //   printf("989 neighbor %d CACHE_WEIGHTS %d CACHE_EDGES %d numEdgesInShMem %d\n", neighbor, CACHE_WEIGHTS, CACHE_EDGES, numEdgesInShMem);
         // }
@@ -2317,7 +2376,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
 
         //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
         //Processing more can improve the locality if thread blocks have common transits.
-        const int perThreadSamplesForGridKernel = 16;
+        //const int perThreadSamplesForGridKernel = 16; // Works best for KHop
+        const int perThreadSamplesForGridKernel = 8;
 
         threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
         double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
@@ -2328,7 +2388,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
             const bool CACHE_WEIGHTS = false;
             switch (subWarpSizeAtStep<App>(step)) {
               case 32:
-                gridKernel<SampleType,App,256,3*1024-10,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,false,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
+                gridKernel<SampleType,App,256,3*1024-10,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
                   gpuCSRPartition, nextDoorData.INVALID_VERTEX,
                   (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
                   totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),

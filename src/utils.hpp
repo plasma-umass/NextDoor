@@ -18,9 +18,9 @@
 #define MIN(x,y) (((x)>(y))?(y):(x))
 
 namespace utils {
-  template<typename T> 
+  template<typename F, typename T> 
   __host__ __device__ __forceinline__
-  bool binarySearch (const T* array, T x, int size) 
+  bool binarySearch (F& array, T x, int size) 
   {
     EdgePos_t l = 0;
     EdgePos_t r = size - 1;
