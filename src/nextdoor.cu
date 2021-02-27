@@ -1602,25 +1602,30 @@ __global__ void partitionTransitsInKernels(int step, EdgePos_t* uniqueTransits, 
 
   int kernelType = -1;
   EdgePos_t numThreadGroups = 0;
-  if (trCount * subWarpSize >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
+  if (useGridKernel && trCount * subWarpSize >= LoadBalancing::LoadBalancingThreshold::GridLevel) {    
     kernelType = TransitKernelTypes::GridKernel;
-  } else if (trCount * subWarpSize > LoadBalancing::LoadBalancingThreshold::BlockLevel) {
+  } else if (useThreadBlockKernel && trCount * subWarpSize > LoadBalancing::LoadBalancingThreshold::BlockLevel) {
     kernelType = TransitKernelTypes::ThreadBlockKernel;
     // numThreadGroups = 0;
     // threadToTransitPos[threadIdx.x] = 0;
-  } else if (trCount * subWarpSize >= LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
+  } else if (useSubWarpKernel && trCount * subWarpSize >= LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
     kernelType = TransitKernelTypes::SubWarpKernel;
     
     // numThreadGroups = 0;
     // threadToTransitPos[threadIdx.x] = 0;
-  } // else {
-  //   kernelType = TransitKernelTypes::IdentityKernel;
-  //   // numThreadGroups = 0;
-  //   // threadToTransitPos[threadIdx.x] = 0;
-  // }
+  } else {
+    kernelType = TransitKernelTypes::IdentityKernel;
+    // numThreadGroups = 0;
+    // threadToTransitPos[threadIdx.x] = 0;
+  }
   
-  if (threadId < uniqueTransitCountsNum && transit != invalidVertex) {
+  if (threadId < uniqueTransitCountsNum && kernelType != IdentityKernel && transit != invalidVertex) {
     kernelTypeForTransit[transit] = kernelType;
+  } 
+
+  if (kernelType == IdentityKernel && transit != invalidVertex && trCount !=-1) {
+    *identityKernelTransitsNum = 1;
+    printf("transit %d trCount %d\n", transit, trCount);
   }
 
   __syncthreads();
@@ -2169,6 +2174,9 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   EdgePos_t* subWarpKernelTransitsNum = nullptr;
   EdgePos_t* dSubWarpKernelTransitsNum = nullptr;
   VertexID_t* dSubWarpKernelTransits = nullptr;
+
+  EdgePos_t* identityKernelTransitsNum = nullptr;
+  EdgePos_t* dIdentityKernelTransitsNum = nullptr;
   /**********************************/
   
   EdgePos_t* dInvalidVertexStartPosInMap = nullptr;
@@ -2188,7 +2196,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   gridKernelTransitsNum = hKernelTransitNums;
   threadBlockKernelTransitsNum = hKernelTransitNums + 1;
   subWarpKernelTransitsNum = hKernelTransitNums + 2;
-  invalidVertexStartPosInMap = hKernelTransitNums + 3;
+  identityKernelTransitsNum = hKernelTransitNums + 3;
+  invalidVertexStartPosInMap = hKernelTransitNums + 4;
   //threadBlockKernelTransitsNum = hKernelTransitNums[3];
   CHK_CU(cudaMalloc(&dKernelTypeForTransit, sizeof(VertexID_t)*csr->get_n_vertices()));
   CHK_CU(cudaMalloc(&dTransitPositions, 
@@ -2210,7 +2219,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
   dGridKernelTransitsNum = dKernelTransitNums;
   dThreadBlockKernelTransitsNum = dKernelTransitNums + 1;
   dSubWarpKernelTransitsNum = dKernelTransitNums + 2;
-  dInvalidVertexStartPosInMap = dKernelTransitNums + 3;
+  dIdentityKernelTransitsNum = dKernelTransitNums + 3;
+  dInvalidVertexStartPosInMap = dKernelTransitNums + 4;
 
   int* atomicPtrTest = nullptr;
   CHK_CU(cudaMalloc(&atomicPtrTest, sizeof(int)));
@@ -2325,7 +2335,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       if (*uniqueTransitNumRuns > 0) {
         partitionTransitsInKernels<App, 1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
             dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, 
-            dThreadBlockKernelTransits, dThreadBlockKernelTransitsNum, dSubWarpKernelTransits, dSubWarpKernelTransitsNum, nullptr, nullptr, dKernelTypeForTransit,
+            dThreadBlockKernelTransits, dThreadBlockKernelTransitsNum, dSubWarpKernelTransits, dSubWarpKernelTransitsNum, nullptr, dIdentityKernelTransitsNum, dKernelTypeForTransit,
             nextDoorData.dTransitToSampleMapKeys);
 
         CHK_CU(cudaGetLastError());
@@ -2344,17 +2354,20 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         // std::cout << "final totalThreads " << totalThreads << std::endl;
         const size_t maxThreadBlocksPerKernel = 4096;
         double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-        //if (*subWarpKernelTransitsNum +  *threadBlockKernelTransitsNum + *gridKernelTransitsNum < )
-        identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
-          gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-          (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-          totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-          nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-          nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-          nextDoorData.dCurandStates, dKernelTypeForTransit);
+        printf("identityKernelTransitsNum %d\n", *identityKernelTransitsNum);
+        if (*identityKernelTransitsNum > 0 ) {
+          identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
+            gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+            (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+            totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+            nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+            nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+            nextDoorData.dCurandStates, dKernelTypeForTransit);
+          CHK_CU(cudaGetLastError());
+          CHK_CU(cudaDeviceSynchronize());
+        }
 
-        CHK_CU(cudaGetLastError());
-        CHK_CU(cudaDeviceSynchronize());
+        
         double identityKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
         identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
         
