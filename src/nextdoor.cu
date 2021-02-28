@@ -1383,7 +1383,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
 
   Sample Parallel Kernel doing sampling on GPU using a sample parallel paradigm. 
   */
-  template<class SampleType, typename App, int THREADS>
+  template<class SampleType, typename App, int THREADS, bool WriteSampleToTransitMap>
   __global__ void sampleParallelKernel(const int step, GPUCSRPartition graph, 
                                        const VertexID_t invalidVertex,
                                        const size_t totalThreads,
@@ -1392,7 +1392,8 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
                                        const size_t NumSamples,
                                        VertexID_t* finalSamples,
                                        const size_t finalSampleSize, 
-                                       VertexID_t* explicitTransits,
+                                       VertexID_t* samplesToTransitMapKeys, 
+                                       VertexID_t* samplesToTransitMapValues,
                                        EdgePos_t* sampleInsertionPositions,
                                        curandState* randStates)
   {
@@ -1451,7 +1452,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
           EdgePos_t transitIdx = threadId % App().initialSampleSize(nullptr);
           singleTransit = initialSamples[sampleIdx*App().initialSampleSize(nullptr) + transitIdx];
         } else if (App().hasExplicitTransits()) {
-          singleTransit = explicitTransits[sampleIdx*numTransitsInPrevStep + (threadId % numTransits) / numTransitsInPrevStep];
+          singleTransit = samplesToTransitMapValues[sampleIdx*numTransitsInPrevStep + (threadId % numTransits) / numTransitsInPrevStep];
         } else {
           singleTransit = finalSamples[sampleIdx*finalSampleSize + (step - 1) * numTransits + (threadId % numTransits) % numTransitsInPrevStep];
         }
@@ -1459,7 +1460,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
         numTransitsInNeghbrhood = 1;
         transits = &singleTransit;
       }
-  
+      
       VertexID_t neighbor = invalidVertex;
       VertexID_t neighbrID = threadId % App().stepSize(step) ;//(threadId % numTransits) % numTransitsInPrevStep;
       VertexID_t transitID = (threadId % numTransits) / App().stepSize(step);
@@ -1501,6 +1502,11 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
         }
       }
   
+      if (WriteSampleToTransitMap) {
+        samplesToTransitMapKeys[threadId] = sampleIdx;
+        samplesToTransitMapValues[threadId] = neighbor;
+      }
+
       EdgePos_t insertionPos = 0; 
   
       size_t finalSampleSizeTillPreviousStep = 0;
@@ -2385,10 +2391,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         }
 
         //Call SampleParallel Kernel to do sampling
-        sampleParallelKernel<SampleType, App, 256><<<1024, 256>>>(step, gpuCSRPartition, 
+        sampleParallelKernel<SampleType, App, 256, true><<<1024, 256>>>(step, gpuCSRPartition, 
           nextDoorData.INVALID_VERTEX, totalThreads, 
           nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-          nextDoorData.dFinalSamples, finalSampleSize, 
+          nextDoorData.dFinalSamples, finalSampleSize,
+          nextDoorData.dSamplesToTransitMapKeys, 
           nextDoorData.dSamplesToTransitMapValues,
           nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
         CHK_CU(cudaGetLastError());
@@ -2839,10 +2846,11 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
     }
 
     //Perform SampleParallel Sampling
-    sampleParallelKernel<SampleType, App, 256><<<1024, 256>>>(step, gpuCSRPartition, 
+    sampleParallelKernel<SampleType, App, 256, false><<<1024, 256>>>(step, gpuCSRPartition, 
                   nextDoorData.INVALID_VERTEX, totalThreads, 
                   nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
                   nextDoorData.dFinalSamples, finalSampleSize, 
+                  nextDoorData.dSamplesToTransitMapKeys,
                   nextDoorData.dSamplesToTransitMapValues,
                   nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
     CHK_CU(cudaGetLastError());
