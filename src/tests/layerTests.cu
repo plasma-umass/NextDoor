@@ -3,7 +3,7 @@
 #define NUM_LAYERS 5
 #define NUM_SAMPLED_VERTICES 16
 #define VERTICES_PER_SAMPLE 16
-#define NUM_SAMPLES 200000
+#define NUM_SAMPLES 500000
 
 #include "../check_results.cu"
 
@@ -45,7 +45,7 @@ struct LayerSampleApp {
       }
       sample->adjacencyMatrixRow[step][len] = ii;
       sample->adjacencyMatrixCol[step][len] = jj;
-      sample->adjacencyMatrixVal[step][len] = 1.0f;
+      //sample->adjacencyMatrixVal[step][len] = 1.0f;
     }
 
     return id;
@@ -113,10 +113,10 @@ struct LayerSampleApp {
 // APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
-// APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
+// APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true
 //APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
 APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
-//APP_TEST(LayerSample, FastGCN, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
+APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", true)
 // APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(LayerSample, FastGCN, LayerSampleApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)

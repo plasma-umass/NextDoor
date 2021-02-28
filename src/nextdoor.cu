@@ -2389,21 +2389,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           CHK_CU(cudaGetLastError());
           CHK_CU(cudaDeviceSynchronize());
         }
-
-        //Call SampleParallel Kernel to do sampling
-        sampleParallelKernel<SampleType, App, 256, true><<<1024, 256>>>(step, gpuCSRPartition, 
-          nextDoorData.INVALID_VERTEX, totalThreads, 
-          nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-          nextDoorData.dFinalSamples, finalSampleSize,
-          nextDoorData.dSamplesToTransitMapKeys, 
-          nextDoorData.dSamplesToTransitMapValues,
-          nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
-        CHK_CU(cudaGetLastError());
-        CHK_CU(cudaDeviceSynchronize());
-
-        CHK_CU(cudaFree(dCollectiveNeighborhoodCSRCols));
-        CHK_CU(cudaFree(dCollectiveNeighborhoodCSRRows));
-
       } else {
         for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
           size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
@@ -2420,211 +2405,246 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       }
     } else {
       double loadBalancingT1 = convertTimeValToDouble(getTimeOfDay ());
-      CHK_CU(cudaMemset(dKernelTransitNums, 0, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
-      CHK_CU(cudaMemset(dInvalidVertexStartPosInMap, 0xFF, sizeof(EdgePos_t)));
-      const size_t totalTransits = App().numSamples(csr)*numTransits;
-      //Find the index of first invalid transit vertex. 
-      invalidVertexStartPos<<<DIVUP(totalTransits, 256), 256>>>(step, nextDoorData.dTransitToSampleMapKeys, 
-                                                                totalTransits, nextDoorData.INVALID_VERTEX, dInvalidVertexStartPosInMap);
-      CHK_CU(cudaGetLastError());
-      CHK_CU(cudaDeviceSynchronize());
-      
-      CHK_CU(cudaMemcpy(invalidVertexStartPosInMap, dInvalidVertexStartPosInMap, 1 * sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
-      //Now the number of threads launched are equal to number of valid transit vertices
-      if (*invalidVertexStartPosInMap == 0xFFFFFFFF) {
-        *invalidVertexStartPosInMap = totalTransits;
-      }
-      totalThreads = *invalidVertexStartPosInMap;
+      if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
+        CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(VertexID_t) * nextDoorData.samples.size()));
+        CHK_CU(cudaMemset(dSumNeighborhoodSizes, 0, sizeof(EdgePos_t)));
+        //Create collective neighborhood for all transits related to a sample
+        collectiveNeighbrsSize<App><<<nextDoorData.samples.size(), N_THREADS>>>(step, gpuCSRPartition, 
+                                                                            nextDoorData.INVALID_VERTEX,
+                                                                            nextDoorData.dInitialSamples, 
+                                                                            nextDoorData.dFinalSamples, 
+                                                                            nextDoorData.samples.size(),
+                                                                            dSampleNeighborhoodPos,
+                                                                            dSumNeighborhoodSizes);
+        CHK_CU(cudaGetLastError());
+        CHK_CU(cudaDeviceSynchronize());
+        //TODO: Neighborhood is edges of all transit vertices. Hence, neighborhood size is (# of Transit Vertices)/(|G.V|) * |G.E|
+        CHK_CU(cudaMemcpy(hSumNeighborhoodSizes, dSumNeighborhoodSizes, sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
+        //std::cout <<" hSumNeighborhoodSizes " << *hSumNeighborhoodSizes << std::endl;
+        CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRCols, sizeof(VertexID_t)*(*hSumNeighborhoodSizes)));
+        CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRRows, sizeof(EdgePos_t)*App().initialSampleSize(csr)*nextDoorData.samples.size()));
+      } else {
+        CHK_CU(cudaMemset(dKernelTransitNums, 0, NUM_KERNEL_TYPES * sizeof(EdgePos_t)));
+        CHK_CU(cudaMemset(dInvalidVertexStartPosInMap, 0xFF, sizeof(EdgePos_t)));
+        const size_t totalTransits = App().numSamples(csr)*numTransits;
+        //Find the index of first invalid transit vertex. 
+        invalidVertexStartPos<<<DIVUP(totalTransits, 256), 256>>>(step, nextDoorData.dTransitToSampleMapKeys, 
+                                                                  totalTransits, nextDoorData.INVALID_VERTEX, dInvalidVertexStartPosInMap);
+        CHK_CU(cudaGetLastError());
+        CHK_CU(cudaDeviceSynchronize());
+        
+        CHK_CU(cudaMemcpy(invalidVertexStartPosInMap, dInvalidVertexStartPosInMap, 1 * sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
+        //Now the number of threads launched are equal to number of valid transit vertices
+        if (*invalidVertexStartPosInMap == 0xFFFFFFFF) {
+          *invalidVertexStartPosInMap = totalTransits;
+        }
+        totalThreads = *invalidVertexStartPosInMap;
 
-      void* dRunLengthEncodeTmpStorage = nullptr;
-      size_t dRunLengthEncodeTmpStorageSize = 0;
+        void* dRunLengthEncodeTmpStorage = nullptr;
+        size_t dRunLengthEncodeTmpStorageSize = 0;
 
-      //Find the number of transit vertices
-      cub::DeviceRunLengthEncode::Encode(dRunLengthEncodeTmpStorage, dRunLengthEncodeTmpStorageSize, 
-                                        nextDoorData.dTransitToSampleMapKeys,
-                                        dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns, totalThreads);
+        //Find the number of transit vertices
+        cub::DeviceRunLengthEncode::Encode(dRunLengthEncodeTmpStorage, dRunLengthEncodeTmpStorageSize, 
+                                          nextDoorData.dTransitToSampleMapKeys,
+                                          dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns, totalThreads);
 
-      assert(dRunLengthEncodeTmpStorageSize < temp_storage_bytes);
-      dRunLengthEncodeTmpStorage = d_temp_storage;
-      cub::DeviceRunLengthEncode::Encode(dRunLengthEncodeTmpStorage, dRunLengthEncodeTmpStorageSize, 
-                                        nextDoorData.dTransitToSampleMapKeys,
-                                        dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns, totalThreads);
-
-      CHK_CU(cudaGetLastError());
-      CHK_CU(cudaDeviceSynchronize());
-      
-      CHK_CU(cudaMemcpy(uniqueTransitNumRuns, dUniqueTransitsNumRuns, sizeof(*uniqueTransitNumRuns), cudaMemcpyDeviceToHost));
-      
-      void* dExclusiveSumTmpStorage = nullptr;
-      size_t dExclusiveSumTmpStorageSize = 0;
-      //Exclusive sum to obtain the start position of each transit (and its samples) in the map
-      cub::DeviceScan::ExclusiveSum(dExclusiveSumTmpStorage, dExclusiveSumTmpStorageSize, dUniqueTransitsCounts, dTransitPositions, *uniqueTransitNumRuns);
-
-      assert(dExclusiveSumTmpStorageSize < temp_storage_bytes);
-      dExclusiveSumTmpStorage = d_temp_storage;
-
-      cub::DeviceScan::ExclusiveSum(dExclusiveSumTmpStorage, dExclusiveSumTmpStorageSize, dUniqueTransitsCounts, dTransitPositions, *uniqueTransitNumRuns);
-
-      CHK_CU(cudaGetLastError());
-      CHK_CU(cudaDeviceSynchronize());
-      //printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
-      if (*uniqueTransitNumRuns > 0) {
-        partitionTransitsInKernels<App, 1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
-            dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, 
-            dThreadBlockKernelTransits, dThreadBlockKernelTransitsNum, dSubWarpKernelTransits, dSubWarpKernelTransitsNum, nullptr, dIdentityKernelTransitsNum, dKernelTypeForTransit,
-            nextDoorData.dTransitToSampleMapKeys);
+        assert(dRunLengthEncodeTmpStorageSize < temp_storage_bytes);
+        dRunLengthEncodeTmpStorage = d_temp_storage;
+        cub::DeviceRunLengthEncode::Encode(dRunLengthEncodeTmpStorage, dRunLengthEncodeTmpStorageSize, 
+                                          nextDoorData.dTransitToSampleMapKeys,
+                                          dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns, totalThreads);
 
         CHK_CU(cudaGetLastError());
         CHK_CU(cudaDeviceSynchronize());
-        CHK_CU(cudaMemcpy(hKernelTransitNums, dKernelTransitNums, NUM_KERNEL_TYPES * sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
         
-        //std::cout << "hInvalidVertexStartPosInMap " << *invalidVertexStartPosInMap << " step " << step << std::endl;
-        // GPUUtils::printDeviceArray(dGridKernelTransits, *gridKernelTransitsNum, ',');
-        // getchar();
-        double loadBalancingT2 = convertTimeValToDouble(getTimeOfDay ());
-        loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
-        int subWarpSize = subWarpSizeAtStep<App>(step);
-        // std::cout << "SubWarpSize at step " << step << " " << subWarpSize << std::endl;
-        //From each Transit we sample stepSize(step) vertices
-        totalThreads =  totalThreads * subWarpSize;
-        // std::cout << "final totalThreads " << totalThreads << std::endl;
-        const size_t maxThreadBlocksPerKernel = 4096;
-        double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-        if (*identityKernelTransitsNum > 0) {
-          identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
-            gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-            (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-            totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-            nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-            nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-            nextDoorData.dCurandStates, dKernelTypeForTransit);
+        CHK_CU(cudaMemcpy(uniqueTransitNumRuns, dUniqueTransitsNumRuns, sizeof(*uniqueTransitNumRuns), cudaMemcpyDeviceToHost));
+        
+        void* dExclusiveSumTmpStorage = nullptr;
+        size_t dExclusiveSumTmpStorageSize = 0;
+        //Exclusive sum to obtain the start position of each transit (and its samples) in the map
+        cub::DeviceScan::ExclusiveSum(dExclusiveSumTmpStorage, dExclusiveSumTmpStorageSize, dUniqueTransitsCounts, dTransitPositions, *uniqueTransitNumRuns);
+
+        assert(dExclusiveSumTmpStorageSize < temp_storage_bytes);
+        dExclusiveSumTmpStorage = d_temp_storage;
+
+        cub::DeviceScan::ExclusiveSum(dExclusiveSumTmpStorage, dExclusiveSumTmpStorageSize, dUniqueTransitsCounts, dTransitPositions, *uniqueTransitNumRuns);
+
+        CHK_CU(cudaGetLastError());
+        CHK_CU(cudaDeviceSynchronize());
+        printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
+        if (*uniqueTransitNumRuns > 0) {
+          partitionTransitsInKernels<App, 1024><<<thread_block_size((*uniqueTransitNumRuns), 1024), 1024>>>(step, dUniqueTransits, dUniqueTransitsCounts, 
+              dTransitPositions, *uniqueTransitNumRuns, nextDoorData.INVALID_VERTEX, dGridKernelTransits, dGridKernelTransitsNum, 
+              dThreadBlockKernelTransits, dThreadBlockKernelTransitsNum, dSubWarpKernelTransits, dSubWarpKernelTransitsNum, nullptr, dIdentityKernelTransitsNum, dKernelTypeForTransit,
+              nextDoorData.dTransitToSampleMapKeys);
+
           CHK_CU(cudaGetLastError());
           CHK_CU(cudaDeviceSynchronize());
-        }
-
-        
-        double identityKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
-        identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
-        
-        const int perThreadSamplesForSubWarpKernel = 1;
-        int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamplesForSubWarpKernel), 256);
-        //std::cout << "subWarpKernelTransitsNum " << *subWarpKernelTransitsNum << " threadBlocks " << threadBlocks << std::endl;
-        double subWarpKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-        if (useSubWarpKernel && *subWarpKernelTransitsNum > 0) {
-          subWarpKernel<SampleType, App, 256,3*1024,false,false,false,perThreadSamplesForSubWarpKernel,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-            (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-            totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-            nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-            nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-            nextDoorData.dCurandStates, dKernelTypeForTransit, dSubWarpKernelTransits, *subWarpKernelTransitsNum);
-          CHK_CU(cudaGetLastError());
-          CHK_CU(cudaDeviceSynchronize());
-        }
-        double subWarpKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
-        subWarpKernelTime += (subWarpKernelTimeT2 - subWarpKernelTimeT1);
-
-        double threadBlockKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-        const int perThreadSamplesForThreadBlockKernel = 1;
-        threadBlocks = DIVUP(*threadBlockKernelTransitsNum, perThreadSamplesForThreadBlockKernel);
-        if (useThreadBlockKernel && *threadBlockKernelTransitsNum > 0) {
-          threadBlockKernel<SampleType, App, 256,3*1024-3,true,false,false,perThreadSamplesForThreadBlockKernel,true><<<threadBlocks, 32>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-            (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-            totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-            nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-            nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-            nextDoorData.dCurandStates, dKernelTypeForTransit, dThreadBlockKernelTransits, *threadBlockKernelTransitsNum);
-          CHK_CU(cudaGetLastError());
-          CHK_CU(cudaDeviceSynchronize());
-        }
-        double threadBlockKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
-        threadBlockKernelTime += (threadBlockKernelTimeT2 - threadBlockKernelTimeT1);
-
-        //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
-        //Processing more can improve the locality if thread blocks have common transits.
-        const int perThreadSamplesForGridKernel = 16; // Works best for KHop
-        //const int perThreadSamplesForGridKernel = 8;
-
-        threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
-        double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
-
-        if (useGridKernel && *gridKernelTransitsNum > 0 && numberOfTransits<App>(step) > 1) {
-          //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
-          // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
-            const bool CACHE_EDGES = true;
-            const bool CACHE_WEIGHTS = false;
-            const int CACHE_SIZE = (CACHE_EDGES || CACHE_WEIGHTS) ? 3*1024-10 : 0;
+          CHK_CU(cudaMemcpy(hKernelTransitNums, dKernelTransitNums, NUM_KERNEL_TYPES * sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
           
-            switch (subWarpSizeAtStep<App>(step)) {
-              case 32:
-                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,false,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
-                  gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                  (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                  totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                  nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                  nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
-                  break;
-              case 16:
-                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,16><<<maxThreadBlocksPerKernel, 256>>>(step,
-                  gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                  (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                  totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                  nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                  nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
-                  break;
-              case 8:
-              gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,8><<<maxThreadBlocksPerKernel, 256>>>(step,
-                gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
-                break;
-              case 4:
-              gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,4><<<maxThreadBlocksPerKernel, 256>>>(step,
-                gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
-                break;
-              case 2:
-              gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,2><<<maxThreadBlocksPerKernel, 256>>>(step,
-                gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
-                break;
-              case 1:
-              gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,1><<<maxThreadBlocksPerKernel, 256>>>(step,
-                gpuCSRPartition, nextDoorData.INVALID_VERTEX,
-                (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
-                totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
-                nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
-                nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
-                nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
-                break;
-              default:
-                //TODO: Add others
-                  break;
-            }
+          //std::cout << "hInvalidVertexStartPosInMap " << *invalidVertexStartPosInMap << " step " << step << std::endl;
+          // GPUUtils::printDeviceArray(dGridKernelTransits, *gridKernelTransitsNum, ',');
+          // getchar();
+          double loadBalancingT2 = convertTimeValToDouble(getTimeOfDay ());
+          loadBalancingTime += (loadBalancingT2 - loadBalancingT1);
+          int subWarpSize = subWarpSizeAtStep<App>(step);
+          // std::cout << "SubWarpSize at step " << step << " " << subWarpSize << std::endl;
+          //From each Transit we sample stepSize(step) vertices
+          totalThreads =  totalThreads * subWarpSize;
+          // std::cout << "final totalThreads " << totalThreads << std::endl;
+          const size_t maxThreadBlocksPerKernel = 4096;
+          double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
+          if (*identityKernelTransitsNum > 0) {
+            identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
+              gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+              (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+              totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+              nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+              nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+              nextDoorData.dCurandStates, dKernelTypeForTransit);
             CHK_CU(cudaGetLastError());
             CHK_CU(cudaDeviceSynchronize());
-          // }
+          }
+
+          
+          double identityKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
+          identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
+          
+          const int perThreadSamplesForSubWarpKernel = 1;
+          int threadBlocks = DIVUP(DIVUP(*subWarpKernelTransitsNum*LoadBalancing::LoadBalancingThreshold::SubWarpLevel, perThreadSamplesForSubWarpKernel), 256);
+          //std::cout << "subWarpKernelTransitsNum " << *subWarpKernelTransitsNum << " threadBlocks " << threadBlocks << std::endl;
+          double subWarpKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
+          if (useSubWarpKernel && *subWarpKernelTransitsNum > 0) {
+            subWarpKernel<SampleType, App, 256,3*1024,false,false,false,perThreadSamplesForSubWarpKernel,true><<<threadBlocks, 256>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+              (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+              totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+              nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+              nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+              nextDoorData.dCurandStates, dKernelTypeForTransit, dSubWarpKernelTransits, *subWarpKernelTransitsNum);
+            CHK_CU(cudaGetLastError());
+            CHK_CU(cudaDeviceSynchronize());
+          }
+          double subWarpKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
+          subWarpKernelTime += (subWarpKernelTimeT2 - subWarpKernelTimeT1);
+
+          double threadBlockKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
+          const int perThreadSamplesForThreadBlockKernel = 1;
+          threadBlocks = DIVUP(*threadBlockKernelTransitsNum, perThreadSamplesForThreadBlockKernel);
+          if (useThreadBlockKernel && *threadBlockKernelTransitsNum > 0) {
+            threadBlockKernel<SampleType, App, 256,3*1024-3,true,false,false,perThreadSamplesForThreadBlockKernel,true><<<threadBlocks, 32>>>(step, gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+              (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+              totalThreads, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+              nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+              nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+              nextDoorData.dCurandStates, dKernelTypeForTransit, dThreadBlockKernelTransits, *threadBlockKernelTransitsNum);
+            CHK_CU(cudaGetLastError());
+            CHK_CU(cudaDeviceSynchronize());
+          }
+          double threadBlockKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
+          threadBlockKernelTime += (threadBlockKernelTimeT2 - threadBlockKernelTimeT1);
+
+          //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
+          //Processing more can improve the locality if thread blocks have common transits.
+          const int perThreadSamplesForGridKernel = 16; // Works best for KHop
+          //const int perThreadSamplesForGridKernel = 8;
+
+          threadBlocks = DIVUP(*gridKernelTransitsNum, perThreadSamplesForGridKernel);
+          double gridKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
+
+          if (useGridKernel && *gridKernelTransitsNum > 0 && numberOfTransits<App>(step) > 1) {
+            //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
+            // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
+              const bool CACHE_EDGES = true;
+              const bool CACHE_WEIGHTS = false;
+              const int CACHE_SIZE = (CACHE_EDGES || CACHE_WEIGHTS) ? 3*1024-10 : 0;
+            
+              switch (subWarpSizeAtStep<App>(step)) {
+                case 32:
+                  gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,false,256,32><<<maxThreadBlocksPerKernel, 256>>>(step,
+                    gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                    (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                    totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                    nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                    nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                    nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                    break;
+                case 16:
+                  gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,16><<<maxThreadBlocksPerKernel, 256>>>(step,
+                    gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                    (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                    totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                    nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                    nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                    nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                    break;
+                case 8:
+                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,8><<<maxThreadBlocksPerKernel, 256>>>(step,
+                  gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                  (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                  totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                  nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                  nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                  break;
+                case 4:
+                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,4><<<maxThreadBlocksPerKernel, 256>>>(step,
+                  gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                  (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                  totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                  nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                  nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                  break;
+                case 2:
+                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,2><<<maxThreadBlocksPerKernel, 256>>>(step,
+                  gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                  (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                  totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                  nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                  nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                  break;
+                case 1:
+                gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,1><<<maxThreadBlocksPerKernel, 256>>>(step,
+                  gpuCSRPartition, nextDoorData.INVALID_VERTEX,
+                  (const VertexID_t*)nextDoorData.dTransitToSampleMapKeys, (const VertexID_t*)nextDoorData.dTransitToSampleMapValues,
+                  totalThreads,  nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+                  nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dSamplesToTransitMapValues,
+                  nextDoorData.dFinalSamples, finalSampleSize, nextDoorData.dSampleInsertionPositions,
+                  nextDoorData.dCurandStates, dKernelTypeForTransit, dGridKernelTransits, *gridKernelTransitsNum, threadBlocks);
+                  break;
+                default:
+                  //TODO: Add others
+                    break;
+              }
+              CHK_CU(cudaGetLastError());
+              CHK_CU(cudaDeviceSynchronize());
+            // }
+          }
+          double gridKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
+          gridKernelTime += (gridKernelTimeT2 - gridKernelTimeT1);
+        } else {
+          //No more transits, so end sampling now.
+          break;
         }
-        double gridKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
-        gridKernelTime += (gridKernelTimeT2 - gridKernelTimeT1);
-      } else {
-        //No more transits, so end sampling now.
-        break;
       }
     }
 
+    if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
+      //Call SampleParallel Kernel to do sampling
+      sampleParallelKernel<SampleType, App, 256, true><<<1024, 256>>>(step, gpuCSRPartition, 
+        nextDoorData.INVALID_VERTEX, totalThreads, 
+        nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
+        nextDoorData.dFinalSamples, finalSampleSize,
+        nextDoorData.dSamplesToTransitMapKeys, 
+        nextDoorData.dSamplesToTransitMapValues,
+        nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
+      CHK_CU(cudaGetLastError());
+      CHK_CU(cudaDeviceSynchronize());
+
+      CHK_CU(cudaFree(dCollectiveNeighborhoodCSRCols));
+      CHK_CU(cudaFree(dCollectiveNeighborhoodCSRRows));
+    }
     if (step != App().steps() - 1) {
       double inversionT1 = convertTimeValToDouble(getTimeOfDay ());
       //Invert sample->transit map by sorting samples based on the transit vertices
