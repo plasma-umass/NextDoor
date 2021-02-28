@@ -40,7 +40,10 @@ multiRWTest: src/tests/multiRW.cu src/nextdoor.cu src/tests/testBase.h src/check
 	nvcc $< -Igoogletest/googletest/include/ -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
 
 subGraphSamplingTests: src/tests/subGraphSamplingTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
-	nvcc $< -Ijson/single_include -Igoogletest/googletest/include/ -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+	nvcc $< -Igoogletest/googletest/include/ -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
+
+mvsSamplingTests: src/tests/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
+	nvcc $< -Igoogletest/googletest/include/ -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 -code=sm_61 -Xcompiler -fopenmp -o $@
 ########################################
 
 #*************APPS*********************#

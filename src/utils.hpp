@@ -439,6 +439,16 @@ namespace GPUUtils {
   }
 
   template<typename T1, typename T2>
+  void printKeyValuePairs(T1* keys, T2* values, int nelems, char sep)
+  {
+    for (int i = 0; i < nelems; i++) {
+      std::cout << "[" << keys[i] << ", " << values[i] << "]" << sep;
+    }
+
+    std::cout << std::endl;
+  }
+
+  template<typename T1, typename T2>
   void printDeviceKeyValuePairs(T1* keys, T2* values, int nelems, char sep)
   {
     T1* tmp1 = new T1[nelems];
