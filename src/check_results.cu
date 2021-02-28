@@ -72,10 +72,16 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
       //2. All edges that can exist between vertices of two layers in graph also exists between 
       // sample's adjacency matrix.
 
+      int sampleLength = samples[sampleId].adjacencyMatrixLen[step];
+      if (sampleLength == 0) {
+        sampleLength = VERTICES_PER_SAMPLE * VERTICES_PER_SAMPLE;
+      }
       //Check first condition
-      for (EdgePos_t v = 0; v < samples[sampleId].adjacencyMatrixLen[step]; v++) {
+      for (EdgePos_t v = 0; v < sampleLength; v++) {
         VertexID_t col = samples[sampleId].adjacencyMatrixCol[step][v];
         VertexID_t row = samples[sampleId].adjacencyMatrixRow[step][v];
+        if (col == -1 && row == -1)
+          continue;
         VertexID_t transit = hFinalSamples[s + startIdxForCurrStep + col];
         VertexID_t prevVertex = -1;
         
@@ -108,7 +114,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
           if (adjMatrix[prevVertex].count(transit) == 1) {
             //Edge exist in graph. So, search for that there is an edge in the sample.
             bool foundEdge = false;
-            for (int e = 0; e < samples[sampleId].adjacencyMatrixLen[step]; e++) {
+            for (int e = 0; e < sampleLength; e++) {
               VertexID_t col = samples[sampleId].adjacencyMatrixCol[step][e];
               VertexID_t row = samples[sampleId].adjacencyMatrixRow[step][e];
               VertexID_t v1 = -1;

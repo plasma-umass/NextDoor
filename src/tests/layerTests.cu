@@ -1,8 +1,12 @@
 #include "testBase.h"
 
-#define NUM_LAYERS 1
-#define NUM_SAMPLED_VERTICES 32
-#define VERTICES_PER_SAMPLE 32
+#define NUM_LAYERS 5
+#define NUM_SAMPLED_VERTICES 16
+#define VERTICES_PER_SAMPLE 16
+#define NUM_SAMPLES 200000
+
+#include "../check_results.cu"
+
 
 class LayerSample 
 {
@@ -33,13 +37,15 @@ struct LayerSampleApp {
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
       VertexID transit = transits[i];
       bool hasEdge = csr->has_edge_logn(transit, id);
+      int len = i*VERTICES_PER_SAMPLE + neighbrID;//::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
+      int ii = -1, jj = -1, p = 0.0f;
       if (hasEdge) {
-        int len = ::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
         //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
-        sample->adjacencyMatrixRow[step][len] = i;
-        sample->adjacencyMatrixCol[step][len] = neighbrID;
-        sample->adjacencyMatrixVal[step][len] = 1.0f;
+        ii = i; jj = neighbrID;
       }
+      sample->adjacencyMatrixRow[step][len] = ii;
+      sample->adjacencyMatrixCol[step][len] = jj;
+      sample->adjacencyMatrixVal[step][len] = 1.0f;
     }
 
     return id;
@@ -57,7 +63,7 @@ struct LayerSampleApp {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return graph->get_n_vertices() / VERTICES_PER_SAMPLE / (graph->get_n_vertices() > 1000000 ? 100 : 10);
+    return NUM_SAMPLES;//graph->get_n_vertices() / VERTICES_PER_SAMPLE / (graph->get_n_vertices() > 1000000 ? 100 : 1);
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -77,7 +83,7 @@ struct LayerSampleApp {
     std::vector<VertexID_t> initialValue;
 
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      initialValue.push_back(sampleIdx * VERTICES_PER_SAMPLE + i);
+      initialValue.push_back((sampleIdx * VERTICES_PER_SAMPLE + i) % graph->get_n_vertices());
     }
 
     return initialValue;
@@ -100,15 +106,16 @@ struct LayerSampleApp {
 };
 
 #define RUNS 1
-#define CHECK_RESULTS true
+#define CHECK_RESULTS false
 #define COMMA ,
 
-APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
-APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
+//APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
+// APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
 APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
 //APP_TEST(LayerSample, FastGCN, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)

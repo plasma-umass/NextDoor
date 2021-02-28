@@ -1,6 +1,5 @@
 #include "gtest/gtest.h"
 #include "../nextdoor.cu"
-#include "../check_results.cu"
 #ifndef __TEST_BASE_H__
 #define __TEST_BASE_H__
 

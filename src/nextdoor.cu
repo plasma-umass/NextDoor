@@ -1265,7 +1265,11 @@ __global__ void collectiveNeighbrsSize(const int step, GPUCSRPartition graph,
 
   //TODO: Assuming step is 0
   for (int transitIdx = threadIdx.x; transitIdx < numTransits; transitIdx += blockDim.x) {
-    VertexID_t transit = initialSamples[sampleIdx*App().initialSampleSize(nullptr) + transitIdx];
+    VertexID_t transit;
+    if (step == 0) 
+      transit = initialSamples[sampleIdx*App().initialSampleSize(nullptr) + transitIdx];
+    else 
+      transit = finalSamples[sampleIdx*App().initialSampleSize(nullptr) + transitIdx];
     if (transit != invalidVertex) {
       ::atomicAdd(&neighborhoodSize, csr->get_n_edges_for_vertex(transit)); 
     }
@@ -1931,6 +1935,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
   //Initially each sample contains only one vertex
   //Allocate one sample for each vertex
   int maxV = 0;
+  // printf("App().numSamples(csr) %d\n", App().numSamples(csr));
   for (int sampleIdx = 0; sampleIdx < App().numSamples(csr); sampleIdx++) {
     SampleType sample = App().template initializeSample<SampleType>(csr, sampleIdx);
     data.samples.push_back(sample);
@@ -2346,6 +2351,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         
         //Retrieve total size of all neighborhoods
         #endif 
+        CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions, 0, sizeof(VertexID_t) * nextDoorData.samples.size()));
+        CHK_CU(cudaMemset(dSumNeighborhoodSizes, 0, sizeof(EdgePos_t)));
         //Create collective neighborhood for all transits related to a sample
         collectiveNeighbrsSize<App><<<nextDoorData.samples.size(), N_THREADS>>>(step, gpuCSRPartition, 
                                                                             nextDoorData.INVALID_VERTEX,
@@ -2358,7 +2365,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         CHK_CU(cudaDeviceSynchronize());
         //TODO: Neighborhood is edges of all transit vertices. Hence, neighborhood size is (# of Transit Vertices)/(|G.V|) * |G.E|
         CHK_CU(cudaMemcpy(hSumNeighborhoodSizes, dSumNeighborhoodSizes, sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
-        std::cout << "hSumNeighborhoodSizes " << *hSumNeighborhoodSizes << std::endl;
+        //std::cout <<" hSumNeighborhoodSizes " << *hSumNeighborhoodSizes << std::endl;
         CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRCols, sizeof(VertexID_t)*(*hSumNeighborhoodSizes)));
         CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRRows, sizeof(EdgePos_t)*App().initialSampleSize(csr)*nextDoorData.samples.size()));
         
@@ -2386,6 +2393,10 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
         CHK_CU(cudaGetLastError());
         CHK_CU(cudaDeviceSynchronize());
+
+        CHK_CU(cudaFree(dCollectiveNeighborhoodCSRCols));
+        CHK_CU(cudaFree(dCollectiveNeighborhoodCSRRows));
+
       } else {
         for (int threadsExecuted = 0; threadsExecuted < totalThreads; threadsExecuted += nextDoorData.maxThreadsPerKernel) {
           size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel, totalThreads - threadsExecuted);
@@ -2699,7 +2710,6 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
       CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRRows, sizeof(EdgePos_t)*App().initialSampleSize(csr)*nextDoorData.samples.size()));
       double __t2 = convertTimeValToDouble(getTimeOfDay());
       
-      std::cout << "__t2 - __t1 " << (__t2 - __t1) << " secs" << std::endl;
       collectiveNeighborhood<App><<<nextDoorData.samples.size(), N_THREADS>>>(step, gpuCSRPartition, 
                                                                           nextDoorData.INVALID_VERTEX,
                                                                           nextDoorData.dInitialSamples,
@@ -2804,6 +2814,9 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
                   nextDoorData.dSampleInsertionPositions, nextDoorData.dCurandStates);
     CHK_CU(cudaGetLastError());
     CHK_CU(cudaDeviceSynchronize());
+
+    CHK_CU(cudaFree(dCollectiveNeighborhoodCSRCols));
+    CHK_CU(cudaFree(dCollectiveNeighborhoodCSRRows));
   }
 
   double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());
