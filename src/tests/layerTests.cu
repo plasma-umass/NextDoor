@@ -1,8 +1,8 @@
 #include "testBase.h"
 
-#define NUM_LAYERS 5
-#define NUM_SAMPLED_VERTICES 64
-#define VERTICES_PER_SAMPLE 64
+#define NUM_LAYERS 1
+#define NUM_SAMPLED_VERTICES 32
+#define VERTICES_PER_SAMPLE 32
 
 class LayerSample 
 {
@@ -21,12 +21,13 @@ struct LayerSampleApp {
     return NUM_SAMPLED_VERTICES;
   }
 
-  template<class SampleType>
+  template<typename SampleType, typename EdgeArray, typename WeightArray>
   __device__ inline
-  VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx, 
-                SampleType* sample, const float max_weight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, curandState* state)
+  VertexID next(int step, CSRPartition* csr, const VertexID* transits, const VertexID sampleIdx,
+    SampleType* sample, 
+    const float max_weight,
+    EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
+    const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
     EdgePos_t id = RandNumGen::rand_int(state, csr->get_n_vertices());
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
@@ -44,22 +45,6 @@ struct LayerSampleApp {
     return id;
   }
 
-  template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
-  __device__ inline
-  VertexID nextCached(int step, const VertexID transit, const VertexID sampleIdx,
-                SampleType* sample, 
-                const float max_weight,
-                const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-                const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-                curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
-                bool* globalLoadBV)
-  {
-    EdgePos_t id = RandNumGen::rand_int(state, numEdges);
-    if (CACHE_EDGES)
-      return cacheAndGet<CACHE_SIZE, DECREASE_GM_LOADS>(id, transitEdges, cachedEdges, globalLoadBV);
-    return transitEdges[id];
-  }
-
   __host__ __device__ int samplingType()
   {
     return SamplingType::CollectiveNeighborhood;
@@ -72,7 +57,7 @@ struct LayerSampleApp {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return graph->get_n_vertices() / VERTICES_PER_SAMPLE / (graph->get_n_vertices() > 1000000 ? 100 : 1);
+    return graph->get_n_vertices() / VERTICES_PER_SAMPLE / (graph->get_n_vertices() > 1000000 ? 100 : 10);
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -118,16 +103,16 @@ struct LayerSampleApp {
 #define CHECK_RESULTS true
 #define COMMA ,
 
-//APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
 APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
+APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-APP_TEST(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
 //APP_TEST(LayerSample, FastGCN, LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "SampleParallel", false)
 // APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-APP_TEST(LayerSample, FastGCN, LayerSampleApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
+// APP_TEST(LayerSample, FastGCN, LayerSampleApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
 
 // APP_TEST(KHop, Citeseer, GRAPH_PATH"/citeseer.graph", 1, true, "TransitParallel")
 // APP_TEST(KHop, Mico, GRAPH_PATH"/micro.graph", 1, false, "TransitParallel")

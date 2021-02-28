@@ -37,6 +37,7 @@ struct MVSSamplingApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    //TODO: Optimize this using warp shuffles
     for (int e = neighbrID; e < numEdges; e += stepSize(0)) {
       int p = ::atomicAdd(&sample->length, 1);
       sample->row[p] = transits[0];
@@ -291,9 +292,9 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 // MVSAPP_TEST(RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
 // MVSAPP_TEST_BINARY(LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
                   //  checkMVSResult, "SampleParallel", false)
-MVSAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
-                    checkMVSResult, "TransitParallel", true)
-//MVSAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
+// MVSAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+                    // checkMVSResult, "TransitParallel", true)
+MVSAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
 
 //APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
 // SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
@@ -304,39 +305,3 @@ MVSAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.d
 // SubGraphAPP_TEST(OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 // //APP_TEST(SubGraphSample, SubGraph, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
 // SubGraphAPP_TEST(OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-
-/**
- * [==========] Running 2 tests from 1 test suite.
-[----------] Global test environment set-up.
-[----------] 2 tests from SubGraphSampling
-[ RUN      ] SubGraphSampling.LiveJournalSP
-Graph Binary Loaded
-Graph has 68555726 edges and 4847569 vertices 
-Final Size of each sample: 33
-Maximum Neighbors Sampled at each step: 32
-Number of Samples: 1500000
-2002:free memory 4006215680
-Maximum Threads Per Kernel: 5242880
-2023:free memory 3442081792
-SampleParallel: End to end time 0.192252 secs
-checking results
-* [==========] Running 1 test from 1 test suite.
-[----------] Global test environment set-up.
-[----------] 1 test from SubGraphSampling
-[ RUN      ] SubGraphSampling.LiveJournalTP
-Graph Binary Loaded
-Graph has 68555726 edges and 4847569 vertices 
-Final Size of each sample: 33
-Maximum Neighbors Sampled at each step: 32
-Number of Samples: 1500000
-2002:free memory 4006215680
-Maximum Threads Per Kernel: 5242880
-2023:free memory 3442081792
-step 0
-step 1
-Transit Parallel: End to end time 0.11525 secs
-InversionTime: 0.012413, LoadBalancingTime: 0, GridKernelTime: 0, ThreadBlockKernelTime: 0, SubWarpKernelTime: 0, IdentityKernelTime: 0
-checking results
-
- * 
-*/
