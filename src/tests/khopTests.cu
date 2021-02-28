@@ -1,5 +1,6 @@
 #include "testBase.h"
-
+#define VERTICES_PER_SAMPLE 0
+#include "../check_results.cu"
 struct KHopApp {
 
   __host__ __device__ int steps() {return 2;}

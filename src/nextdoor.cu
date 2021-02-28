@@ -2617,6 +2617,39 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         break;
       }
     }
+
+    if (step != App().steps() - 1) {
+      double inversionT1 = convertTimeValToDouble(getTimeOfDay ());
+      //Invert sample->transit map by sorting samples based on the transit vertices
+      cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, 
+                                      nextDoorData.dSamplesToTransitMapValues, nextDoorData.dTransitToSampleMapKeys, 
+                                      nextDoorData.dSamplesToTransitMapKeys, nextDoorData.dTransitToSampleMapValues, 
+                                      totalThreads, 0, nextDoorData.maxBits);
+      CHK_CU(cudaGetLastError());
+      CHK_CU(cudaDeviceSynchronize());
+      double inversionT2 = convertTimeValToDouble(getTimeOfDay ());
+      //std::cout << "inversionTime at step " << step << " : " << (inversionT2 - inversionT1) << std::endl; 
+      inversionTime += (inversionT2 - inversionT1);
+
+      #if 0
+      VertexID_t* hTransitToSampleMapKeys = new VertexID_t[totalThreads];
+      VertexID_t* hTransitToSampleMapValues = new VertexID_t[totalThreads];
+      VertexID_t* hSampleToTransitMapKeys = new VertexID_t[totalThreads];
+      VertexID_t* hSampleToTransitMapValues = new VertexID_t[totalThreads];
+
+      
+      CHK_CU(cudaMemcpy(hSampleToTransitMapKeys, nextDoorData.dSamplesToTransitMapKeys, 
+        totalThreads*sizeof(VertexID_t), cudaMemcpyDeviceToHost));
+      CHK_CU(cudaMemcpy(hSampleToTransitMapValues, nextDoorData.dSamplesToTransitMapValues,
+        totalThreads*sizeof(VertexID_t), cudaMemcpyDeviceToHost));
+      CHK_CU(cudaMemcpy(hTransitToSampleMapKeys, nextDoorData.dTransitToSampleMapKeys, 
+                        totalThreads*sizeof(VertexID_t), cudaMemcpyDeviceToHost));
+      CHK_CU(cudaMemcpy(hTransitToSampleMapValues, nextDoorData.dTransitToSampleMapValues,
+                        totalThreads*sizeof(VertexID_t), cudaMemcpyDeviceToHost));
+      hAllTransitToSampleMapValues.push_back(hTransitToSampleMapValues);
+      hAllSamplesToTransitMapKeys.push_back(hSampleToTransitMapKeys);
+      #endif
+    }
   }
 
   double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());
