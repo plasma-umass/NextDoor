@@ -258,7 +258,7 @@ bool checkSampledVerticesResult(NextDoorData<SampleType, App>& nextDoorData)
           if (transit != INVALID_VERTEX) {
 
             for (size_t v1 = s + numNeighborsSampledAtStep<App>(step-2); v1 < s + numNeighborsSampledAtStep<App>(step-1); v1++) {
-              if (adj_matrix[finalSamples[v1]].count(transit) > 0) {
+              if (finalSamples[v1] != INVALID_VERTEX && adj_matrix[finalSamples[v1]].count(transit) > 0) {
                 found = true;
                 break;
               }

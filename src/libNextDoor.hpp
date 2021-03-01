@@ -31,7 +31,6 @@ struct NextDoorData {
   VertexID_t* dSamplesToTransitMapValues;
   VertexID_t* dTransitToSampleMapKeys;
   VertexID_t* dTransitToSampleMapValues;
-  VertexID_t* dExplicitTransits;
   EdgePos_t* dSampleInsertionPositions;
   EdgePos_t* dNeighborhoodSizes;
   curandState* dCurandStates;

@@ -490,7 +490,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     //No need to store at last step
     if (App().hasExplicitTransits()) {
       VertexID_t newTransit = App().stepTransits(step + 1, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
-      samplesToTransitValues[threadId] = newTransit != -1 ? newTransit : invalidVertex;;
+      samplesToTransitValues[threadId] = newTransit != -1 ? newTransit : invalidVertex;
     } else {
       samplesToTransitValues[threadId] = neighbor != -1 ? neighbor : invalidVertex;;
     }
@@ -1167,18 +1167,19 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         //   printf("transit %d fullBlockIdx  %d sampleIdx %d neighbor %d\n", transit, fullBlockIdx, sampleIdx, neighbor);
         // }
 
-        if (isValidSampledVertex(neighbor, invalidVertex)) {
-          if (step != App().steps() - 1) {
-            //No need to store at last step
-            samplesToTransitKeys[transitIdx] = sampleIdx; //TODO: Update this for khop to transitIdx + transitNeighborIdx
-            if (App().hasExplicitTransits()) {
-              VertexID_t transit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
-              samplesToTransitValues[transitIdx] = transit;
-            } else {
-              samplesToTransitValues[transitIdx] = neighbor;
-            }
+        
+        if (step != App().steps() - 1) {
+          //No need to store at last step
+          samplesToTransitKeys[transitIdx] = sampleIdx; //TODO: Update this for khop to transitIdx + transitNeighborIdx
+          if (App().hasExplicitTransits()) {
+            VertexID_t newTransit = App().stepTransits(step, sampleIdx, samples[sampleIdx], transitIdx, &localRandState);
+            samplesToTransitValues[transitIdx] = newTransit != -1 ? newTransit : invalidVertex;
+          } else {
+            samplesToTransitValues[transitIdx] = neighbor != -1 ? neighbor : invalidVertex;
           }
-          
+        }
+
+        if (isValidSampledVertex(neighbor, invalidVertex)) {
           EdgePos_t insertionPos = transitNeighborIdx; 
           if (numberOfTransits<App>(step) > 1) {
             if (step == 0) {
@@ -2023,8 +2024,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
                     cudaMemcpyHostToDevice));
   //Insertion positions per transit vertex for each sample
   CHK_CU(cudaMalloc(&data.dSampleInsertionPositions, sizeof(EdgePos_t)*numSamples));
-  std::cout<<__LINE__<<":";
-  GPUUtils::printCudaMemInfo();
+
   size_t curandDataSize = maxNeighborsToSample*numSamples*sizeof(curandState);
   const size_t curandSizeLimit = 5L*1024L*1024L*sizeof(curandState);
   if (curandDataSize < curandSizeLimit) {
@@ -2041,11 +2041,10 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
     data.maxThreadsPerKernel = curandSizeLimit/sizeof(curandState);
     curandDataSize = curandSizeLimit;
   }
-  printf("Maximum Threads Per Kernel: %ld, curandDataSize: %ld\n", data.maxThreadsPerKernel, curandDataSize);
+  printf("Maximum Threads Per Kernel: %ld\n", data.maxThreadsPerKernel, curandDataSize);
   CHK_CU(cudaMalloc(&data.dCurandStates, curandDataSize));
   init_curand_states<<<thread_block_size(data.maxThreadsPerKernel, 256UL), 256UL>>> (data.dCurandStates, data.maxThreadsPerKernel);
   CHK_CU(cudaDeviceSynchronize());
-  std::cout<<__LINE__<<":"; GPUUtils::printCudaMemInfo();
   if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
     CHK_CU(cudaMalloc(&data.dNeighborhoodSizes, sizeof(EdgePos_t)*numSamples));
   }
@@ -2063,6 +2062,8 @@ void freeDeviceData(NextDoorData<SampleType, App>& data)
   CHK_CU(cudaFree(data.dSampleInsertionPositions));
   CHK_CU(cudaFree(data.dCurandStates));
   CHK_CU(cudaFree(data.dFinalSamples));
+  CHK_CU(cudaFree(data.dNeighborhoodSizes));
+  CHK_CU(cudaFree(data.dInitialSamples));
   if (sizeof(SampleType) > 0) CHK_CU(cudaFree(data.dOutputSamples));
   CHK_CU(cudaFree(data.gpuCSRPartition.device_vertex_array));
   CHK_CU(cudaFree(data.gpuCSRPartition.device_edge_array));

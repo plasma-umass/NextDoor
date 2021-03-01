@@ -5,7 +5,6 @@
 #define VERTICES_IN_CLUSTERS 16
 #define CLUSTERS_IN_SAMPLE 2
 #define VERTICES_PER_SAMPLE (VERTICES_IN_CLUSTERS*CLUSTERS_IN_SAMPLE)
-#define NUM_SAMPLES 1500000
 
 class SubGraphSample 
 {
@@ -88,7 +87,7 @@ struct SubGraphSamplingAppI {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return NUM_SAMPLES;
+    return (graph->get_n_edges() > 100000000) ? 800000 : min(1500000, (graph->get_n_vertices()*8)/VERTICES_IN_CLUSTERS);
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -144,6 +143,7 @@ struct SubGraphSamplingAppI {
 
 #define RUNS 1
 #define CHECK_RESULTS false
+#include "../check_results.cu"
 
 template<class SampleType, typename App>
 bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
@@ -169,11 +169,11 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
   size_t numNeighborsToSampleAtStep = 0;
   bool foundError = false;
   int sampleIdx = 0;
-  int* hRowStorage = new int[csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
-  int* hColStorage = new int[csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
+  int* hRowStorage = new int[csr->get_n_edges()*DIVUP(App().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
+  int* hColStorage = new int[csr->get_n_edges()*DIVUP(App().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
 
-  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
-  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
+  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*DIVUP(App().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
+  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*DIVUP(App().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
 
   #pragma omp parallel for shared(foundError)
   for (int sampleIdx = 0; sampleIdx < samples.size(); sampleIdx++) {
@@ -263,7 +263,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
       clusters[clusterIdx].push_back(clusterIdx * VERTICES_IN_CLUSTERS + v);
     }
   }
-
+  printCudaMemInfo();
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   
   NextDoorData<SubGraphSample, SubGraphSamplingAppI> nextDoorData;
@@ -271,12 +271,11 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   CHK_CU(cudaMalloc(&dAdjMatrixTotalLen, sizeof(int)));
   CHK_CU(cudaMemset(dAdjMatrixTotalLen, 0, sizeof(int)));
-  CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
-  CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
+  CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(SubGraphSamplingAppI().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
+  CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(SubGraphSamplingAppI().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
   //CHK_CU(cudaMalloc(&SubGraphSample::rowStorage, sizeof(VertexID_t) * graph.get_n_edges()));
   allocNextDoorDataOnGPU<SubGraphSample, SubGraphSamplingAppI>(csr, nextDoorData);
   
-
   for (int i = 0; i < RUNS; i++) {
     if (strcmp(kernelType, "TransitParallel") == 0)
       doTransitParallelSampling<SubGraphSample, SubGraphSamplingAppI>(csr, gpuCSRPartition, nextDoorData, enableLoadBalancing);
@@ -292,26 +291,28 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 
   // CHK_CU(cudaMemcpy(&hTotalLen, dAdjMatrixTotalLen, sizeof(int), cudaMemcpyDeviceToHost));
   // std::cout<<hTotalLen<<std::endl;
-
+  bool toRet = false;
   if (chk_results) {
-    return checkResultsFunc(nextDoorData);
+    toRet = checkResultsFunc(nextDoorData);
   }
 
+  CHK_CU(cudaFree(dRowStorage));
+  CHK_CU(cudaFree(dColStorage));
+  CHK_CU(cudaFree(dAdjMatrixTotalLen));
+  freeDeviceData(nextDoorData);
   return true;
 }
 
 #define SubGraphAPP_TEST(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
-  TEST(SubGraphSampling, TestName) { \
+  TEST(ClusterGCNSampling, TestName) { \
     EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc));\
   }
 
 #define SubGraphAPP_TEST_BINARY(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing)\
-  TEST(SubGraphSampling, TestName) { \
+  TEST(ClusterGCNSampling, TestName) { \
   bool b = foo(Path, "edge-list", "binary", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc);\
   EXPECT_TRUE(b);\
 }
-
-
 
 SubGraphAPP_TEST_BINARY(LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
 SubGraphAPP_TEST_BINARY(LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
