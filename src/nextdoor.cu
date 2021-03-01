@@ -543,7 +543,8 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
       finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
     }
   } else {
-    finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
+    if (isValidSampledVertex(neighbor, invalidVertex))
+      finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
   }
   // if (sample == 100) {
   //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
@@ -1228,6 +1229,10 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
               finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
             }
           } else {
+            // if (sampleIdx*finalSampleSize + insertionPos < 8*finalSampleSize && 
+            //   sampleIdx*finalSampleSize + insertionPos >= 7*finalSampleSize) {
+            //     printf("sampleIdx %d neighbor %d transit %d\n", sampleIdx, neighbor, transit);
+            //   }
             finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
           }
           // if (sample == 100) {
