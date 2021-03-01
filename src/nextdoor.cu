@@ -1466,7 +1466,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
       VertexID_t neighbrID = threadId % App().stepSize(step) ;//(threadId % numTransits) % numTransitsInPrevStep;
       VertexID_t transitID = (threadId % numTransits) / App().stepSize(step);
 
-      if (*transits != invalidVertex) {
+      if (*transits != invalidVertex and *transits != -1) {
         EdgePos_t numTransitEdges = 0;
   
         for (int i = 0; i < numTransitsInNeghbrhood; i++) {
@@ -2062,7 +2062,9 @@ void freeDeviceData(NextDoorData<SampleType, App>& data)
   CHK_CU(cudaFree(data.dSampleInsertionPositions));
   CHK_CU(cudaFree(data.dCurandStates));
   CHK_CU(cudaFree(data.dFinalSamples));
-  CHK_CU(cudaFree(data.dNeighborhoodSizes));
+  if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
+    CHK_CU(cudaFree(data.dNeighborhoodSizes));
+  }
   CHK_CU(cudaFree(data.dInitialSamples));
   if (sizeof(SampleType) > 0) CHK_CU(cudaFree(data.dOutputSamples));
   CHK_CU(cudaFree(data.gpuCSRPartition.device_vertex_array));

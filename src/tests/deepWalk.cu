@@ -98,6 +98,12 @@ struct PPRApp : public RandomWalkApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    const float walkEndProb = 0.01f;
+    float p = curand_uniform(state);
+    if (p < walkEndProb) {
+      return -1;
+    }
+
     if (numEdges == 1) {
       return transitEdges[0];
     }
@@ -167,28 +173,69 @@ public:
 
 #define RUNS 1
 #define CHECK_RESULTS false
+#define VERTICES_IN_SAMPLE 0
+#include "../check_results.cu"
+#define COMMA ,
 
 /**DeepWalk**/
-// APP_TEST(DeepWalk, DeepWalkApp, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
-// APP_TEST(DeepWalk, DeepWalkApp, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, DeepWalkApp, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, DeepWalkApp, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, DeepWalkApp, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, DeepWalkApp, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-#define COMMA ,
-// APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS,  checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
-//APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
-// APP_TEST(DummySample, DeepWalk, DeepWalkApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
-// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
-// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutTP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
-// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutLB, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
-// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutSP, "/mnt/homes/abhinav/KnightKing/build/bin/orkut.data", RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
 
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, PPITP, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", false)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, PPILB, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "TransitParallel", true)
+// APP_TEST_BINARY(DummySample, DeepWalk, DeepWalkApp, PPISP, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA DeepWalkApp>, "SampleParallel", false)
+
+/**PPR**/
+APP_TEST_BINARY(DummySample, PPR, PPRApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", false)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", true)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(DummySample, PPR, PPRApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", false)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", true)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(DummySample, PPR, PPRApp, PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", false)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", true)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(DummySample, PPR, PPRApp, RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", false)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", true)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(DummySample, PPR, PPRApp, PPITP, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", false)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, PPILB, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "TransitParallel", true)
+APP_TEST_BINARY(DummySample, PPR, PPRApp, PPISP, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<DummySample COMMA PPRApp>, "SampleParallel", false)
 
 /**Node2Vec**/
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", true)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "SampleParallel", false)
 
-APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, nullptr, "TransitParallel", false)
-APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, nullptr, "TransitParallel", true)
-APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, nullptr, "SampleParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", true)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", true)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", true)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "SampleParallel", false)
+
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, PPITP, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", false)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, PPILB, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "TransitParallel", true)
+APP_TEST_BINARY(Node2VecSample, Node2Vec, Node2VecApp, PPISP, PPI_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<Node2VecSample COMMA Node2VecApp>, "SampleParallel", false)
