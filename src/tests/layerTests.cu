@@ -114,7 +114,7 @@ struct LayerSampleApp {
 // APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
 // APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
 // APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true
-//APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
 APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
 APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", true)
 // APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)

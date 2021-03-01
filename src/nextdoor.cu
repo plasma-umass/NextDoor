@@ -2063,6 +2063,7 @@ void freeDeviceData(NextDoorData<SampleType, App>& data)
   CHK_CU(cudaFree(data.dSampleInsertionPositions));
   CHK_CU(cudaFree(data.dCurandStates));
   CHK_CU(cudaFree(data.dFinalSamples));
+  if (sizeof(SampleType) > 0) CHK_CU(cudaFree(data.dOutputSamples));
   CHK_CU(cudaFree(data.gpuCSRPartition.device_vertex_array));
   CHK_CU(cudaFree(data.gpuCSRPartition.device_edge_array));
   CHK_CU(cudaFree(data.gpuCSRPartition.device_weights_array));
@@ -2888,6 +2889,13 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
   if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
     std::cout << "Collective Neighborhood Computing " << collectiveNeighborhoodTime << " secs" << std::endl;
   }
+
+  if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
+    CHK_CU(cudaFreeHost(hSumNeighborhoodSizes));
+    CHK_CU(cudaFree(dSumNeighborhoodSizes));
+    CHK_CU(cudaFree(dSampleNeighborhoodPos));
+  }
+
   return true;
 }
 
