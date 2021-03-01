@@ -267,6 +267,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   
   NextDoorData<SubGraphSample, SubGraphSamplingAppI> nextDoorData;
+  nextDoorData.devices = {0};
   nextDoorData.csr = csr;
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   CHK_CU(cudaMalloc(&dAdjMatrixTotalLen, sizeof(int)));

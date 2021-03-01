@@ -16,6 +16,12 @@
 #define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {assert(false);}
 #define MAX(x,y) (((x)<(y))?(y):(x))
 #define MIN(x,y) (((x)>(y))?(y):(x))
+#define CUDA_SYNC_DEVICE_ALL(nextDoorData) {\
+for(auto device : nextDoorData.devices) {\
+  CHK_CU(cudaSetDevice(device));\
+  CHK_CU(cudaDeviceSynchronize());\
+}\
+}
 
 namespace utils {
   template<typename F, typename T> 

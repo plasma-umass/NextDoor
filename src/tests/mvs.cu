@@ -60,7 +60,7 @@ struct MVSSamplingApp {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return (graph->get_n_edges() > 100000000) ? 800000 : min(1500000, (graph->get_n_vertices()*8)/VERTICES_PER_SAMPLE);
+    return (graph->get_n_edges() > 100000000) ? 800000 : min(1500000, DIVUP(graph->get_n_vertices()*8, VERTICES_PER_SAMPLE));
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -232,6 +232,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   // }
 
   NextDoorData<MVSSample, MVSSamplingApp> nextDoorData;
+  nextDoorData.devices = {0};
   nextDoorData.csr = csr;
   CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
   CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
