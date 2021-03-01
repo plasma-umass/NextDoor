@@ -2372,7 +2372,6 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         CHK_CU(cudaDeviceSynchronize());
         //TODO: Neighborhood is edges of all transit vertices. Hence, neighborhood size is (# of Transit Vertices)/(|G.V|) * |G.E|
         CHK_CU(cudaMemcpy(hSumNeighborhoodSizes, dSumNeighborhoodSizes, sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
-        //std::cout <<" hSumNeighborhoodSizes " << *hSumNeighborhoodSizes << std::endl;
         CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRCols, sizeof(VertexID_t)*(*hSumNeighborhoodSizes)));
         CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRRows, sizeof(EdgePos_t)*App().initialSampleSize(csr)*nextDoorData.samples.size()));
         
@@ -2751,7 +2750,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
     const size_t totalThreads = App().numSamples(csr)*neighborsToSampleAtStep;
     // std::cout << "totalThreads " << totalThreads << std::endl;
     double collectiveNeighborhood_t0 = convertTimeValToDouble(getTimeOfDay());
-
+    
     if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
       //TODO: No need to do this right now.
       //Create collective neighborhood for all transits related to a sample
@@ -2877,8 +2876,10 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
     CHK_CU(cudaGetLastError());
     CHK_CU(cudaDeviceSynchronize());
 
-    CHK_CU(cudaFree(dCollectiveNeighborhoodCSRCols));
-    CHK_CU(cudaFree(dCollectiveNeighborhoodCSRRows));
+    if (App().samplingType() == SamplingType::CollectiveNeighborhood) {
+      CHK_CU(cudaFree(dCollectiveNeighborhoodCSRCols));
+      CHK_CU(cudaFree(dCollectiveNeighborhoodCSRRows));
+    }
   }
 
   double end_to_end_t2 = convertTimeValToDouble(getTimeOfDay ());

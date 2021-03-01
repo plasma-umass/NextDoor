@@ -4,6 +4,12 @@
 #define __TEST_BASE_H__
 
 #define GRAPH_PATH "../GPUesque-for-eval/input/"
+#define GRAPH_PARENT_DIR "/mnt/homes/abhinav/KnightKing/build/bin/"
+#define LJ1_PATH GRAPH_PARENT_DIR"LJ1.data"
+#define ORKUT_PATH GRAPH_PARENT_DIR"orkut.data"
+#define PATENTS_PATH GRAPH_PARENT_DIR"patents.data"
+#define REDDIT_PATH GRAPH_PARENT_DIR"reddit.data"
+#define PPI_PATH GRAPH_PARENT_DIR"ppi.data"
 
 #define APP_TEST(SampleClass,AppName,App,Graph,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
   TEST(AppName, Graph) { \

@@ -1,14 +1,14 @@
 #include "testBase.h"
 
 #define NUM_LAYERS 5
-#define NUM_SAMPLED_VERTICES 16
-#define VERTICES_PER_SAMPLE 16
-#define NUM_SAMPLES 500000
+#define NUM_SAMPLED_VERTICES 64
+#define VERTICES_PER_SAMPLE 64
+#define NUM_SAMPLES 10000
 
 #include "../check_results.cu"
 
 
-class LayerSample 
+class ImportanceSample 
 {
 public:
   int adjacencyMatrixLen[NUM_LAYERS];
@@ -17,7 +17,7 @@ public:
   int adjacencyMatrixVal[NUM_LAYERS][VERTICES_PER_SAMPLE*NUM_SAMPLED_VERTICES];
 };
 
-struct LayerSampleApp {
+struct ImportanceSampleApp {
   __host__ __device__ int steps() {return NUM_LAYERS;}
 
   __host__ __device__ 
@@ -109,32 +109,23 @@ struct LayerSampleApp {
 #define CHECK_RESULTS false
 #define COMMA ,
 
-//APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
-// APP_TEST(LayerSample, FastGCN, LayerSampleApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
-// APP_TEST(KHop, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, "TransitParallel", true)
-// APP_TEST(KHop, LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
-// APP_TEST(KHop, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true
-APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
-APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", false)
-APP_TEST_BINARY(LayerSample, FastGCN, LayerSampleApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "TransitParallel", true)
-// APP_TEST(KHop, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", false)
-// APP_TEST(KHop, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, "TransitParallel", true)
-// APP_TEST(LayerSample, FastGCN, LayerSampleApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<LayerSample COMMA LayerSampleApp>, "SampleParallel", false)
 
-// APP_TEST(KHop, Citeseer, GRAPH_PATH"/citeseer.graph", 1, true, "TransitParallel")
-// APP_TEST(KHop, Mico, GRAPH_PATH"/micro.graph", 1, false, "TransitParallel")
-// APP_TEST(KHop, Reddit, GRAPH_PATH"/reddit_sampled_matrix", 1, false, "TransitParallel")
+// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
 
+// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
 
-// TEST(KHop, Citeseer) {
-//   EXPECT_TRUE(nextdoor(GRAPH_PATH"/citeseer.graph", "adj-list", "text", CHECK_RESULTS, false));
-// }
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
 
-// TEST(KHop, Mico) {
-//   EXPECT_TRUE(nextdoor(GRAPH_PATH"/micro.graph", "adj-list", "text", CHECK_RESULTS, false));
-// }
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
 
-// TEST(KHop, Reddit) {
-//   EXPECT_TRUE(nextdoor(GRAPH_PATH"/reddit_sampled_matrix", "adj-list", "text", CHECK_RESULTS, false));
-// }
-
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PPISP, PPI_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PPITP, PPI_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PPILB, PPI_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
