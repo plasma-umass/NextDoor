@@ -1229,10 +1229,6 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
               finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
             }
           } else {
-            // if (sampleIdx*finalSampleSize + insertionPos < 8*finalSampleSize && 
-            //   sampleIdx*finalSampleSize + insertionPos >= 7*finalSampleSize) {
-            //     printf("sampleIdx %d neighbor %d transit %d\n", sampleIdx, neighbor, transit);
-            //   }
             finalSamples[sampleIdx*finalSampleSize + insertionPos] = neighbor;
           }
           // if (sample == 100) {
@@ -2046,7 +2042,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
     data.maxThreadsPerKernel = curandSizeLimit/sizeof(curandState);
     curandDataSize = curandSizeLimit;
   }
-  printf("Maximum Threads Per Kernel: %ld\n", data.maxThreadsPerKernel, curandDataSize);
+  printf("Maximum Threads Per Kernel: %ld\n", data.maxThreadsPerKernel);
   CHK_CU(cudaMalloc(&data.dCurandStates, curandDataSize));
   init_curand_states<<<thread_block_size(data.maxThreadsPerKernel, 256UL), 256UL>>> (data.dCurandStates, data.maxThreadsPerKernel);
   CHK_CU(cudaDeviceSynchronize());
@@ -2500,8 +2496,9 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           //From each Transit we sample stepSize(step) vertices
           totalThreads =  totalThreads * subWarpSize;
           // std::cout << "final totalThreads " << totalThreads << std::endl;
-          const size_t maxThreadBlocksPerKernel = 4096;
+          const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel/256L);
           double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
+
           if (*identityKernelTransitsNum > 0) {
             identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
               gpuCSRPartition, nextDoorData.INVALID_VERTEX,
@@ -2874,7 +2871,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
     }
 
     //Perform SampleParallel Sampling
-    sampleParallelKernel<SampleType, App, 256, false><<<1024, 256>>>(step, gpuCSRPartition, 
+    sampleParallelKernel<SampleType, App, 256, false><<<min(1024L, nextDoorData.maxThreadsPerKernel/256L), 256>>>(step, gpuCSRPartition, 
                   nextDoorData.INVALID_VERTEX, totalThreads, 
                   nextDoorData.dInitialSamples, nextDoorData.dOutputSamples, nextDoorData.samples.size(),
                   nextDoorData.dFinalSamples, finalSampleSize, 
