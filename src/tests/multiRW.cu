@@ -108,9 +108,10 @@ struct MultiRWApp {
   }
 };
 
-#define RUNS 5
+#define RUNS 1
 #define CHECK_RESULTS false
-
+#define VERTICES_PER_SAMPLE 0
+#include "../check_results.cu"
 
 template<class SampleType, typename App>
 bool checkMultiRWResult(NextDoorData<SampleType, App>& nextDoorData)
@@ -239,22 +240,37 @@ bool checkMultiRWResult(NextDoorData<SampleType, App>& nextDoorData)
   return true;
 }
 
-// APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
-// APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
-// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
-// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
-//APP_TEST(MultiRW, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, 
                checkMultiRWResult, "TransitParallel", false)
-APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, 
                 checkMultiRWResult, "TransitParallel", true)
-APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, 
                 checkMultiRWResult, "SampleParallel", false)
-// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", false)
-// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "TransitParallel", true)
-// APP_TEST(MultiRWSample, MultiRW, MultiRWApp, OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkMultiRWResult, "SampleParallel", false)
+
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, 
+               checkMultiRWResult, "TransitParallel", false)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "TransitParallel", true)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "SampleParallel", false)
+
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, 
+               checkMultiRWResult, "TransitParallel", false)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "TransitParallel", true)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "SampleParallel", false)
+
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, 
+               checkMultiRWResult, "TransitParallel", false)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "TransitParallel", true)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "SampleParallel", false)
+
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, PPITP, PPI_PATH, RUNS, CHECK_RESULTS, 
+               checkMultiRWResult, "TransitParallel", false)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, PPILB, PPI_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "TransitParallel", true)
+APP_TEST_BINARY(MultiRWSample, MultiRW, MultiRWApp, PPISP, PPI_PATH, RUNS, CHECK_RESULTS, 
+                checkMultiRWResult, "SampleParallel", false)
