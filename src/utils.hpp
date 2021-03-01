@@ -23,6 +23,9 @@ for(auto device : nextDoorData.devices) {\
 }\
 }
 
+#define PartDivisionSize(Total,PartIdx,NumParts) (PartIdx < NumParts - 1) ? Total/NumParts : Total - (NumParts - 1)*(Total/NumParts)
+#define PartStartPointer(Total,PartIdx,NumParts) PartIdx * (Total/NumParts)
+
 namespace utils {
   template<typename F, typename T> 
   __host__ __device__ __forceinline__
