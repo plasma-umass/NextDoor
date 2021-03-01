@@ -143,7 +143,7 @@ struct SubGraphSamplingAppI {
 };
 
 #define RUNS 1
-#define CHECK_RESULTS true
+#define CHECK_RESULTS false
 
 template<class SampleType, typename App>
 bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
@@ -312,61 +312,23 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 }
 
 
-// APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
-// APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-//SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-//SubGraphAPP_TEST(RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-//SubGraphAPP_TEST(RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST_BINARY(LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-SubGraphAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-//SubGraphAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 
-//APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-// //APP_TEST(SubGraph, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-// SubGraphAPP_TEST(LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-// //APP_TEST(SubGraphSample, SubGraph, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST(LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-// SubGraphAPP_TEST(OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-// //APP_TEST(SubGraphSample, SubGraph, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST(OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 
-/**
- * [==========] Running 2 tests from 1 test suite.
-[----------] Global test environment set-up.
-[----------] 2 tests from SubGraphSampling
-[ RUN      ] SubGraphSampling.LiveJournalSP
-Graph Binary Loaded
-Graph has 68555726 edges and 4847569 vertices 
-Final Size of each sample: 33
-Maximum Neighbors Sampled at each step: 32
-Number of Samples: 1500000
-2002:free memory 4006215680
-Maximum Threads Per Kernel: 5242880
-2023:free memory 3442081792
-SampleParallel: End to end time 0.192252 secs
-checking results
-* [==========] Running 1 test from 1 test suite.
-[----------] Global test environment set-up.
-[----------] 1 test from SubGraphSampling
-[ RUN      ] SubGraphSampling.LiveJournalTP
-Graph Binary Loaded
-Graph has 68555726 edges and 4847569 vertices 
-Final Size of each sample: 33
-Maximum Neighbors Sampled at each step: 32
-Number of Samples: 1500000
-2002:free memory 4006215680
-Maximum Threads Per Kernel: 5242880
-2023:free memory 3442081792
-step 0
-step 1
-Transit Parallel: End to end time 0.11525 secs
-InversionTime: 0.012413, LoadBalancingTime: 0, GridKernelTime: 0, ThreadBlockKernelTime: 0, SubWarpKernelTime: 0, IdentityKernelTime: 0
-checking results
+SubGraphAPP_TEST_BINARY(OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
 
- * 
-*/
+SubGraphAPP_TEST_BINARY(PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+
+SubGraphAPP_TEST_BINARY(RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
+
+SubGraphAPP_TEST_BINARY(PPISP, PPI_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+SubGraphAPP_TEST_BINARY(PPILB, PPI_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
+SubGraphAPP_TEST_BINARY(PPITP, PPI_PATH, RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)

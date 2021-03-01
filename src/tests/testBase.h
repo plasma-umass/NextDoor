@@ -4,7 +4,7 @@
 #define __TEST_BASE_H__
 
 #define GRAPH_PATH "../GPUesque-for-eval/input/"
-#define GRAPH_PARENT_DIR "/mnt/homes/abhinav/KnightKing/build/bin/"
+#define GRAPH_PARENT_DIR "./input/"
 #define LJ1_PATH GRAPH_PARENT_DIR"LJ1.data"
 #define ORKUT_PATH GRAPH_PARENT_DIR"orkut.data"
 #define PATENTS_PATH GRAPH_PARENT_DIR"patents.data"

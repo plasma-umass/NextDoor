@@ -110,13 +110,13 @@ struct ImportanceSampleApp {
 #define COMMA ,
 
 
-// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
-// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
-// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
 
-// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
-// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
-// APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
+APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", true)
 
 APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "SampleParallel", false)
 APP_TEST_BINARY(ImportanceSample, ImportanceSampling, ImportanceSampleApp, PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkAdjacencyMatrixResult<ImportanceSample COMMA ImportanceSampleApp>, "TransitParallel", false)
