@@ -4,7 +4,6 @@
 
 #define VERTICES_IN_BATCH 32
 #define VERTICES_PER_SAMPLE (VERTICES_IN_BATCH)
-#define NUM_SAMPLES 1500000
 
 class MVSSample 
 {
@@ -61,7 +60,7 @@ struct MVSSamplingApp {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return NUM_SAMPLES;
+    return (graph->get_n_edges() > 100000000) ? 800000 : min(1500000, (graph->get_n_vertices()*8)/VERTICES_PER_SAMPLE);
   }
 
   __host__ __device__ bool hasExplicitTransits()
@@ -108,6 +107,7 @@ struct MVSSamplingApp {
 
 #define RUNS 1
 #define CHECK_RESULTS true
+#include "../check_results.cu"
 
 template<class SampleType, typename App>
 bool checkMVSResult(NextDoorData<SampleType, App>& nextDoorData)
@@ -134,12 +134,12 @@ bool checkMVSResult(NextDoorData<SampleType, App>& nextDoorData)
   size_t numNeighborsToSampleAtStep = 0;
   bool foundError = false;
   int sampleIdx = 0;
-  int* hRowStorage = new int[csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
-  int* hColStorage = new int[csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
+  int* hRowStorage = new int[csr->get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
+  int* hColStorage = new int[csr->get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
 
-  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, 
+  CHK_CU(cudaMemcpy(hRowStorage, dRowStorage, csr->get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, 
          csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
-  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, 
+  CHK_CU(cudaMemcpy(hColStorage, dColStorage, csr->get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, 
          csr->get_n_vertices())*sizeof(CSR::Edge), cudaMemcpyDeviceToHost));
 
   #pragma omp parallel for shared(foundError)
@@ -233,8 +233,8 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 
   NextDoorData<MVSSample, MVSSamplingApp> nextDoorData;
   nextDoorData.csr = csr;
-  CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
-  CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(NUM_SAMPLES*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
+  CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
+  CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
   
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
@@ -265,6 +265,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 
   CHK_CU(cudaFree(dRowStorage));
   CHK_CU(cudaFree(dColStorage));
+  freeDeviceData(nextDoorData);
 
   return toRet;
 }
@@ -281,27 +282,22 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 }
 
 
-// APP_TEST(DeepWalk, CiteseerTP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "TransitParallel") 
-// APP_TEST(DeepWalk, CiteseerSP, GRAPH_PATH"/citeseer-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, MicoTP, GRAPH_PATH"/micro-weighted.graph", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, MicoSP, GRAPH_PATH"/micro-weighted.graph", 10, false, "SampleParallel") 
-// APP_TEST(DeepWalk, PpiTP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "TransitParallel")
-// APP_TEST(DeepWalk, PpiSP, GRAPH_PATH"/ppi_sampled_matrix", 10, false, "SampleParallel")
-//SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-//SubGraphAPP_TEST(RedditTP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-// MVSAPP_TEST(RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
-// MVSAPP_TEST_BINARY(LiveJournalSP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
-                  //  checkMVSResult, "SampleParallel", false)
-// MVSAPP_TEST_BINARY(LiveJournalLB, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, 
-                    // checkMVSResult, "TransitParallel", true)
-MVSAPP_TEST_BINARY(LiveJournalTP, "/mnt/homes/abhinav/KnightKing/build/bin/LJ1.data", RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
+MVSAPP_TEST_BINARY(LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
+MVSAPP_TEST_BINARY(LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
 
-//APP_TEST(SubGraphSample, SubGraph, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST(RedditSP, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-// //APP_TEST(SubGraph, DeepWalk, RedditLB, GRAPH_PATH"/reddit_sampled_matrix", RUNS, CHECK_RESULTS, checkSampledVerticesResult, "TransitParallel", true)
-// SubGraphAPP_TEST(LiveJournalTP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-// //APP_TEST(SubGraphSample, SubGraph, LiveJournalLB, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST(LiveJournalSP, GRAPH_PATH"/soc-LiveJournal1-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
-// SubGraphAPP_TEST(OrkutTP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", false)
-// //APP_TEST(SubGraphSample, SubGraph, OrkutLB, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "TransitParallel", true)
-// SubGraphAPP_TEST(OrkutSP, GRAPH_PATH"/com-orkut-weighted.graph", RUNS, CHECK_RESULTS, checkSubGraphResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(OrkutSP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(OrkutLB, ORKUT_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
+MVSAPP_TEST_BINARY(OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
+
+MVSAPP_TEST_BINARY(PatentsSP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(PatentsLB, PATENTS_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
+MVSAPP_TEST_BINARY(PatentsTP, PATENTS_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
+
+MVSAPP_TEST_BINARY(RedditSP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(RedditLB, REDDIT_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
+MVSAPP_TEST_BINARY(RedditTP, REDDIT_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
+
+MVSAPP_TEST_BINARY(PPISP, PPI_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(PPILB, PPI_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
+MVSAPP_TEST_BINARY(PPITP, PPI_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
