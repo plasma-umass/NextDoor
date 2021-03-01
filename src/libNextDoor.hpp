@@ -16,27 +16,21 @@ struct NextDoorData {
   std::vector<SampleType> samples;
   std::vector<VertexID_t> hFinalSamples;
   std::vector<VertexID_t> initialContents;
-  SampleType* dOutputSamples;
   std::vector<VertexID_t> initialTransitToSampleValues;
+  std::vector<int> devices;
 
-  /*Outputs for Matrix*/
-  std::vector<EdgePos_t> hFinalSamplesCSRRow;
-  std::vector<EdgePos_t> hFinalSamplesCSRCol;
-  std::vector<float> hFinalSamplesCSRVal;
-  EdgePos_t* dFinalSamplesCSRRow;
-  float* dFinalSamplesCSRVal;
-  EdgePos_t* dFinalSamplesCSRCol;
-  /******************/
-  VertexID_t* dSamplesToTransitMapKeys;
-  VertexID_t* dSamplesToTransitMapValues;
-  VertexID_t* dTransitToSampleMapKeys;
-  VertexID_t* dTransitToSampleMapValues;
-  EdgePos_t* dSampleInsertionPositions;
-  EdgePos_t* dNeighborhoodSizes;
-  curandState* dCurandStates;
-  size_t maxThreadsPerKernel;
-  VertexID_t* dFinalSamples;
-  VertexID_t* dInitialSamples;
+  //Per Device Data.
+  std::vector<SampleType*> dOutputSamples;
+  std::vector<VertexID_t*> dSamplesToTransitMapKeys;
+  std::vector<VertexID_t*> dSamplesToTransitMapValues;
+  std::vector<VertexID_t*> dTransitToSampleMapKeys;
+  std::vector<VertexID_t*> dTransitToSampleMapValues;
+  std::vector<EdgePos_t*> dSampleInsertionPositions;
+  std::vector<EdgePos_t*> dNeighborhoodSizes;
+  std::vector<curandState*> dCurandStates;
+  std::vector<size_t> maxThreadsPerKernel;
+  std::vector<VertexID_t*> dFinalSamples;
+  std::vector<VertexID_t*> dInitialSamples;
   int INVALID_VERTEX;
   int maxBits;
   GPUCSRPartition gpuCSRPartition;
