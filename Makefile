@@ -21,7 +21,7 @@ graphSageIntegration: src/nextDoorModule.cu src/csr.hpp src/utils.hpp src/graph.
 	nvcc --default-stream per-thread $< -I/usr/include/python2.7/ -std=c++11 -arch=compute_61  -IAnyOption/ AnyOption/anyoption.cpp -I./Heap-Layers -O3 -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
 
 #**************TESTS********************#
-test: khopTest uniformRandWalkTest deepWalkTest
+test: deepWalkTest khopTest layerTest multiRWTest subGraphSamplingTests mvsSamplingTests 
 	
 khopTest: src/tests/khopTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu
 	nvcc $< -Igoogletest/googletest/include/  -Lgoogletest/build/lib/ -lcurand -lgtest -lpthread googletest/googletest/src/gtest_main.cc -arch=compute_61 \

@@ -3106,7 +3106,7 @@ bool nextdoor(const char* graph_file, const char* graph_type, const char* graph_
   //graph.print(std::cout);
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   NextDoorData<SampleType, App> nextDoorData;
-  nextDoorData.devices = {0, 0};
+  nextDoorData.devices = {0};
   nextDoorData.csr = csr;
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   allocNextDoorDataOnGPU<SampleType, App>(csr, nextDoorData);
