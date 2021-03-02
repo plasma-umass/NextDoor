@@ -85,7 +85,7 @@ class KHopSample
 #define COMMA ,
 
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "SampleParallel", false)
-// APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
+APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
 APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
 
 APP_TEST_BINARY(KHopSample, KHop, KHopApp, OrkutTP, ORKUT_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", false)
