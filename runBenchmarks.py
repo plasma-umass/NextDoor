@@ -24,33 +24,34 @@ graphInfo = {
 knightKing = os.path.join(args.knightKing, 'build/bin')
 
 knightKingWalks = {
-    "deepwalk": " -l 100 ", "node2vec": " -p 2.0 -q 0.5 -l 100 ", "ppr":" -t 0.001 "
+    "Node2Vec": " -p 2.0 -q 0.5 -l 100 ", "PPR":" -t 0.001 " #"DeepWalk": " -l 100 ",
 }
 
-nextDoorApps = ["DeepWalk", "PPR", "Node2Vec", "KHop", "MultiRW","MVS"] #["Layer", "subGraphSampling", "mvs"]
+nextDoorApps = ["PPR", "Node2Vec"]#,"DeepWalk", "KHop", "MultiRW","MVS"] #["Layer", "subGraphSampling", "mvs"]
 
 results = {"KnightKing": {walk : {graph: -1 for graph in graphInfo} for walk in knightKingWalks},
            "SP": {walk : {graph: -1 for graph in graphInfo} for walk in nextDoorApps},
            "TP": {walk : {graph: -1 for graph in graphInfo} for walk in nextDoorApps},
-           "LB": {walk : {graph: -1 for graph in graphInfo} for walk in nextDoorApps},}
+           "LB": {walk : {graph: -1 for graph in graphInfo} for walk in nextDoorApps},
+           "InversionTime": {walk : {graph: -1 for graph in graphInfo} for walk in nextDoorApps}}
 
-# for walk in knightKingWalks:
-#     for graph in graphInfo:
-#         times = []
-#         for run in range(args.runs):
-#             walkBinary = os.path.join(knightKing, walk) + " -w %d "%graphInfo[graph]["v"] + \
-#                 " -v %d"%graphInfo[graph]["v"] +\
-#                 " -s weighted " + "-g " + graphInfo[graph]["path"] + \
-#                  knightKingWalks[walk]   
+for walk in knightKingWalks:
+    for graph in graphInfo:
+        times = []
+        for run in range(args.runs):
+            walkBinary = os.path.join(knightKing, walk.lower()) + " -w %d "%graphInfo[graph]["v"] + \
+                " -v %d"%graphInfo[graph]["v"] +\
+                " -s weighted " + "-g " + graphInfo[graph]["path"] + \
+                 knightKingWalks[walk]   
 
-#             status, output = subprocess.getstatusoutput(walkBinary)
-#             t = float(re.findall(r'total time ([\d\.]+)s', output)[0])
-#             print (t)
-#             times += [t]
+            status, output = subprocess.getstatusoutput(walkBinary)
+            t = float(re.findall(r'total time ([\d\.]+)s', output)[0])
+            print (t)
+            times += [t]
 
-#         avg = sum(times)/len(times)
+        avg = sum(times)/len(times)
 
-#         results["KnightKing"][walk][graph] = avg
+        results["KnightKing"][walk][graph] = avg
 
 for app in nextDoorApps:
     times = []
@@ -58,13 +59,43 @@ for app in nextDoorApps:
     print ("Running ", appBinary)
     status, output = subprocess.getstatusoutput(appBinary)
     print (output)
-    for technique in results:
-        if technique == "KnightKing":
+    for technique in results :
+        if technique == "KnightKing" or technique == "InversionTime":
             continue
         for graph in graphInfo:
             out = re.findall(r'%s\.%s%s.+%s\.%s%s'%(app, graph, technique,app,graph,technique), output, re.DOTALL)[0]
             end2end = re.findall(r'End to end time ([\d\.]+) secs', out)
-            print(app, graph, technique, end2end)
+            results[technique][app][graph] = float(end2end[0])
+            if (technique == "LB"):
+                inversionTime = re.findall(r'InversionTime: ([\d\.]+)', out)
+                loadbalancingTime = re.findall(r'LoadBalancingTime: ([\d\.]+)', out)
+                t = float(inversionTime[0]) + float(loadbalancingTime[0])
+                results["InversionTime"][app][graph] = t
 
-print(results)
+#Speedup Over KnightKing
+print ("\n\nFigure 7 (a): Speedup Over KnightKing")
+row_format = "{:>20}" * 3
+print (row_format.format("Random Walk", "Graph", "Speedup"))
+for walk in knightKingWalks:
+    for graph in graphInfo:
+        speedup = results["KnightKing"][walk][graph]/results["LB"][walk][graph]
+        print (row_format.format(walk, graph, speedup))
+    
+#Speedup Over SP and TP
+print ("\n\nFigure 7 (c): Speedup Over SP and TP")
+row_format = "{:>20}" * 4
+print (row_format.format("Sampling App", "Graph", "Speedup over SP", "Speedup over TP"))
+for walk in knightKingWalks:
+    for graph in graphInfo:
+        speedupSP = results["SP"][walk][graph]/results["LB"][walk][graph]
+        speedupTP = results["TP"][walk][graph]/results["LB"][walk][graph]
+        print (row_format.format(walk, graph, speedupSP, speedupTP))
 
+
+print ("Figure 6: %age of Time Spent in Building scheduling index")
+row_format = "{:>20}" * 3
+print (row_format.format("Sampling App", "Graph", "%age of Time in Index"))
+for walk in knightKingWalks:
+    for graph in graphInfo:
+        t = results["InversionTime"][walk][graph]/results["LB"][walk][graph]
+        print (row_format.format(walk, graph, t * 100))
