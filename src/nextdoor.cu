@@ -1946,8 +1946,27 @@ int getFinalSampleSize()
 template<typename SampleType, typename App>
 bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
 {
-  //Initially each sample contains only one vertex
-  //Allocate one sample for each vertex
+  char* deviceList;
+  if ((deviceList = getenv("CUDA_DEVICES")) != nullptr) {
+    std::string deviceListStr = deviceList;
+
+    std::stringstream ss(deviceListStr);
+
+    for (int i; ss >> i;) {
+        data.devices.push_back(i);    
+        if (ss.peek() == ',' || ss.peek() == '[' || ss.peek() == ']')
+            ss.ignore();
+    }
+  } else {
+    data.devices = {0};
+  }
+
+  std::cout << "Using GPUs: [";
+  for (auto d : data.devices) {
+    std::cout << d << ",";
+  }
+  std::cout << "]" << std::endl;
+
   int maxV = 0;
   // printf("App().numSamples(csr) %d\n", App().numSamples(csr));
   for (int sampleIdx = 0; sampleIdx < App().numSamples(csr); sampleIdx++) {
@@ -3109,7 +3128,7 @@ bool nextdoor(const char* graph_file, const char* graph_type, const char* graph_
   //graph.print(std::cout);
   GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
   NextDoorData<SampleType, App> nextDoorData;
-  nextDoorData.devices = {0};
+
   nextDoorData.csr = csr;
   nextDoorData.gpuCSRPartition = gpuCSRPartition;
   allocNextDoorDataOnGPU<SampleType, App>(csr, nextDoorData);
