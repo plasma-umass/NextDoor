@@ -250,7 +250,8 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
                                const size_t transitToSamplesSize, SamplingType* samples, const size_t NumSamples,
                                VertexID_t* samplesToTransitKeys, VertexID_t* samplesToTransitValues,
                                VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
-                               EdgePos_t* sampleNeighborhoodSizes, EdgePos_t* sampleNeighborhoodPos, VertexID_t* collectiveNeighborhoodCSRRows, 
+                               EdgePos_t* sampleNeighborhoodSizes, EdgePos_t* sampleNeighborhoodPos, 
+                               VertexID_t* collectiveNeighborhoodCSRRows, 
                                EdgePos_t* collectiveNeighborhoodCSRCols, curandState* randStates)
 {
   EdgePos_t threadId = threadIdx.x + blockDim.x * blockIdx.x;
@@ -296,11 +297,11 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
         neighbor = App().next(step, graph.device_csr, &transit, sampleIdx, &samples[(sampleIdx - deviceFirstSample)], maxWeight, transitEdges, transitEdgeWeights, 
                               numTransitEdges, transitNeighborIdx, randState);
       } else {
-        int insertionPos = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], numTransitEdges);
+        int insertionPos = utils::atomicAdd(&sampleInsertionPositions[sampleIdx- deviceFirstSample], numTransitEdges);
         collectiveNeighborhoodCSRRows[(sampleIdx - deviceFirstSample)*App().initialSampleSize(nullptr) + 0] = insertionPos;
 
         for (int e = transitNeighborIdx; e < numTransitEdges; e += stepSize) {
-          EdgePos_t pos = sampleNeighborhoodPos[(sampleIdx - deviceFirstSample)] + insertionPos + e;
+          EdgePos_t pos = sampleNeighborhoodPos[(sampleIdx - deviceFirstSample)] + e + insertionPos%2;
           collectiveNeighborhoodCSRCols[pos] = transitEdges[e];
         }
       }
@@ -2403,11 +2404,12 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         }
 
         CUDA_SYNC_DEVICE_ALL(nextDoorData);
+
         for(auto deviceIdx = 0; deviceIdx < nextDoorData.devices.size(); deviceIdx++) {
           auto device = nextDoorData.devices[deviceIdx];
           CHK_CU(cudaSetDevice(device));
           //TODO: Neighborhood is edges of all transit vertices. Hence, neighborhood size is (# of Transit Vertices)/(|G.V|) * |G.E|
-          CHK_CU(cudaMemcpy(hSumNeighborhoodSizes[deviceIdx], dSumNeighborhoodSizes[deviceIdx], sizeof(EdgePos_t), cudaMemcpyDeviceToHost));
+          CHK_CU(cudaMemcpy(hSumNeighborhoodSizes[deviceIdx], dSumNeighborhoodSizes[deviceIdx], sizeof(EdgePos_t), cudaMemcpyDeviceToHost));        
           CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRCols[deviceIdx], sizeof(VertexID_t)*(*hSumNeighborhoodSizes[deviceIdx])));
           CHK_CU(cudaMalloc(&dCollectiveNeighborhoodCSRRows[deviceIdx], sizeof(EdgePos_t)*App().initialSampleSize(csr)*nextDoorData.samples.size()));
         }
@@ -2416,6 +2418,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           auto device = nextDoorData.devices[deviceIdx];
           CHK_CU(cudaSetDevice(device));
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
+          CHK_CU(cudaMemset(nextDoorData.dSampleInsertionPositions[deviceIdx], 0, sizeof(VertexID_t) * nextDoorData.samples.size()));
           //Compute collective neighborhood using transit parallel kernel
           for (int threadsExecuted = 0; threadsExecuted < totalThreads[deviceIdx]; threadsExecuted += nextDoorData.maxThreadsPerKernel[deviceIdx]) {
             size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel[deviceIdx], totalThreads[deviceIdx] - threadsExecuted);
@@ -2438,7 +2441,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           auto device = nextDoorData.devices[deviceIdx];
           CHK_CU(cudaSetDevice(device));
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
-          //Compute collective neighborhood using transit parallel kernel
+          
           for (int threadsExecuted = 0; threadsExecuted < totalThreads[deviceIdx]; threadsExecuted += nextDoorData.maxThreadsPerKernel[deviceIdx]) {
             size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel[deviceIdx], totalThreads[deviceIdx] - threadsExecuted);
             samplingKernel<SampleType, App, TransitParallelMode::NextFuncExecution, 0><<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartition, 

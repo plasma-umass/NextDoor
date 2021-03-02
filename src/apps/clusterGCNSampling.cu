@@ -83,7 +83,7 @@ struct SubGraphSamplingAppI {
 
   __host__ EdgePos_t numSamples(CSR* graph)
   {
-    return (graph->get_n_edges() > 100000000) ? 800000 : min(1500000, (graph->get_n_vertices()*8)/VERTICES_IN_CLUSTERS);
+    return (graph->get_n_edges() > 100000000) ? 800000 : min(2000000, DIVUP(graph->get_n_vertices()*8, VERTICES_PER_SAMPLE));
   }
 
   __host__ __device__ bool hasExplicitTransits()
