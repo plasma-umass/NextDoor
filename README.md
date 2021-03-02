@@ -26,11 +26,23 @@ More details can be found in our EuroSys'21 paper.
   * `libNextDoor.hpp` header file that contains functions to integrate cuSampler's execution logic in an external program.
   * `nextDoorModule.cu` contains implementation of functions defined in `libNextDoor.hpp` that can be included in both Python 2 and Python 3 modules.
 
+* `example` directory builds Uniform Random Walk as an example application.
+
 # Graph Inputs
 
 Graph Inputs used in the paper can be downloaded from the url: <b>TODO</b>. These graphs are obtained from snap.stanford.edu and each edge is assigned a random weight within [1, 5).
 
 # Building Example Sampling Application
+`example/uniformRandomWalk.cu` shows how to develop a Uniform Random Walk application using NextDoor.
+To build the application, run 
+```
+make
+```
+To run the application on a graph in `input` directory.
+```
+./uniformRandomWalk ../ 
+```
+<b>TODO</b>
 
 # Existing Sampling Applications
 `src/apps/` directory contains implementation of these sampling applications:
