@@ -1,3 +1,6 @@
+#include "nextdoor.cu"
+#include "libNextDoor.hpp"
+#include "main.cu"
 /**
  * Uniform Random Walk Example
 */
@@ -58,9 +61,7 @@ struct UniformRandomWalkApp {
   __host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample)
   {
     std::vector<VertexID_t> initialValue;
-    for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      initialValue.push_back(sampleIdx);
-    }
+    initialValue.push_back(sampleIdx);
 
     return initialValue;
   }

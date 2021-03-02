@@ -38,11 +38,12 @@ To build the application, run
 ```
 make
 ```
-To run the application on a graph in `input` directory.
+
+To run the application on PPI graph in `input` directory (see Graph Inputs section to download graphs) using 
+TransitParallel with Load Balancing execute following command.
 ```
-./uniformRandomWalk ../ 
+./uniformRandWalk -g ../input/ppi.data -t edge-list -f binary -n 1 -k TransitParallel -l
 ```
-<b>TODO</b>
 
 # Existing Sampling Applications
 `src/apps/` directory contains implementation of these sampling applications:
