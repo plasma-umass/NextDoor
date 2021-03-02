@@ -2,7 +2,7 @@
 
 #include <stdlib.h>
 
-#include "../apps/mvsSampling.cu"
+#include "../apps/mvs/mvsSampling.cu"
 
 #define RUNS 1
 #define CHECK_RESULTS true
@@ -131,7 +131,6 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   // }
 
   NextDoorData<MVSSample, MVSSamplingApp> nextDoorData;
-  nextDoorData.devices = {0};
   nextDoorData.csr = csr;
   CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
   CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
@@ -171,12 +170,12 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 }
 
 #define MVSAPP_TEST(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing) \
-  TEST(MVSSampling, TestName) { \
+  TEST(MVS, TestName) { \
     EXPECT_TRUE(foo(Path, (char*)"adj-list", (char*)"text", 1, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc));\
   }
 
 #define MVSAPP_TEST_BINARY(TestName,Path,Runs,CheckResults,chkResultsFunc,KernelType,LoadBalancing)\
-  TEST(MVSSampling, TestName) { \
+  TEST(MVS, TestName) { \
   bool b = foo(Path, "edge-list", "binary", Runs, CheckResults, false, KernelType, LoadBalancing, chkResultsFunc);\
   EXPECT_TRUE(b);\
 }

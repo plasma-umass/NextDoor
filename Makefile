@@ -1,9 +1,10 @@
+include common.mk
+
 MKDIR_P = mkdir -p
 SINGLEGPU_TEST_BUILD_DIR = ./build/tests/singleGPU
 MULTIGPU_TEST_BUILD_DIR = ./build/tests/multiGPU
 TEST_INCLUDE_DIRS = -Igoogletest/googletest/include/  -Lgoogletest/build/lib/ -Isrc/ -Isrc/apps/ -Isrc/tests
 GOOGLE_TEST_MAIN = googletest/googletest/src/gtest_main.cc
-ARCH_CODE_FLAGS = -arch=compute_61 -code=sm_61
 TEST_LFLAGS = -lcurand -lgtest -lpthread
 
 all: tests
@@ -14,52 +15,68 @@ directories:
 tests: all-singleGPU-tests all-multiGPU-tests
 
 all-singleGPU-tests: directories $(SINGLEGPU_TEST_BUILD_DIR)/deepwalk $(SINGLEGPU_TEST_BUILD_DIR)/ppr \
-$(SINGLEGPU_TEST_BUILD_DIR)/node2vec $(SINGLEGPU_TEST_BUILD_DIR)/khop $(SINGLEGPU_TEST_BUILD_DIR)/layer \
-$(SINGLEGPU_TEST_BUILD_DIR)/multirw $(SINGLEGPU_TEST_BUILD_DIR)/subGraphSampling $(SINGLEGPU_TEST_BUILD_DIR)/mvsSampling
+$(SINGLEGPU_TEST_BUILD_DIR)/node2vec $(SINGLEGPU_TEST_BUILD_DIR)/khop $(SINGLEGPU_TEST_BUILD_DIR)/fastgcn \
+$(SINGLEGPU_TEST_BUILD_DIR)/ladies \
+$(SINGLEGPU_TEST_BUILD_DIR)/multirw $(SINGLEGPU_TEST_BUILD_DIR)/clustergcn $(SINGLEGPU_TEST_BUILD_DIR)/mvs
 
-all-multiGPU-tests: directories $(MULTIGPU_TEST_BUILD_DIR)/deepWalk $(MULTIGPU_TEST_BUILD_DIR)/khop $(MULTIGPU_TEST_BUILD_DIR)/layer $(MULTIGPU_TEST_BUILD_DIR)/multiRW $(MULTIGPU_TEST_BUILD_DIR)/subGraphSampling $(MULTIGPU_TEST_BUILD_DIR)/mvsSampling
+all-multiGPU-tests: directories $(MULTIGPU_TEST_BUILD_DIR)/deepwalk $(MULTIGPU_TEST_BUILD_DIR)/khop $(MULTIGPU_TEST_BUILD_DIR)/fastgcn \
+	$(MULTIGPU_TEST_BUILD_DIR)/ladies \
+	$(MULTIGPU_TEST_BUILD_DIR)/multirw $(MULTIGPU_TEST_BUILD_DIR)/clustergcn $(MULTIGPU_TEST_BUILD_DIR)/mvs \
+	$(MULTIGPU_TEST_BUILD_DIR)/ppr $(MULTIGPU_TEST_BUILD_DIR)/node2vec
 
-$(SINGLEGPU_TEST_BUILD_DIR)/khop: src/tests/singleGPU/khop.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop.cu 
+$(SINGLEGPU_TEST_BUILD_DIR)/khop: src/tests/singleGPU/khop.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop/khop.cu 
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp  -maxrregcount=40 -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/deepwalk: src/tests/singleGPU/deepwalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomWalks.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/deepwalk: src/tests/singleGPU/deepwalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/ppr: src/tests/singleGPU/ppr.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomWalks.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/ppr: src/tests/singleGPU/ppr.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/node2vec: src/tests/singleGPU/node2vec.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomWalks.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/node2vec: src/tests/singleGPU/node2vec.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/layer: src/tests/singleGPU/layer.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/importanceSampling.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/fastgcn: src/tests/singleGPU/fastgcn.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/fastgcn/fastgcnSampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/multirw: src/tests/singleGPU/multirw.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/multiRW.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/ladies: src/tests/singleGPU/ladies.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/ladies/ladiessampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/subGraphSampling: src/tests/singleGPU/subGraphSampling.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/clusterGCNSampling.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/multirw: src/tests/singleGPU/multirw.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/multiRW/multiRW.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
-$(SINGLEGPU_TEST_BUILD_DIR)/mvsSampling: src/tests/singleGPU/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/mvsSampling.cu
+$(SINGLEGPU_TEST_BUILD_DIR)/clustergcn: src/tests/singleGPU/clustergcn.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/clustergcn/clusterGCNSampling.cu
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+
+$(SINGLEGPU_TEST_BUILD_DIR)/mvs: src/tests/singleGPU/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/mvs/mvsSampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
 #******Multi GPU Tests********#
-$(MULTIGPU_TEST_BUILD_DIR)/khopTest: src/tests/multiGPU/khopTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop.cu 
+$(MULTIGPU_TEST_BUILD_DIR)/khop: src/tests/multiGPU/khop.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop/khop.cu 
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp  -maxrregcount=40 -o $@
 
-$(MULTIGPU_TEST_BUILD_DIR)/deepWalkTest: src/tests/multiGPU/deepWalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomWalks.cu
+$(MULTIGPU_TEST_BUILD_DIR)/deepwalk: src/tests/multiGPU/deepwalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
 
-$(MULTIGPU_TEST_BUILD_DIR)/layerTest: src/tests/multiGPU/layerTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/importanceSampling.cu
+$(MULTIGPU_TEST_BUILD_DIR)/node2vec: src/tests/multiGPU/node2vec.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
+
+$(MULTIGPU_TEST_BUILD_DIR)/ppr: src/tests/multiGPU/ppr.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
+
+$(MULTIGPU_TEST_BUILD_DIR)/fastgcn: src/tests/multiGPU/fastgcn.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/fastgcn/fastgcnSampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
-$(MULTIGPU_TEST_BUILD_DIR)/multiRWTest: src/tests/multiGPU/multiRW.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/multiRW.cu
+$(MULTIGPU_TEST_BUILD_DIR)/ladies: src/tests/multiGPU/ladies.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/ladies/ladiessampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
-$(MULTIGPU_TEST_BUILD_DIR)/subGraphSamplingTests: src/tests/multiGPU/subGraphSamplingTests.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/clusterGCNSampling.cu
+$(MULTIGPU_TEST_BUILD_DIR)/multirw: src/tests/multiGPU/multirw.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/multiRW/multiRW.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
-$(MULTIGPU_TEST_BUILD_DIR)/mvsSamplingTests: src/tests/multiGPU/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/mvsSampling.cu
+$(MULTIGPU_TEST_BUILD_DIR)/clustergcn: src/tests/multiGPU/clustergcn.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/clustergcn/clusterGCNSampling.cu
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+
+$(MULTIGPU_TEST_BUILD_DIR)/mvs: src/tests/multiGPU/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/mvs/mvsSampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 ########################################
 
@@ -72,7 +89,7 @@ fastgcn_sampling: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu
 #**************************************#
 
 #*************Python Modules*******#
-fastgcn_samplingIntegrationPython2: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu src/libNextDoor.hpp src/nextDoorModule.cu
+fastgcn_samplingIntegrationPython2: src/apps/fastgcn/pythonModule.cu src/nextdoor.cu src/main.cu src/libNextDoor.hpp src/nextDoorPythonModule.cu
 	nvcc $< -DPYTHON_2 -IAnyOption/ AnyOption/anyoption.cpp -I/usr/include/python2.7/ -Isrc  -lcurand -lpthread  $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o NextDoor.so -shared -lcurand -Xptxas -O3 -Xcompiler -Wall,-fPIC
 
 fastgcn_samplingIntegrationPython3: apps/fastgcn_sampling.cu src/nextdoor.cu src/main.cu src/libNextDoor.hpp src/nextDoorModule.cu

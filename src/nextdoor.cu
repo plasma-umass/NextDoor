@@ -1951,12 +1951,15 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
     std::string deviceListStr = deviceList;
 
     std::stringstream ss(deviceListStr);
-
+    if (ss.peek() == '[')
+        ss.ignore();
     for (int i; ss >> i;) {
-        data.devices.push_back(i);    
-        if (ss.peek() == ',' || ss.peek() == '[' || ss.peek() == ']')
-            ss.ignore();
+      data.devices.push_back(i);    
+      if (ss.peek() == ',')
+        ss.ignore();
     }
+    if (ss.peek() == ']')
+      ss.ignore();
   } else {
     data.devices = {0};
   }
