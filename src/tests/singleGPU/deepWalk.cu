@@ -4,8 +4,8 @@
 #define RUNS 1
 #define CHECK_RESULTS true
 #define VERTICES_IN_SAMPLE 0
-#include "../apps/randomWalks.cu"
-#include "../check_results.cu"
+#include "apps/randomWalks.cu"
+#include "check_results.cu"
 #define COMMA ,
 
 /**DeepWalk**/
