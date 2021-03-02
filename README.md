@@ -99,7 +99,11 @@ CUDA_DEVICES=0,1,3 ./build/tests/multiGPU/khop
 # References
 <b>todo</b>
 [1] GraphSAINT: Graph Sampling Based Inductive Learning Method (ICLR 2020)
+
 [2] Minimal Variance Sampling with Provable Guarantees for Fast Training of Graph Neural Networks (KDD 2020)
+
 [3] Cluster-GCN: An Efficient Algorithm for Training Deep and Large Graph Convolutional Networks (KDD 2019)
+
 [4] Layer-Dependent Importance Sampling for Training Deep and Large Graph Convolutional Networks (Neurips 2019)
+
 [5] FastGCN: Fast Learning with Graph Convolutional Networks via Importance Sampling (ICLR 2018)

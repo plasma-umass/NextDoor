@@ -3100,7 +3100,7 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType, App>& nextDoor
 
     CHK_CU(cudaMemcpy(&nextDoorData.hFinalSamples[0] + finalSampleSize * deviceSampleStartPtr, nextDoorData.dFinalSamples[deviceIdx], 
                       sizeof(nextDoorData.hFinalSamples[0]) * finalSampleSize * perDeviceNumSamples, cudaMemcpyDeviceToHost));
-    CHK_CU(cudaMemcpy(&nextDoorData.samples[0] + sizeof(SampleType) * deviceSampleStartPtr, nextDoorData.dOutputSamples[deviceIdx], 
+    CHK_CU(cudaMemcpy(&nextDoorData.samples[0] + deviceSampleStartPtr, nextDoorData.dOutputSamples[deviceIdx], 
                       perDeviceNumSamples*sizeof(SampleType), cudaMemcpyDeviceToHost));
   }
 
