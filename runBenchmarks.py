@@ -94,7 +94,7 @@ for app in nextDoorApps:
 
 if len(args.gpus) > 1:
     #MultiGPU Results
-    for app in nextDoorApps:
+    for app in multiGPUApps:
         times = []
         appBinary = "CUDA_DEVICES="+args.gpus + " " + os.path.join("build/tests/multiGPU", app.lower())
         print ("Running ", appBinary)
@@ -112,13 +112,13 @@ else:
     print ("Not taking MultiGPU results because only one GPU mentioned in 'gpus': ", args.gpus)
     
 #Speedup Over KnightKing
-# print ("\n\nFigure 7 (a): Speedup Over KnightKing")
-# row_format = "{:>20}" * 3
-# print (row_format.format("Random Walk", "Graph", "Speedup"))
-# for walk in knightKingWalks:
-#     for graph in graphInfo:
-#         speedup = results["KnightKing"][walk][graph]/results["LB"][walk][graph]
-#         print (row_format.format(walk, graph, speedup))
+print ("\n\nFigure 7 (a): Speedup Over KnightKing")
+row_format = "{:>20}" * 3
+print (row_format.format("Random Walk", "Graph", "Speedup"))
+for walk in knightKingWalks:
+    for graph in graphInfo:
+        speedup = results["KnightKing"][walk][graph]/results["LB"][walk][graph]
+        print (row_format.format(walk, graph, speedup))
     
 #Speedup Over SP and TP
 print ("\n\nFigure 7 (c): Speedup Over SP and TP")
@@ -145,5 +145,5 @@ row_format = "{:>30}" * 3
 print (row_format.format("Sampling App", "Graph", "%age of Time in Index"))
 for walk in multiGPUApps:
     for graph in graphInfo:
-        speedupSP = results["LB"][walk][graph]/results["MultiGPU-LB"][walk][graph]
-        print (row_format.format(walk, graph, t * 100))
+        speedup = results["LB"][walk][graph]/results["MultiGPU-LB"][walk][graph]
+        print (row_format.format(walk, graph, speedup * 100))
