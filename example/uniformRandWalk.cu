@@ -96,3 +96,28 @@ int main(int argc, char* argv[]) {
   //Call the main function of NextDoor to execute application.
   return appMain<UniformRandomWalkSample, UniformRandomWalkApp>(argc, argv, nullptr);
 }
+
+//Different Modules Names for different Python versions 
+#ifdef PYTHON_2
+  #define MODULE_NAME UniformRandomWalkPy2
+  #define INIT_FUNC_NAME initUniformRandomWalkPy2
+  const char* moduleName = "UniformRandomWalkPy2";
+#endif
+
+#ifdef PYTHON_3
+  #define MODULE_NAME UniformRandomWalkPy3
+  #define INIT_FUNC_NAME PyInit_UniformRandomWalkPy3
+  const char* moduleName = "UniformRandomWalkPy3";
+#endif
+
+//Declare NextDoorData
+static NextDoorData<UniformRandomWalkSample, UniformRandomWalkApp> nextDoorData;
+
+//Include NextDoor's definition of Python Module functions
+#ifdef PYTHON_2
+#include "nextDoorPythonModule.cu"
+#endif
+
+#ifdef PYTHON_3
+#include "nextDoorPythonModule.cu"
+#endif
