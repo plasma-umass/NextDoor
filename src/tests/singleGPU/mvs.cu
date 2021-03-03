@@ -181,7 +181,7 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
 }
 
 
-MVSAPP_TEST_BINARY(LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "SampleParallel", false)
+MVSAPP_TEST_BINARY(LiveJournalSP, LJ1_PATH, RUNS, true, checkMVSResult, "SampleParallel", false)
 MVSAPP_TEST_BINARY(LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", true)
 MVSAPP_TEST_BINARY(LiveJournalTP, LJ1_PATH, RUNS, CHECK_RESULTS, checkMVSResult, "TransitParallel", false)
 
