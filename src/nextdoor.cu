@@ -415,14 +415,14 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     EdgePos_t transitNeighborIdx;
     VertexID_t transit;
     int kernelTy;
+    bool continueExecution = true;
 
-    if (threadId >= transitToSamplesSize)
-      continue;
+    continueExecution = threadId < transitToSamplesSize;
     
     int subWarpSize = subWarpSizeAtStep<App>(step);
     transitIdx = threadId/subWarpSize;
     transitNeighborIdx = threadId % subWarpSize;
-    if (transitNeighborIdx == 0) {
+    if (continueExecution && transitNeighborIdx == 0) {
       transit = transitToSamplesKeys[transitIdx];
       kernelTy = kernelTypeForTransit[transit];
     }
@@ -430,28 +430,27 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
     transit = __shfl_sync(FULL_WARP_MASK, transit, 0, subWarpSize);
     kernelTy = __shfl_sync(FULL_WARP_MASK, kernelTy, 0, subWarpSize);
 
-    if (transitNeighborIdx >= App().stepSize(step)) {
-      continue;
-    }
+    continueExecution = continueExecution && transitNeighborIdx < App().stepSize(step);
 
     if ((useGridKernel && kernelTy == TransitKernelTypes::GridKernel && numberOfTransits<App>(step) > 1) || 
         (useSubWarpKernel && kernelTy == TransitKernelTypes::SubWarpKernel) || 
         (useThreadBlockKernel && kernelTy == TransitKernelTypes::ThreadBlockKernel)) {
-      continue;
+        continueExecution = false;
     }
 
     CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
     VertexID_t sampleIdx = -1;
     
-    if (transitNeighborIdx == 0) {
+    if (continueExecution && transitNeighborIdx == 0) {
       sampleIdx = transitToSamplesValues[transitIdx];
     }
 
     sampleIdx = __shfl_sync(FULL_WARP_MASK, sampleIdx, 0, subWarpSize);
-    assert(sampleIdx < NumSamples);
     VertexID_t neighbor = invalidVertex;
 
-    if (transit != invalidVertex) {
+    if (continueExecution and transit != invalidVertex) {
+      assert(sampleIdx < NumSamples);
+
       // if (graph.device_csr->has_vertex(transit) == false)
       //   printf("transit %d\n", transit);
       EdgePos_t numTransitEdges = csr->get_n_edges_for_vertex(transit);
@@ -487,15 +486,17 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
 
     __syncwarp();
   
-  if (step != App().steps() - 1) {
-    //No need to store at last step
-    if (App().hasExplicitTransits()) {
-      VertexID_t newTransit = App().stepTransits(step + 1, sampleIdx, samples[sampleIdx - deviceFirstSample], transitIdx, &localRandState);
-      samplesToTransitValues[threadId] = newTransit != -1 ? newTransit : invalidVertex;
-    } else {
-      samplesToTransitValues[threadId] = neighbor != -1 ? neighbor : invalidVertex;;
+  if (continueExecution) {
+    if (step != App().steps() - 1) {
+      //No need to store at last step
+      if (App().hasExplicitTransits()) {
+        VertexID_t newTransit = App().stepTransits(step + 1, sampleIdx, samples[sampleIdx - deviceFirstSample], transitIdx, &localRandState);
+        samplesToTransitValues[threadId] = newTransit != -1 ? newTransit : invalidVertex;
+      } else {
+        samplesToTransitValues[threadId] = neighbor != -1 ? neighbor : invalidVertex;;
+      }
+      samplesToTransitKeys[threadId] = sampleIdx;
     }
-    samplesToTransitKeys[threadId] = sampleIdx;
   }
 
   //FIXME: in deepwalk if there is an invalid vertex at step k, it will not store the
@@ -503,7 +504,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   EdgePos_t finalSampleSizeTillPreviousStep = 0;
   EdgePos_t neighborsToSampleAtStep = 1;
   EdgePos_t insertionPos = 0; 
-  if (numberOfTransits<App>(step) > 1 && isValidSampledVertex(neighbor, invalidVertex)) {    
+  if (numberOfTransits<App>(step) > 1) {    
     if (step == 0) {
       insertionPos = transitNeighborIdx;
     } else {
@@ -513,6 +514,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
         finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
       }
       EdgePos_t insertionStartPosForTransit = 0;
+
       if (threadIdx.x % subWarpSize == 0) {
           insertionStartPosForTransit = utils::atomicAdd(&sampleInsertionPositions[sampleIdx - deviceFirstSample], App().stepSize(step));
       }
@@ -529,23 +531,26 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   // if (sampleIdx == 1747842) {
   //   printf("490: insertionPos %d finalSampleSize %ld sampleIdx %d transit %d\n", insertionPos, finalSampleSize, sampleIdx, transit);
   // }
-  assert(insertionPos < finalSampleSize);
-
-  if (combineTwoSampleStores && numberOfTransits<App>(step) == 1) {
-    //TODO: We can combine stores even when numberOfTransits<App>(step) > 1
-    if (step % 2 == 1) {
-      int2 *ptr = (int2*)&finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos - 1];
-      int2 res;
-      res.x = transit;
-      res.y = neighbor;
-      *ptr = res;
-      //finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
-    } else if (step == App().steps() - 1) {
-      finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
+  if (continueExecution)
+    assert(insertionPos < finalSampleSize);
+  
+  if (continueExecution) {
+    if (combineTwoSampleStores && numberOfTransits<App>(step) == 1) {
+      //TODO: We can combine stores even when numberOfTransits<App>(step) > 1
+      if (step % 2 == 1) {
+        int2 *ptr = (int2*)&finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos - 1];
+        int2 res;
+        res.x = transit;
+        res.y = neighbor;
+        *ptr = res;
+        //finalSamples[sample*finalSampleSize + insertionPos] = neighbor;
+      } else if (step == App().steps() - 1) {
+        finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
+      }
+    } else {
+      if (isValidSampledVertex(neighbor, invalidVertex))
+        finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
     }
-  } else {
-    if (isValidSampledVertex(neighbor, invalidVertex))
-      finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
   }
   // if (sample == 100) {
   //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
@@ -1081,6 +1086,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       shMem.subWarpTransits[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transit;
       shMem.subWarpSampleIdx[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
     }
+    __syncwarp();
     __syncthreads();
     const int threadsToLoadTransit = sizeof(CSR::Vertex)/sizeof(int);
     if (threadIdx.x < threadsToLoadTransit * TRANSITS_PER_THREAD) {
@@ -1092,7 +1098,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       int data = ((const int*)transitVertex)[tid];
       *(((int*)&shMem.transitVertices[transitI * sizeof(CSR::Vertex)]) + tid) = data;
     }
-
+    __syncwarp();
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
       if (TRANSITS_PER_THREAD * (fullBlockIdx) + transitI >= gridKernelTBPositionsNum) {
         continue;
@@ -1131,7 +1137,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       }
 
       __syncthreads();
-
+      bool continueExecution = true;
       if (transit == shMem.transitForTB) {
         //A thread will run next only when it's transit is same as transit of the threadblock.
         transitIdx = shMem.mapStartPos[transitI] + threadIdx.x/subWarpSize; //threadId/stepSize(step);
@@ -1144,8 +1150,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         
         // sampleIdx = __shfl_sync(FULL_WARP_MASK, sampleIdx, 0, subWarpSize);
 
-        if (transitNeighborIdx >= App().stepSize(step)) 
-          continue;
+        continueExecution = (transitNeighborIdx < App().stepSize(step)); 
         // if (threadIdx.x == 0 && kernelTypeForTransit[transit] != TransitKernelTypes::GridKernel) {
         //   printf("transit %d transitIdx %d gridDim.x %d\n", transit, transitIdx, gridDim.x);
         // }
@@ -1161,7 +1166,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         VertexID_t neighbor = invalidVertex;
         // if (graph.device_csr->has_vertex(transit) == false)
         //   printf("transit %d\n", transit);
-        if (numEdgesInShMem > 0)
+        if (numEdgesInShMem > 0 && continueExecution)
           neighbor = App().template next<SampleType, CachedEdges, CachedWeights>(step, csr, &transit, sampleIdx, &samples[sampleIdx-deviceFirstSample], maxWeight, 
                                                                 cachedEdges, cachedWeights,
                                                                 numEdgesInShMem, transitNeighborIdx, &localRandState);
@@ -1169,20 +1174,21 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
         // if ((transit == 612657 || transit == 348930) && sampleIdx == 17175) {
         //   printf("transit %d fullBlockIdx  %d sampleIdx %d neighbor %d\n", transit, fullBlockIdx, sampleIdx, neighbor);
         // }
-
         
-        if (step != App().steps() - 1) {
-          //No need to store at last step
-          samplesToTransitKeys[transitIdx] = sampleIdx; //TODO: Update this for khop to transitIdx + transitNeighborIdx
-          if (App().hasExplicitTransits()) {
-            VertexID_t newTransit = App().stepTransits(step, sampleIdx, samples[sampleIdx-deviceFirstSample], transitIdx, &localRandState);
-            samplesToTransitValues[transitIdx] = newTransit != -1 ? newTransit : invalidVertex;
-          } else {
-            samplesToTransitValues[transitIdx] = neighbor != -1 ? neighbor : invalidVertex;
+        if (continueExecution) {
+          if (step != App().steps() - 1) {
+            //No need to store at last step
+            samplesToTransitKeys[transitIdx] = sampleIdx; //TODO: Update this for khop to transitIdx + transitNeighborIdx
+            if (App().hasExplicitTransits()) {
+              VertexID_t newTransit = App().stepTransits(step, sampleIdx, samples[sampleIdx-deviceFirstSample], transitIdx, &localRandState);
+              samplesToTransitValues[transitIdx] = newTransit != -1 ? newTransit : invalidVertex;
+            } else {
+              samplesToTransitValues[transitIdx] = neighbor != -1 ? neighbor : invalidVertex;
+            }
           }
         }
 
-        if (isValidSampledVertex(neighbor, invalidVertex)) {
+        if (true) {
           EdgePos_t insertionPos = transitNeighborIdx; 
           if (numberOfTransits<App>(step) > 1) {
             if (step == 0) {
@@ -1217,7 +1223,8 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
             
           //   return;
           // }
-          assert(insertionPos < finalSampleSize);
+          if (continueExecution)
+            assert(insertionPos < finalSampleSize);
 
           if (combineTwoSampleStores && numberOfTransits<App>(step) == 1) {
             if (step % 2 == 1) {
@@ -1231,7 +1238,8 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
               finalSamples[(sampleIdx-deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
             }
           } else {
-            finalSamples[(sampleIdx-deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
+            if (continueExecution && isValidSampledVertex(neighbor, invalidVertex))
+              finalSamples[(sampleIdx-deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
           }
           // if (sample == 100) {
           //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
@@ -2375,7 +2383,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       const size_t perDeviceNumSamples = PartDivisionSize(nextDoorData.samples.size(), i, numDevices);
       totalThreads[i] = perDeviceNumSamples*neighborsToSampleAtStep;
     }
-    //std::cout << "step " << step << std::endl;
+    std::cout << "step " << step << std::endl;
     if (App().steps() == 1) {
       //FIXME: Currently a non-sorted Transit to Sample Map is passed to both TP and TP+LB.
       //Here, if there is only one step, a sorted map is passed.
@@ -2534,6 +2542,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           totalThreads[deviceIdx] = *invalidVertexStartPosInMap[deviceIdx];
         }
 
+        std::cout << __LINE__ << std::endl;
 
         for(auto deviceIdx = 0; deviceIdx < nextDoorData.devices.size(); deviceIdx++) {
           auto device = nextDoorData.devices[deviceIdx];
@@ -2578,6 +2587,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         }
 
         CUDA_SYNC_DEVICE_ALL(nextDoorData);
+        std::cout << __LINE__ << std::endl;
 
         //printKernelTypes<App>(step, csr, dUniqueTransits, dUniqueTransitsCounts, dUniqueTransitsNumRuns);
         for(auto deviceIdx = 0; deviceIdx < nextDoorData.devices.size(); deviceIdx++) {
@@ -2595,6 +2605,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         }
 
         CUDA_SYNC_DEVICE_ALL(nextDoorData);
+        std::cout << __LINE__ << std::endl;
         int subWarpSize = subWarpSizeAtStep<App>(step);
 
         for(auto deviceIdx = 0; deviceIdx < nextDoorData.devices.size(); deviceIdx++) {
@@ -2626,17 +2637,20 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         if (noTransitsForAllDevices)
           //End Sampling because no more transits exists  
           break;
+        std::cout << __LINE__ << std::endl;
 
         double identityKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
         for(auto deviceIdx = 0; deviceIdx < nextDoorData.devices.size(); deviceIdx++) {
           auto device = nextDoorData.devices[deviceIdx];
           CHK_CU(cudaSetDevice(device));
+          std::cout << __LINE__ << " *uniqueTransitNumRuns[deviceIdx] " << (*uniqueTransitNumRuns[deviceIdx]) << "\n";
+          std::cout << " " << (nextDoorData.devices.size()) << std::endl;;
           if (*uniqueTransitNumRuns[deviceIdx] == 0) 
             continue;
-          // std::cout << "final totalThreads " << totalThreads << std::endl;
+          std::cout << "final totalThreads " << totalThreads[deviceIdx] << " " << totalTransits[deviceIdx] << " " << numTransits << std::endl;
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
-
+          std::cout << __LINE__ << std::endl;
           if (*identityKernelTransitsNum[deviceIdx] > 0) {
             identityKernel<SampleType, App, 256, true><<<maxThreadBlocksPerKernel, 256>>>(step, 
               gpuCSRPartition, deviceSampleStartPtr, nextDoorData.INVALID_VERTEX,
@@ -2647,9 +2661,12 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
               nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx]);
             CHK_CU(cudaGetLastError());
           }
+          std::cout << __LINE__ << std::endl;
         }
 
         CUDA_SYNC_DEVICE_ALL(nextDoorData);
+        std::cout << __LINE__ << std::endl;
+
         double identityKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
         identityKernelTime += (identityKernelTimeT2 - identityKernelTimeT1);
 
@@ -2702,7 +2719,8 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
           const size_t threadBlocks = DIVUP(*gridKernelTransitsNum[deviceIdx], perThreadSamplesForGridKernel);
-          
+          std::cout << __LINE__ << std::endl;
+
           if (useGridKernel && *gridKernelTransitsNum[deviceIdx] > 0 && numberOfTransits<App>(step) > 1) {
             //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
             // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
@@ -2773,7 +2791,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
             // }
           }
         }
+        std::cout << __LINE__ << std::endl;
+
         CUDA_SYNC_DEVICE_ALL(nextDoorData);
+        std::cout << __LINE__ << std::endl;
+
         double gridKernelTimeT2 = convertTimeValToDouble(getTimeOfDay ());
         gridKernelTime += (gridKernelTimeT2 - gridKernelTimeT1);
       }
