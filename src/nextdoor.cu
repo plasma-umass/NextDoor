@@ -3123,8 +3123,8 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType, App>& nextDoor
                       sizeof(nextDoorData.hFinalSamples[0]) * finalSampleSize * perDeviceNumSamples, cudaMemcpyDeviceToHost));
     CHK_CU(cudaMemcpy(&nextDoorData.samples[0] + deviceSampleStartPtr, nextDoorData.dOutputSamples[deviceIdx], 
                       perDeviceNumSamples*sizeof(SampleType), cudaMemcpyDeviceToHost));
-    int i = 0;
-    // printf("CHecking for invalid\n");
+    // int i = 0;
+    // printf("CHecking for invalidvertex %d\n", nextDoorData.INVALID_VERTEX);
     // for (auto v : nextDoorData.hFinalSamples) {
     //   if (v==nextDoorData.INVALID_VERTEX) {printf("i %d\n", i);break;}
     // i++;

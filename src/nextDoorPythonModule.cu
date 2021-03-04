@@ -72,13 +72,22 @@ static PyObject* finalSamples(PyObject *self, PyObject *args)
 
 static PyObject* finalSampleLength(PyObject *self, PyObject *args)
 {
-  std::vector<VertexID_t>& final = getFinalSamples(nextDoorData);
+  printf("finalSampleLength\n");
+  std::vector<VertexID_t>& final = nextDoorData.hFinalSamples;
 
   return Py_BuildValue("i", final.size());
 }
 
+static PyObject* freeDeviceMemory(PyObject *self, PyObject *args)
+{
+  freeDeviceData(nextDoorData);
+  Py_RETURN_NONE;
+}
+
+
 extern "C" int* finalSamplesArray()
 {
+  printf("finalSamplesArray\n");
   return &getFinalSamples(nextDoorData)[0];
 }
 
@@ -87,6 +96,7 @@ static PyMethodDef ModuleMethods[] = {
   {"sample",  sample, METH_VARARGS, "sample(): This will perform the sampling on GPU"},
   {"finalSamples", finalSamples, METH_VARARGS, "finalSamples(): This will return the final samples in the form of a Python List."},
   {"finalSampleLength", finalSampleLength, METH_VARARGS, "finalSampleLength(): This will return the size of each sample."},
+  {"freeDeviceMemory", freeDeviceMemory, METH_VARARGS, "freeDeviceMemory(): Free allocated device memory by NextDoor."},
   {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 

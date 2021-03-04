@@ -45,5 +45,7 @@ bool doSampleParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDoo
 template<class SampleType, typename App>
 std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType, App>& data);
 int getFinalSampleSize();
+template<class SampleType, typename App>
+void freeDeviceData(NextDoorData<SampleType, App>& data);
 
 #endif
