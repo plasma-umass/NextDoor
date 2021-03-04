@@ -1490,33 +1490,31 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
           numTransitEdges += graph.device_csr->get_n_edges_for_vertex(transits[i]);
         }
         
-        if (numTransitEdges != 0) {
-          const CSR::Edge* transitEdges = (App().samplingType() == CollectiveNeighborhood) ? nullptr : graph.device_csr->get_edges(*transits);
-          const float* transitEdgeWeights = (App().samplingType() == CollectiveNeighborhood) ? nullptr : graph.device_csr->get_weights(*transits);
-          const float maxWeight = (App().samplingType() == CollectiveNeighborhood) ? 0.0 : graph.device_csr->get_max_weight(*transits);
-  
-          neighbor = App().template next<SampleType, const CSR::Edge*, const float*> (step, graph.device_csr, transits, sampleIdx, &samples[(sampleIdx - deviceFirstSample)], maxWeight, 
-            transitEdges, transitEdgeWeights, numTransitEdges, neighbrID, &localRandState);
-      #if 0
-          //search if neighbor has already been selected.
-          //we can do that in register if required
-          newNeigbhors[threadIdx.x] = neighbor;
-  
-          bool found = false;
-          for (int i = 0; i < N_THREADS; i++) {
-            if (newNeigbhors[i] == neighbor) {
-              found = true;
-              // break;
-            }
+        const CSR::Edge* transitEdges = (App().samplingType() == CollectiveNeighborhood) ? nullptr : graph.device_csr->get_edges(*transits);
+        const float* transitEdgeWeights = (App().samplingType() == CollectiveNeighborhood) ? nullptr : graph.device_csr->get_weights(*transits);
+        const float maxWeight = (App().samplingType() == CollectiveNeighborhood) ? 0.0 : graph.device_csr->get_max_weight(*transits);
+
+        neighbor = App().template next<SampleType, const CSR::Edge*, const float*> (step, graph.device_csr, transits, sampleIdx, &samples[(sampleIdx - deviceFirstSample)], maxWeight, 
+          transitEdges, transitEdgeWeights, numTransitEdges, neighbrID, &localRandState);
+    #if 0
+        //search if neighbor has already been selected.
+        //we can do that in register if required
+        newNeigbhors[threadIdx.x] = neighbor;
+
+        bool found = false;
+        for (int i = 0; i < N_THREADS; i++) {
+          if (newNeigbhors[i] == neighbor) {
+            found = true;
+            // break;
           }
-  
-          __syncwarp();
-          if (found) {
-            neighbor = next(step, transit, sample, transitEdges, numTransitEdges, 
-              transitNeighborIdx, randState);;
-          }
-      #endif
         }
+
+        __syncwarp();
+        if (found) {
+          neighbor = next(step, transit, sample, transitEdges, numTransitEdges, 
+            transitNeighborIdx, randState);;
+        }
+    #endif
       }
   
       if (WriteSampleToTransitMap) {
@@ -1547,6 +1545,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
       //   assert (neighbor == invalidVertex);
       // }
       if (App().outputFormat() == AdjacencyMatrix && App().samplingType() == CollectiveNeighborhood) {
+        assert (neighbor != invalidVertex);
         finalSamples[sampleIdx*finalSampleSize + stepSizeAtStep<App>(step - 1) + neighbrID] = neighbor;
       } else if (App().outputFormat() == SampledVertices && App().samplingType() == IndividualNeighborhood) {
         if (numberOfTransits<App>(step) > 1) {    
@@ -2063,7 +2062,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
     }
 
     CHK_CU(cudaMalloc(&data.dFinalSamples[deviceIdx], sizeof(VertexID_t)*finalSampleSize*perDeviceNumSamples));
-    gpu_memset(data.dFinalSamples[deviceIdx], data.INVALID_VERTEX, finalSampleSize*perDeviceNumSamples);
+    gpu_memset(data.dFinalSamples[deviceIdx], 0, finalSampleSize*perDeviceNumSamples);
     
     //Samples to Transit Map
     CHK_CU(cudaMalloc(&data.dSamplesToTransitMapKeys[deviceIdx], sizeof(VertexID_t)*perDeviceNumSamples*maxNeighborsToSample));
@@ -3124,6 +3123,12 @@ std::vector<VertexID_t>& getFinalSamples(NextDoorData<SampleType, App>& nextDoor
                       sizeof(nextDoorData.hFinalSamples[0]) * finalSampleSize * perDeviceNumSamples, cudaMemcpyDeviceToHost));
     CHK_CU(cudaMemcpy(&nextDoorData.samples[0] + deviceSampleStartPtr, nextDoorData.dOutputSamples[deviceIdx], 
                       perDeviceNumSamples*sizeof(SampleType), cudaMemcpyDeviceToHost));
+    int i = 0;
+    // printf("CHecking for invalid\n");
+    // for (auto v : nextDoorData.hFinalSamples) {
+    //   if (v==nextDoorData.INVALID_VERTEX) {printf("i %d\n", i);break;}
+    // i++;
+    // }
   }
 
   return nextDoorData.hFinalSamples;
