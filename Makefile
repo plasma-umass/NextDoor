@@ -17,7 +17,8 @@ tests: all-singleGPU-tests all-multiGPU-tests
 all-singleGPU-tests: directories $(SINGLEGPU_TEST_BUILD_DIR)/deepwalk $(SINGLEGPU_TEST_BUILD_DIR)/ppr \
 $(SINGLEGPU_TEST_BUILD_DIR)/node2vec $(SINGLEGPU_TEST_BUILD_DIR)/khop $(SINGLEGPU_TEST_BUILD_DIR)/fastgcn \
 $(SINGLEGPU_TEST_BUILD_DIR)/ladies \
-$(SINGLEGPU_TEST_BUILD_DIR)/multirw $(SINGLEGPU_TEST_BUILD_DIR)/clustergcn $(SINGLEGPU_TEST_BUILD_DIR)/mvs
+$(SINGLEGPU_TEST_BUILD_DIR)/multirw $(SINGLEGPU_TEST_BUILD_DIR)/clustergcn $(SINGLEGPU_TEST_BUILD_DIR)/mvs \
+$(SINGLEGPU_TEST_BUILD_DIR)/layer
 
 all-multiGPU-tests: directories $(MULTIGPU_TEST_BUILD_DIR)/deepwalk $(MULTIGPU_TEST_BUILD_DIR)/khop $(MULTIGPU_TEST_BUILD_DIR)/fastgcn \
 	$(MULTIGPU_TEST_BUILD_DIR)/ladies \
@@ -49,6 +50,9 @@ $(SINGLEGPU_TEST_BUILD_DIR)/clustergcn: src/tests/singleGPU/clustergcn.cu src/ne
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
 $(SINGLEGPU_TEST_BUILD_DIR)/mvs: src/tests/singleGPU/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/mvs/mvsSampling.cu
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+
+$(SINGLEGPU_TEST_BUILD_DIR)/layer: src/tests/singleGPU/layer.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/layer/layerSampling.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
 
 #******Multi GPU Tests********#
