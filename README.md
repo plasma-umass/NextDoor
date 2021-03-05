@@ -5,20 +5,15 @@ More details can be found in our EuroSys'21 paper.
 
 
 # Code Structure
-* `apps` directory contains following applications. These applications are provided with their Python bindings to integrate these applications in existing GNNs:
-  * `graphSAGE-2-Hops.cu` GraphSAGE [1] 2-Hop application
-  * `fastgcnSampling.cu` FastGCN [2] Sampling application
-  * `ladiesSampling.cu`  LADIES [3] Sampling 
-  * `clusterGCNSampling.cu` ClusterGCN [4] Sampling
-
 * `src` directory contains the source of cuSampler. It contains following files and directories
-  * `apps` contains following applications:
-    * `clusterGCNSampling.cu`  ClusterGCN [4] Sampling 
-    * `importanceSampling.cu` FastGCN [2] and LADIES [3] Sampling 
-    * `khop.cu` GraphSAGE [1] 2-Hop application
-    * `multiRW.cu` Multi Dimension Random Walk [5] 
-    * `mvsSampling.cu` Minimum Variance Sampling [6]
-    * `randomWalks.cu` DeepWalk [7], PPR [8], and node2vec [9] random walks.
+  * `apps` contains following applications. These applications are provided with their Python bindings to integrate these applications in existing GNNs:
+    * `clusterGCNSampling`  ClusterGCN [4] Sampling 
+    * `fastgcn` FastGCN [2] Sampling
+    * `ladies` LADIES[3] Sampling 
+    * `khop` GraphSAGE [1] 2-Hop application
+    * `multiRW` Multi Dimension Random Walk [5] 
+    * `mvsSampling` Minimum Variance Sampling [6]
+    * `randomWalks` DeepWalk [7], PPR [8], and node2vec [9] random walks.
   * `tests` uses above applications as unit tests and provides a function to check results of these applications. 
   * `csr.hpp` and `graph.hpp` contains data structures for graphs.
   * `utils.hpp` contains utility functions.
@@ -30,10 +25,24 @@ More details can be found in our EuroSys'21 paper.
 
 # Graph Inputs
 
-Graph Inputs used in the paper can be downloaded from the url: <b>TODO</b>. These graphs are obtained from snap.stanford.edu and each edge is assigned a random weight within [1, 5).
+Graph Inputs used in the paper can be downloaded from the url: https://drive.google.com/file/d/19duY39ygWS3RAiqEetHUKdv-4mi_F7vj/view?usp=sharing. These graphs are obtained from snap.stanford.edu and each edge is assigned a random weight within [1, 5).
 
 # Building Example Sampling Application
 `example/uniformRandomWalk.cu` shows how to develop a Uniform Random Walk application using NextDoor.
+First declare a sample class that can be used to store extra information.
+Then create an application struct that implements several functions required to execute a random walk. These functions are:
+* `steps`: returns the number of steps to travel from the starting vertices of a sample.
+* `stepSize`: returns the number of vertices to sample at every step.
+* `next`: returns the sampled vertex
+* `samplingType`: returns the kind of sampling, i.e., <i>IndividualNeighborhood</i> or <i>CollectiveNeighborhood</i>.
+* `stepTransits`: Transit vertex for given step.
+
+Other functions that are needed to be defined includes:
+* `initialSample`: Initial transit of sample
+* `numSamples`: Number of samples
+* `initialSampleSize`: Number of initial transits
+* `initializeSample`: Initialize the sample struct
+
 To build the application, run 
 ```
 make
@@ -45,31 +54,19 @@ TransitParallel with Load Balancing execute following command.
 ./uniformRandWalk -g ../input/ppi.data -t edge-list -f binary -n 1 -k TransitParallel -l
 ```
 
-# Existing Sampling Applications
-`src/apps/` directory contains implementation of these sampling applications:
-* Single Dimension Random Walks: DeepWalk, PPR, and node2vec are implemented in `randomWalks.cu`
-* K-Hop neighborhood sampling application is implemented in `khop.cu`.
-* Multi Dimension Random Walk application is implemented in `multiRW.cu`
-* Minimal Variance Sampling is implemented in `mvsSampling.cu`
-* FastGCN and LADIES are implemented in `importanceSampling.cu`
-* ClusterGCN is implemented in `clusterGCNSampling.cu`
-
-To build and use these applications refer to Benchmark section.
-
 # Benchmarking
 
 Existing sampling applications are used as benchmarks in the paper. Following instructions can be used to do Single GPU or Multi GPU benchmarking:
 ### Single GPU Benchmarking
 * To do Single GPU benchmarking, first clone the repo:
 ```
-git clone https://github.com/plasma-umass/nextdoor/
-cd nextdoor
+git clone --recurse-submodules https://github.com/plasma-umass/NextDoor.git
 ```
-* Download the graph datasets from <b>TODO</b> and copy them to input directory
+* Download the graph datasets from https://drive.google.com/file/d/19duY39ygWS3RAiqEetHUKdv-4mi_F7vj/view?usp=sharing and copy them to input directory
 
 ```
-wget <URL>
-unzip inputs.tar.gz ./input/
+wget --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj" -O input.zip && rm -rf /tmp/cookies.txt 'https://docs.google.com/uc?export=download&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj" -O input.zip && rm -rf /tmp/cookies.txt
+unzip input.zip
 ```
 
 * Make single GPU google test
