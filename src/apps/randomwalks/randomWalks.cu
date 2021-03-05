@@ -70,6 +70,9 @@ struct DeepWalkApp : public RandomWalkApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    if (numEdges == 0) {
+      return -1;
+    }
     if (numEdges == 1) {
       return transitEdges[0];
     }
@@ -95,6 +98,9 @@ struct PPRApp : public RandomWalkApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    if (numEdges == 0) {
+      return -1;
+    }
     const float walkEndProb = 0.01f;
     float p = curand_uniform(state);
     if (p < walkEndProb) {
@@ -131,6 +137,9 @@ struct Node2VecApp : public RandomWalkApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    if (numEdges == 0) {
+      return -1;
+    }
     if (numEdges == 1 || step == 0) {
       sample->t = *transits;
       return transitEdges[0];

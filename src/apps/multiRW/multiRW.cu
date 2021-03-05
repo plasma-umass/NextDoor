@@ -25,6 +25,9 @@ struct MultiRWApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    if (numEdges == 0) {
+      return -1;
+    }
     if (numEdges == 1) {
       VertexID_t v = transitEdges[0];
       if (step > 0) {
