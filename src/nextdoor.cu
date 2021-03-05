@@ -505,7 +505,7 @@ __global__ void identityKernel(const int step, GPUCSRPartition graph, const Vert
   EdgePos_t finalSampleSizeTillPreviousStep = 0;
   EdgePos_t neighborsToSampleAtStep = 1;
   EdgePos_t insertionPos = 0; 
-  if (numTransits) {    
+  if (numTransits > 1) {    
     if (step == 0) {
       insertionPos = transitNeighborIdx;
     } else {
@@ -1496,6 +1496,9 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
 
         neighbor = App().template next<SampleType, const CSR::Edge*, const float*> (step, graph.device_csr, transits, sampleIdx, &samples[(sampleIdx - deviceFirstSample)], maxWeight, 
           transitEdges, transitEdgeWeights, numTransitEdges, neighbrID, &localRandState);
+        if (neighbor == -1) {
+          neighbor = invalidVertex;
+        }
     #if 0
         //search if neighbor has already been selected.
         //we can do that in register if required
@@ -1553,7 +1556,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
         } else {
           insertionPos = step;
         }
-  
+        
         finalSamples[(sampleIdx - deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
       }
       // if (sample == 100) {
@@ -2062,7 +2065,7 @@ bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data)
     }
 
     CHK_CU(cudaMalloc(&data.dFinalSamples[deviceIdx], sizeof(VertexID_t)*finalSampleSize*perDeviceNumSamples));
-    gpu_memset(data.dFinalSamples[deviceIdx], 0, finalSampleSize*perDeviceNumSamples);
+    gpu_memset(data.dFinalSamples[deviceIdx], data.INVALID_VERTEX, finalSampleSize*perDeviceNumSamples);
     
     //Samples to Transit Map
     CHK_CU(cudaMalloc(&data.dSamplesToTransitMapKeys[deviceIdx], sizeof(VertexID_t)*perDeviceNumSamples*maxNeighborsToSample));
@@ -2383,7 +2386,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
       const size_t perDeviceNumSamples = PartDivisionSize(nextDoorData.samples.size(), i, numDevices);
       totalThreads[i] = perDeviceNumSamples*neighborsToSampleAtStep;
     }
-    std::cout << "step " << step << std::endl;
+    // std::cout << "step " << step << std::endl;
     if (App().steps() == 1) {
       //FIXME: Currently a non-sorted Transit to Sample Map is passed to both TP and TP+LB.
       //Here, if there is only one step, a sorted map is passed.

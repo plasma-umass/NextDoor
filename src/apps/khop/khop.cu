@@ -15,6 +15,9 @@ struct KHopApp {
                 EdgeArray& transitEdges, WeightArray& transitEdgeWeights,
                 const EdgePos_t numEdges, const VertexID_t neighbrID, curandState* state)
   {
+    if (numEdges == 0) {
+      return -1;
+    }
     EdgePos_t id = RandNumGen::rand_int(state, numEdges);
     return transitEdges[id];
   }
@@ -42,7 +45,7 @@ struct KHopApp {
     std::vector<VertexID_t> initialValue;
 
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      initialValue.push_back((rand())%graph->get_n_vertices());
+      initialValue.push_back(sampleIdx);//(rand())%graph->get_n_vertices());
     }
 
     return initialValue;

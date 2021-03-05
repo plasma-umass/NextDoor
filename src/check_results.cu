@@ -32,6 +32,7 @@ typedef std::vector<std::unordered_set<VertexID>> AdjMatrix;
 void csrToAdjMatrix(CSR* csrMatrix, AdjMatrix& adjMatrix)
 {
   size_t n = csrMatrix->get_n_vertices();
+
   #pragma omp parallel for
   for (VertexID v = 0; v < n; v++) {
     for (EdgePos_t i = csrMatrix->get_start_edge_idx(v); 
@@ -176,7 +177,7 @@ bool checkSampledVerticesResult(NextDoorData<SampleType, App>& nextDoorData)
   AdjMatrix adj_matrix(csr->get_n_vertices(), std::unordered_set<VertexID> ());
 
   csrToAdjMatrix(csr, adj_matrix);
-  std::cout << "Adj Matrix of Graph Created " << std::endl;
+  std::cout << "Adj Matrix of Graph Created " << adj_matrix.size() << std::endl;
   //Now check the correctness
   size_t numNeighborsToSampleAtStep = 0;
   
