@@ -25,7 +25,6 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
               EdgePos_t start_linear_id,
               EdgePos_t src_num_roots,
               EdgePos_t linear_threads_executed,
-              const RandNumGen* rand_num_gen,
               Sampler* samplers)
 {
 #ifdef USE_PARTITION_FOR_SHMEM_1
@@ -93,7 +92,7 @@ __global__ void run_hop_parallel_single_step_device_level_fixed_size (int N_HOPS
     const CSR::Edge* src_edges = csr->get_edges(hop_vertex);
 #endif
     VertexID edge = next_random_walk(hop, hop_vertex, root_vertex, src_edges, 
-    n_edges, (EdgePos_t)0, rand_num_gen, &samplers[root_partition->get_vertex_idx(root_vertex)],
+    n_edges, (EdgePos_t)0, &samplers[root_partition->get_vertex_idx(root_vertex)],
     csr, nullptr);
     embeddings_additions[linear_threads_executed+global_thread_id] = edge;
   }
@@ -108,7 +107,6 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (
               VertexID* thread_to_src,
               VertexID* thread_to_roots,
               EdgePos_t total_roots,
-              const RandNumGen* rand_num_gen,
               Sampler* samplers)
 {
   VertexID root_vertex = blockIdx.x*blockDim.x + threadIdx.x;
@@ -123,7 +121,7 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size_first_step (
   if (n_edges > 0) {
     previous_stage_filled_range[root_vertex] = 1;
     VertexID edge = next_random_walk(hop, root_vertex, root_vertex, csr->get_edges(root_vertex), 
-    n_edges, (EdgePos_t)0, rand_num_gen, &samplers[root_partition->get_vertex_idx(root_vertex)],
+    n_edges, (EdgePos_t)0, &samplers[root_partition->get_vertex_idx(root_vertex)],
   csr, nullptr);
     embeddings_additions[root_vertex] = edge;
   }
@@ -146,25 +144,15 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
               VertexID* thread_to_roots,
               EdgePos_t total_roots,
               EdgePos_t linear_threads_executed,
-              const RandNumGen* rand_num_gen,
               Sampler* samplers,
               curandState* curand_states)
 {
   int linear_thread_id = blockIdx.x*blockDim.x + threadIdx.x;
   VertexID hop_vertex;
-  // __shared__ char sh_rand_num_gen_buf[sizeof(RandNumGen)]; 
-  // for (int v = 0; v < sizeof(RandNumGen)/blockDim.x + 1; v+= blockDim.x) {
-  //   int i = v + threadIdx.x;
-  //   if (i >= sizeof(RandNumGen))
-  //     continue;
-  //   sh_rand_num_gen_buf[i] = *(((char*)rand_num_gen) + i);
-  // }
-  // __syncthreads ();
 
   if (linear_thread_id >= total_roots) 
     return;
 
-  const RandNumGen* sh_rand_num_gen = rand_num_gen;//(RandNumGen*)&sh_rand_num_gen_buf[0];
   hop_vertex = thread_to_src[linear_thread_id];
   VertexID root_vertex = thread_to_roots[linear_thread_id];
   EdgePos_t start = vertex_sample_set_start_pos_fixed_size(root_partition, root_vertex);//map_orig_embedding_to_additions[2*(vertex - root_partition->first_vertex_id)];  
@@ -175,7 +163,7 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
     previous_stage_filled_range[linear_thread_id+linear_threads_executed] = 1;
     VertexID edge = next_random_walk(hop, hop_vertex, root_vertex, csr->get_edges(hop_vertex), 
     n_edges, 
-    (EdgePos_t)0, sh_rand_num_gen, 
+    (EdgePos_t)0,
     &samplers[root_partition->get_vertex_idx(root_vertex)],
     csr, 
     &curand_states[linear_thread_id]);
@@ -183,9 +171,3 @@ __global__ void run_hop_parallel_single_step_block_level_fixed_size (int N_HOPS,
   }
 }
 
-__global__ void init_curand_states(curandState* states, size_t num_states)
-{
-  int thread_id = blockIdx.x*blockDim.x + threadIdx.x;
-  if (thread_id < num_states)
-    curand_init(1234, 0, 0, &states[thread_id]);
-}

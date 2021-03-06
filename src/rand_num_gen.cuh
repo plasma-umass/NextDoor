@@ -1,3 +1,6 @@
+#ifndef __RAND_NUM_GEN_CUH__
+#define __RAND_NUM_GEN_CUH__
+
 class RandNumGen {
 private:
   float* rand_nums;
@@ -114,7 +117,7 @@ public:
   __device__ __forceinline__
   static EdgePos_t rand_int(curandState* state, const EdgePos_t n) {
     float ff = curand_uniform(state)*n;
-    EdgePos_t id =  min ((EdgePos_t)ff, n-1);//(EdgePos_t)round(ff) - 1.0f;
+    EdgePos_t id =  min((EdgePos_t)ff, n-1);//(EdgePos_t)round(ff) - 1.0f;
     return id;
   }
 
@@ -137,7 +140,7 @@ public:
       EdgePos_t id =  (EdgePos_t)round(ff) - 1.0f;
 #ifndef NDEBUG
       if (!(0 <= id && id < num_edges))
-      printf ("vertex %d num_edges %ld id %ld ff %lf\n", vertex, num_edges, id, ff);
+      printf ("vertex %d num_edges %ld id %ld ff %lf\n", vertex, (long)num_edges, (long)id, ff);
         assert(0 <= id && id < num_edges);
 #endif
       return id;
@@ -166,3 +169,5 @@ public:
     return d_ptr;
   }
 };
+
+#endif

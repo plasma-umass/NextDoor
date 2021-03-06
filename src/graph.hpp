@@ -9,8 +9,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
+#include <set>
 #include <tuple>
 #include <iterator>
+#include <utility>
 
 #ifndef __GRAPH_HPP__
 #define __GRAPH_HPP__
@@ -21,26 +23,23 @@ class Vertex
 {
 private:
   int id;
-  int label;
-  std::vector <int> edges;
+  std::vector<std::pair<int, float>> edges;
 
 public:
-  Vertex (int _id, int _label) : label(_label), id (_id)
+  Vertex (int _id) : id (_id)
   {
   }
 
-  Vertex ():label(-1),id(-1){}
+  Vertex ():id(-1){}
 
   void set_id (int _id) {id = _id;}
   int get_id () {return id;}
-  int get_label () {return label;}
-  int set_label (int l) {label = l;}
-  void add_edge (int vertexID) {edges.push_back (vertexID);}
+  void add_edge (int vertexID, float weight) {edges.push_back (std::make_pair(vertexID, weight));}
   void sort_edges () {std::sort (edges.begin(), edges.end ());}
   void update_edges (std::unordered_map <int, int>& prev_to_new_ids) 
   {
     for (size_t i = 0; i < edges.size (); i++) {
-      edges[i] = prev_to_new_ids[edges[i]];
+      edges[i].first = prev_to_new_ids[edges[i].first];
     }
 
     sort_edges ();
@@ -48,17 +47,17 @@ public:
 
   void remove_duplicate_edges () 
   {
-    std::unordered_set <int> set_edges = std::unordered_set<int> (edges.begin(), edges.end ());
-    edges = std::vector<int> (set_edges.begin (), set_edges.end ());
+    std::set<std::pair<int,float>> set_edges = std::set<std::pair<int,float>> (edges.begin(), edges.end ());
+    edges = std::vector<std::pair<int,float>> (set_edges.begin (), set_edges.end ());
     //sort_edges ();
   }
 
-  std::vector <int>& get_edges () {return edges;}
+  std::vector <std::pair<int, float>>& get_edges () {return edges;}
   void print (std::ostream& os)
   {
-    os << id << " " << label << " ";
+    os << id << " " << " ";
     for (auto edge : edges) {
-      os << edge << " ";
+      os << edge.first << " " << edge.second << " ";
     }
 
     os << std::endl;
@@ -67,6 +66,17 @@ public:
   static bool compare_vertex (Vertex& v1, Vertex& v2) 
   {
     return v1.edges.size () < v2.edges.size ();
+  }
+
+  float max_weight()
+  {
+    float w = 0.0f;
+
+    for (auto p : edges) {
+      w = max(w, p.second);
+    }
+
+    return w;
   }
 };
 
@@ -104,45 +114,48 @@ public:
     fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    size_t max_vertex = 0;
     char *string = new char[fsize + 1];
-    fread(string, 1, fsize, fp);
-    std::cout << "graph string loaded " << std::endl;
+    if (fread(string, 1, fsize, fp) != (size_t)fsize) {
+      std::cout << "" << std::endl;
+      abort();
+    }
+    std::cout << "Graph Binary Loaded" << std::endl;
 
     n_edges = 0;
-
-    // std::unordered_set<int> vertices_with_degree;
     
-    for (size_t s = 0; s < fsize; s += 12) {
+    for (size_t s = 0; s < (size_t)fsize; s += 12) {
       int src = *(int*)(string+s);
       int dst = *(int*)(string+s+4);
       float weight = *(float*)(string+s+8);
 
-      if (src > vertices.size()) {
+      if ((size_t)src >= vertices.size()) {
         vertices.resize(src+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
         // }
       }
 
-      if (dst > vertices.size()) {
+      if ((size_t)dst >= vertices.size()) {
         vertices.resize(dst+1);
         // for (size_t i = sz; i <= src; i++) {
         //   vertices.push_back(Vertex(i, i));
         // }
       }
 
-      vertices[src].add_edge(dst);
+      vertices[src].add_edge(dst, weight);
 
       n_edges++;
     }
 
     delete string;
     fclose(fp);
+    printf("Vertices and Edges loaded\n");
 
-    for (auto v : vertices) {
-      v.sort_edges();
+    #pragma omp parallel for
+    for (size_t v = 0; v < vertices.size(); v++) {
+      vertices[v].sort_edges();
     }
+    printf("Edges sorted\n");
   }
 
   
@@ -158,7 +171,10 @@ public:
 
     for (int part = 0; part < 1; part++) {
       char *string = new char[fsize/1 + 1];
-      fread(string, 1, fsize/1, fp);
+      if (fread(string, 1, fsize/1, fp) != (size_t)fsize/1) {
+        std::cout<<"Error reading at "<<__FILE__<<":"<<__LINE__<<std::endl;
+        abort();
+      }
       std::cout << "graph string loaded " << std::endl;
       std::string ss = std::string(string)+"\n";
       std::stringstream iss(ss);
@@ -194,7 +210,7 @@ public:
           //   vertices.push_back(Vertex(i, i));
           // }
         }
-        vertices[src].add_edge(dst);
+        vertices[src].add_edge(dst, 0.0f);
         max_vertex = max(src, max_vertex);
         max_vertex = max(dst, max_vertex);
         n_edges++;
@@ -237,42 +253,62 @@ public:
     // }
   }
 
-  void load_from_adjacency_list (FILE* fp) 
+  void load_from_adjacency_list(char* graph_file)
   {
-    assert (fp != nullptr);
+    FILE* fp = fopen(graph_file, "r");
+    if (fp == nullptr) {
+      std::cout << "File '" << graph_file << "' cannot open" << std::endl;
+      exit(EXIT_SUCCESS);
+    }
+
     n_edges = 0;
 
     while (true) {
       char line[LINE_SIZE];
 
-      if (fgets (line, LINE_SIZE, fp) == nullptr) {
+      if (fgets(line, LINE_SIZE, fp) == nullptr) {
         break;
       }
 
-      int id, label;
-      int bytes_read;
+      int id;
+      int vars_filled;
 
-      bytes_read = sscanf (line, "%d %d", &id, &label);
-      Vertex vertex (id, label);
-      char* _line = line + chars_in_int (id) + chars_in_int (label);
+      vars_filled = sscanf(line, "%d", &id);
+      Vertex vertex(id);
+      char* _line = line + chars_in_int(id);
       do {
         int num;
+        float weight;
+        int chars_read = 0;
 
-        bytes_read = sscanf (_line, "%d", &num);
-        if (bytes_read > 0) {
-          vertex.add_edge (num);
-          _line += chars_in_int (num);
+        vars_filled = sscanf(_line, "%d %f%n", &num, &weight, &chars_read);
+        //printf("_line '%s' vars_filled %d chars_read %d\n", _line, vars_filled, chars_read);
+        if (vars_filled == 2) {
+          vertex.add_edge(num, weight);
+          _line += chars_read;//chars_in_int(num);
           n_edges++;
         }
 
-      } while (bytes_read > 0);
+      } while (vars_filled == 2);
 
-      //vertex.remove_duplicate_edges ();
+      //vertex.remove_duplicate_edges (); 
 
-      vertex.sort_edges ();
-      vertices.push_back (vertex);
+      vertex.sort_edges();
+      vertices.push_back(vertex);
     }
 
+    //Rename vertices so that each vertex is between [0, N]
+
+    std::unordered_map<int, int> origIDToNewID;
+
+    for (size_t i = 0; i < vertices.size(); i++) {
+      origIDToNewID[vertices[i].get_id()] = i;
+      vertices[i].set_id (i);
+    }
+
+    for (size_t i = 0; i < vertices.size (); i++) {
+       vertices[i].update_edges (origIDToNewID);
+    }
     //Sort vertices by number of edges
     // std::sort (vertices.begin (), vertices.end (), Vertex::compare_vertex);
 
@@ -285,6 +321,8 @@ public:
     // for (int i = 0; i < vertices.size (); i++) {
     //   vertices[i].update_edges (previous_id_to_new_ids);
     // }
+
+    fclose(fp);
   }
 
   const std::vector<Vertex>& get_vertices () {return vertices;}

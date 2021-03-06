@@ -9,8 +9,56 @@
 
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
+#define DIVUP(x,y) (((x) + ((y) - 1))/(y))
+#define ROUNDUP(x,y) (DIVUP(x,y)*(y))
+#define FULL_WARP_MASK 0xffffffff
+#define WARP_SIZE (32)
+#define CHK_CU(x) if (utils::is_cuda_error (x, __LINE__) == true) {assert(false);}
+#define MAX(x,y) (((x)<(y))?(y):(x))
+#define MIN(x,y) (((x)>(y))?(y):(x))
+#define CUDA_SYNC_DEVICE_ALL(nextDoorData) {\
+for(auto device : nextDoorData.devices) {\
+  CHK_CU(cudaSetDevice(device));\
+  CHK_CU(cudaDeviceSynchronize());\
+}\
+}
+
+#define PartDivisionSize(Total,PartIdx,NumParts) (PartIdx < NumParts - 1) ? Total/NumParts : Total - (NumParts - 1)*(Total/NumParts)
+#define PartStartPointer(Total,PartIdx,NumParts) PartIdx * (Total/NumParts)
 
 namespace utils {
+  template<typename F, typename T> 
+  __host__ __device__ __forceinline__
+  bool binarySearch (F& array, T x, int size) 
+  {
+    EdgePos_t l = 0;
+    EdgePos_t r = size - 1;
+    
+    while (l <= r) {
+      EdgePos_t m = l + (r-l)/2;
+      if (array[m] == x)
+        return true;
+      
+      if (array[m] < x)
+        l = m + 1;
+      else
+        r = m - 1;
+    }
+    return false;
+  }
+
+  template<typename T> 
+  __host__ __device__ __forceinline__
+  bool linearSearch (const T* array, T x, int size) 
+  {
+    for (EdgePos_t i = 0; i < size; i++) {
+      if (array[i] == x) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   __device__
   EdgePos_t atomicAdd (EdgePos_t* ptr, const EdgePos_t val)
@@ -54,12 +102,13 @@ namespace utils {
   }
 
 
-  bool is_cuda_error (cudaError_t error) 
+  bool is_cuda_error (cudaError_t error, int line) 
   {
     //cudaError_t error = cudaGetLastError ();
     if (error != cudaSuccess) {
       const char* error_string = cudaGetErrorString (error);
-      std::cout << "Cuda Error: " << error_string << std::endl;
+      std::cout << "Cuda Error: " << error_string << " " << line <<
+      std::endl;
       return true;
     }
 
@@ -110,6 +159,27 @@ namespace utils {
       mem[val++] = -1;
   }
 
+  //Kernel to memset global memory
+  template <class T>
+  __global__ void memset_kernel(T* mem, T val, size_t nelems)
+  {
+    int id = threadIdx.x + blockIdx.x*blockDim.x;
+
+    if (id < nelems) {
+      mem[id] = val;
+    }
+  }
+
+  template <class T>
+  void gpu_memset(T* mem, T val, size_t nelems)
+  {
+    const size_t threads = 256;
+    const size_t blocks = thread_block_size(nelems, threads);
+
+    memset_kernel<<<blocks, threads>>>(mem, val, nelems);
+    CHK_CU(cudaDeviceSynchronize());
+  }
+
   template<class T>
   class RangeIterator
   {
@@ -153,8 +223,6 @@ namespace utils {
     return vec.size()*sizeof(vec[0]);
   }
 
-  #define CHK_CU(x) if (utils::is_cuda_error (x) == true) {abort();}
-
 #if 0
   void bfs (CSR* csr) 
   {
@@ -186,6 +254,84 @@ namespace utils {
     }
   }
 #endif
+
+  enum StorageLocationType
+  {
+    Host,
+    Device, 
+  };
+
+  template<class T>
+  class Array
+  {
+    private:
+      T* data_;
+      
+      StorageLocationType storageLocationType_;
+
+      size_t nelems_;
+    public:
+      Array (StorageLocationType storageLocation, size_t nelems) : Array(nullptr, storageLocation, nelems)
+      {
+      }
+
+      Array (T* ptr, StorageLocationType storageLocation, size_t nelems) : data_(ptr), storageLocationType_(storageLocation), nelems_(nelems)
+      {
+      }
+
+      Array & operator=(const Array& a) 
+      {
+        nelems_ = a.nelems();
+        storageLocationType_ = a.location();
+        allocate();
+        copy(a.data(), a.nelems());
+        memcpy(data_, a.data(), sizeof(T)*nelems_);
+      }
+
+      void copy(T* dst, size_t nelems)
+      {
+        assert(nelems == nelems_);
+
+        if (location() == Device) {
+          assert(false);
+        } else {
+          memcpy(data_, dst, sizeof(T)*nelems);
+        }
+      }
+
+      T* data() const {return data_;}
+      inline size_t nelems() const {return nelems_;}
+      inline StorageLocationType location() const {return storageLocationType_;}
+      T& operator[](size_t idx) 
+      {
+        assert(idx < nelems());
+
+        return data_[idx];
+      }
+
+      void allocate()
+      {
+        if (location() == Device) {
+          assert(false); //TODO
+        } else {
+          data_ = new T[nelems()];
+        }
+      }
+
+      void free()
+      {
+        if (location() == Device) {
+          assert(false); //TODO
+        } else {
+          delete[] data_;
+        }
+      }
+
+      ~Array()
+      {
+        free();
+      }
+  };
 }
 
 #define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
@@ -202,6 +348,13 @@ namespace GPUUtils {
   };
 
   const uint FULL_MASK = 0xffffffff;
+
+  void printCudaMemInfo() 
+  {
+    size_t free = 0, total = 0;
+    CHK_CU(cudaMemGetInfo(&free, &total));
+    printf("free memory %ld\n", free);
+  }
 
   __device__ inline int get_warp_mask_and_participating_threads (int condition, int& participating_threads, int& first_active_thread)
   {
@@ -221,20 +374,24 @@ namespace GPUUtils {
 
     return warp_mask;
   }
-
-  void copy_partition_to_gpu (CSRPartition& part, CSRPartition*& device_csr, CSR::Vertex*& device_vertex_array, CSR::Edge*& device_edge_array)
+  
+  CSRPartition copyPartitionToGPU(CSRPartition& part, GPUCSRPartition& gpuCSRPartition)
   {
-    CHK_CU (cudaMalloc (&device_csr, sizeof(CSRPartition)));
-    CHK_CU (cudaMalloc (&device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
-    CHK_CU (cudaMalloc (&device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
-    CHK_CU (cudaMemcpy (device_vertex_array, part.vertices, sizeof (CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
-    CHK_CU (cudaMemcpy (device_edge_array, part.edges, sizeof (CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
+    //TODO: Store gpuCSRPartition in Constant Memory  
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_vertex_array, sizeof(CSR::Vertex)*part.get_n_vertices ()));
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_edge_array, sizeof(CSR::Edge)*part.get_n_edges ()));
+    CHK_CU(cudaMalloc(&gpuCSRPartition.device_weights_array, sizeof(float)*part.get_n_edges ()));
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_vertex_array, part.vertices, sizeof(CSR::Vertex)*part.get_n_vertices (), cudaMemcpyHostToDevice));
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_edge_array, part.edges, sizeof(CSR::Edge)*part.get_n_edges (), cudaMemcpyHostToDevice));
+    CHK_CU(cudaMemcpy(gpuCSRPartition.device_weights_array, part.weights, sizeof(float)*part.get_n_edges (), cudaMemcpyHostToDevice));
 
-    CSRPartition device_csr_partition_value = CSRPartition (part.first_vertex_id,
-                                                            part.last_vertex_id, 
-                                                            part.first_edge_idx, part.last_edge_idx, 
-                                                            device_vertex_array, device_edge_array);
-    CHK_CU (cudaMemcpy (device_csr, &device_csr_partition_value, sizeof(CSRPartition), cudaMemcpyHostToDevice));
+    CSRPartition device_csr_partition_value = CSRPartition(part.first_vertex_id,
+                                                           part.last_vertex_id, 
+                                                           part.first_edge_idx, part.last_edge_idx, 
+                                                           gpuCSRPartition.device_vertex_array, 
+                                                           gpuCSRPartition.device_edge_array,
+                                                           gpuCSRPartition.device_weights_array);
+    return device_csr_partition_value;
   }
   
   __host__ __device__ int num_edges_to_warp_size (const EdgePos_t n_edges, SourceVertexExec_t src_vertex_exec) 
@@ -273,13 +430,67 @@ namespace GPUUtils {
 
     return device_rand;
   }
+
+
+  template<typename T>
+  void printDeviceArray(T* array, int nelems, char sep)
+  {
+    T* tmp = new T[nelems];
+
+    CHK_CU(cudaMemcpy(tmp, array, nelems*sizeof(T), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < nelems; i++) {
+      std::cout << tmp[i] << sep;
+    }
+
+    std::cout << std::endl;
+
+    delete tmp;
+  }
+
+  template<typename T1, typename T2>
+  void printKeyValuePairs(T1* keys, T2* values, int nelems, char sep)
+  {
+    for (int i = 0; i < nelems; i++) {
+      std::cout << "[" << keys[i] << ", " << values[i] << "]" << sep;
+    }
+
+    std::cout << std::endl;
+  }
+
+  template<typename T1, typename T2>
+  void printDeviceKeyValuePairs(T1* keys, T2* values, int nelems, char sep)
+  {
+    T1* tmp1 = new T1[nelems];
+    T2* tmp2 = new T2[nelems];
+
+    CHK_CU(cudaMemcpy(tmp1, keys, nelems*sizeof(T1), cudaMemcpyDeviceToHost));
+    CHK_CU(cudaMemcpy(tmp2, values, nelems*sizeof(T2), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < nelems; i++) {
+      std::cout << "[" << tmp1[i] << ", " << tmp2[i] << "]" << sep;
+    }
+
+    std::cout << std::endl;
+    delete tmp1;
+    delete tmp2;
+  }
+
+  template<typename T>
+  T* copyDeviceMemToHostMem(T* devPtr, size_t nelems)
+  {
+    T* hPtr = new T[nelems];
+
+    CHK_CU(cudaMemcpy(hPtr, devPtr, nelems*sizeof(T), cudaMemcpyDeviceToHost));
+
+    return hPtr;
+  }
 }
 
 namespace LoadBalancing {
   enum LoadBalancingThreshold{
-    GridLevel = 32,
-    BlockLevel = 0,
-    SubWarpLevel = 0,
+    GridLevel = 256,
+    BlockLevel = 32,
+    SubWarpLevel = 8,
+    IdentityKernel = 0
   };
 
   enum LoadBalancingTBSizes {
@@ -329,6 +540,7 @@ namespace LoadBalancing {
       }
     }
   }
+
 };
 
 #endif

@@ -1,5 +1,8 @@
 #include <cstdlib>
 
+#ifndef __SAMPLER_CUH__
+#define __SAMPLER_CUH__
+
 class Sampler {
 protected:
   Sampler* d_ptr;
@@ -61,3 +64,5 @@ void copy_back_sampler_from_gpu (Sampler* samplers, size_t num_samplers, Sampler
 {
   CHK_CU(cudaMemcpy(samplers, device_samplers, samplers[0].size()*num_samplers, cudaMemcpyDeviceToHost));
 }
+
+#endif

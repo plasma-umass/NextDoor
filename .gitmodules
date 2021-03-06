@@ -1,4 +1,6 @@
-[submodule "Heap-Layers"]
-	path = Heap-Layers
-	url = https://github.com/emeryberger/Heap-Layers.git
-	branch = master
+[submodule "googletest"]
+	path = googletest
+	url = https://github.com/google/googletest.git
+[submodule "AnyOption"]
+	path = AnyOption
+	url = https://github.com/hackorama/AnyOption.git

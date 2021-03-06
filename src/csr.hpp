@@ -5,6 +5,7 @@
 
 typedef int32_t VertexID;
 typedef int32_t EdgePos_t;
+typedef VertexID VertexID_t;
 
 class VertexRange 
 {
@@ -46,37 +47,42 @@ class CSR
 {
 public:
   struct Vertex
-{
-  VertexID id;
-  int label;
-  EdgePos_t start_edge_id;
-  EdgePos_t end_edge_id;
-  __host__ __device__
-  Vertex ()
   {
-    id = -1;
-    label = -1;
-    start_edge_id = -1;
-    end_edge_id = -1;
-  }
+    VertexID id;
+    EdgePos_t start_edge_id;
+    EdgePos_t end_edge_id;
+    float max_weight;
+    __host__ __device__
+    Vertex ()
+    {
+      id = -1;
+      start_edge_id = -1;
+      end_edge_id = -1;
+      max_weight = -1;
+    }
 
-  void set_from_graph_vertex (::Vertex& vertex)
-  {
-    id = vertex.get_id ();
-    label = vertex.get_label ();
-  }
+    void set_from_graph_vertex (::Vertex& vertex)
+    {
+      id = vertex.get_id ();
+    }
 
-  __host__ __device__ EdgePos_t get_start_edge_idx () {return start_edge_id;}
-  __host__ __device__ EdgePos_t get_end_edge_idx () {return end_edge_id;}
-  __host__ __device__ VertexID get_id () {return id;}
-  __host__ __device__ void set_start_edge_id (EdgePos_t start) {start_edge_id = start;}
-  __host__ __device__ void set_end_edge_id (EdgePos_t end) {end_edge_id = end;}
-};
+    __host__ __device__ EdgePos_t get_start_edge_idx () const {return start_edge_id;}
+    __host__ __device__ EdgePos_t get_end_edge_idx () const {return end_edge_id;}
+    __host__ __device__ float get_max_weight() {return max_weight;}
+    __host__ __device__ VertexID get_id () {return id;}
+    __host__ __device__ void set_start_edge_id (EdgePos_t start) {start_edge_id = start;}
+    __host__ __device__ void set_end_edge_id (EdgePos_t end) {end_edge_id = end;}
+    __host__ __device__ void set_max_weight(float w) {max_weight = w;}
+    __host__ __device__ EdgePos_t num_edges() const {
+      return (get_end_edge_idx () != -1) ? (get_end_edge_idx () - get_start_edge_idx () + 1) : 0;
+    }
+  };
 
-typedef VertexID Edge;
+  typedef VertexID Edge;
 
   CSR::Vertex* vertices;
   CSR::Edge* edges;
+  float* weights;
   int n_vertices;
   EdgePos_t n_edges;
 
@@ -87,16 +93,17 @@ public:
     n_edges = _n_edges;
     //TODO: Can we allocate it in pinned memory?
     edges = new CSR::Edge[n_edges];
+    weights = new float[n_edges];
     vertices = new CSR::Vertex[n_vertices];
   }
 
   void print (std::ostream& os) const 
   {
     for (int i = 0; i < n_vertices; i++) {
-      os << vertices[i].id << " " << vertices[i].label << " ";
+      os << vertices[i].id << " ";
       for (EdgePos_t edge_iter = vertices[i].start_edge_id;
            edge_iter <= vertices[i].end_edge_id; edge_iter++) {
-        os << edges[edge_iter] << " ";
+        os << edges[edge_iter] << " " << weights[edge_iter] << " ";
       }
       os << std::endl;
     }
@@ -141,6 +148,11 @@ public:
   }
   __host__ __device__
   const CSR::Edge* get_edges () const  {return &edges[0];}
+  __host__ __device__
+  const float* get_weights () const 
+  {
+    return &weights[0];
+  }
 
   __host__ __device__
   const CSR::Vertex* get_vertices () const  {return &vertices[0];}
@@ -171,27 +183,40 @@ public:
   {
     return VertexRange(0, get_n_vertices()-1);
   }
+
+  VertexID get_invalid_vertex() const 
+  {
+    return get_n_vertices()+1;
+  }
+  
+  __host__
+  bool has_vertex(VertexID v) const {
+    return 0 <= v && v < n_vertices;
+  }
 };
 
 class CSRPartition
 {
 public:
+  ~CSRPartition() {}
   const VertexID first_vertex_id;
   const VertexID last_vertex_id;
   const EdgePos_t first_edge_idx;
   const EdgePos_t last_edge_idx;
   const CSR::Vertex *vertices;
   const CSR::Edge *edges;
+  const float* weights;
 
    __host__
-  CSRPartition (int _start, int _end, EdgePos_t _edge_start_idx, EdgePos_t _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges) : 
+  CSRPartition (int _start, int _end, EdgePos_t _edge_start_idx, EdgePos_t _edge_end_idx, const CSR::Vertex* _vertices, const CSR::Edge* _edges,
+                const float* _weights) : 
                 first_vertex_id (_start), last_vertex_id(_end), vertices(_vertices), edges(_edges), 
-                first_edge_idx(_edge_start_idx), last_edge_idx (_edge_end_idx)
+                first_edge_idx(_edge_start_idx), last_edge_idx (_edge_end_idx), weights(_weights)
   {
     
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   EdgePos_t get_start_edge_idx (int vertex_id) const  {
     if (!(vertex_id <= last_vertex_id && first_vertex_id <= vertex_id)) {
       printf ("vertex_id %d, end_vertex %d, start_vertex %d\n", vertex_id, last_vertex_id, first_vertex_id);
@@ -200,18 +225,32 @@ public:
     return vertices[vertex_id - first_vertex_id].start_edge_id;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   EdgePos_t get_end_edge_idx (int vertex_id) const 
   {
     assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
     return vertices[vertex_id - first_vertex_id].end_edge_id;
   }
+
+  __host__ __device__ __forceinline__
+  float get_max_weight (int vertex_id) const 
+  {
+    assert (vertex_id <= last_vertex_id && first_vertex_id <= vertex_id);
+    return vertices[vertex_id - first_vertex_id].max_weight;
+  }
   
-  __host__ __device__
+  __host__ __device__ __forceinline__
   CSR::Edge get_edge (EdgePos_t idx)  const 
   {
     assert (idx >= first_edge_idx && idx <= last_edge_idx);
     return edges[idx - first_edge_idx];
+  }
+
+  __host__ __device__ __forceinline__
+  float get_weight(EdgePos_t idx) const 
+  {
+    assert (idx >= first_edge_idx && idx <= last_edge_idx);
+    return weights[idx - first_edge_idx];
   }
 
   VertexID get_vertex_for_edge_idx (EdgePos_t idx) const 
@@ -235,48 +274,60 @@ public:
     return VertexRange(0, get_n_vertices()-1);
   }
 
-  __host__ __device__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
+  __host__ __device__ __forceinline__ EdgePos_t get_n_edges_for_vertex (VertexID v) const 
   {
     return (get_end_edge_idx (v) != -1) ? (get_end_edge_idx(v) - get_start_edge_idx (v) + 1) : 0;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   const CSR::Edge* get_edges () const 
   {
     return edges;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
+  const float* get_weights () const 
+  {
+    return weights;
+  }
+
+  __host__ __device__ __forceinline__
   const CSR::Edge* get_edges (VertexID v) const 
   {
     return &edges[get_start_edge_idx(v) - first_edge_idx];
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
+  const float* get_weights (VertexID v) const 
+  {
+    return &weights[get_start_edge_idx(v) - first_edge_idx];
+  }
+
+  __host__ __device__ __forceinline__
   const CSR::Vertex* get_vertices () const 
   {
     return vertices; 
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   VertexID get_n_vertices () const 
   {
     return last_vertex_id - first_vertex_id + 1;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   EdgePos_t get_n_edges () const 
   {
     return last_edge_idx - first_edge_idx + 1;
   }
 
-  __host__ __device__ 
+  __host__ __device__  __forceinline__
   bool has_vertex (int v) const 
   {
     return v >= first_vertex_id && v <= last_vertex_id;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   bool has_edge (VertexID src, VertexID dst) const 
   {
     for (EdgePos_t i = get_start_edge_idx(src); i <= get_end_edge_idx(src); i++) {
@@ -288,7 +339,7 @@ public:
     return false;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   bool has_edge_logn (VertexID src, VertexID dst) const 
   {
     EdgePos_t l = get_start_edge_idx(src);
@@ -307,17 +358,38 @@ public:
     return false;
   }
 
-  __host__ __device__
+  __host__ __device__ __forceinline__
   VertexID get_vertex_idx(VertexID v) const
   {
     assert (has_vertex (v));
     return v - first_vertex_id;
   }
+
+  __host__ __device__ __forceinline__
+  VertexID get_invalid_vertex() const 
+  {
+#ifdef ENABLE_GRAPH_PARTITION_FOR_GLOBAL_MEM
+    //Implement this
+    assert(false);
+#endif
+    return get_n_vertices()+1;
+  }
+
+  __device__ __host__ 
+  const CSR::Vertex* get_vertex(VertexID id) const {return &vertices[id];} 
   // static struct HasVertex {
   //   bool operator () (CSRPartition& partition, const VertexID& v) const {
   //     return (partition.first_vertex_id >= v && v <= partition.last_vertex_id);
   //   }
   // }
+};
+
+struct GPUCSRPartition
+{
+  CSRPartition* device_csr;
+  CSR::Vertex* device_vertex_array;
+  CSR::Edge* device_edge_array;
+  float* device_weights_array;
 };
 
 #ifdef USE_CONSTANT_MEM
@@ -333,8 +405,10 @@ void csr_from_graph (CSR* csr, Graph& graph)
     ::Vertex& vertex = graph_vertices[i];
     csr->vertices[i].set_from_graph_vertex (graph_vertices[i]);
     csr->vertices[i].set_start_edge_id (edge_iterator);
+    csr->vertices[i].set_max_weight(vertex.max_weight());
     for (auto edge : vertex.get_edges ()) {
-      csr->edges[edge_iterator] = edge;
+      csr->edges[edge_iterator] = edge.first;
+      csr->weights[edge_iterator] = edge.second;
       edge_iterator++;
     }
 
