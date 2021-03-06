@@ -7,13 +7,13 @@ More details can be found in our EuroSys'21 paper.
 # Code Structure
 * `src` directory contains the source of NextDoor. It contains following files and directories
   * `apps` contains following applications. These applications are provided with their Python bindings to integrate these applications in existing GNNs:
-    * `clusterGCNSampling`  ClusterGCN [4] Sampling 
-    * `fastgcn` FastGCN [2] Sampling
-    * `ladies` LADIES[3] Sampling 
-    * `khop` GraphSAGE [1] 2-Hop application
-    * `multiRW` Multi Dimension Random Walk [5] 
-    * `mvsSampling` Minimum Variance Sampling [6]
-    * `randomWalks` DeepWalk [7], PPR [8], and node2vec [9] random walks.
+    * `clusterGCNSampling`  ClusterGCN Sampling 
+    * `fastgcn` FastGCN Sampling
+    * `ladies` LADIES Sampling 
+    * `khop` GraphSAGE 2-Hop application
+    * `multiRW` Multi Dimension Random Walk  
+    * `mvsSampling` Minimum Variance Sampling
+    * `randomWalks` DeepWalk, PPR, and node2vec random walks.
   * `tests` uses above applications as unit tests and provides a function to check results of these applications. 
   * `csr.hpp` and `graph.hpp` contains data structures for graphs.
   * `utils.hpp` contains utility functions.
@@ -134,15 +134,3 @@ make all-multiGPU-tests
 ```
 CUDA_DEVICES=0,1,3 ./build/tests/multiGPU/khop
 ```
-
-# References
-<b>todo</b>
-[1] GraphSAINT: Graph Sampling Based Inductive Learning Method (ICLR 2020)
-
-[2] Minimal Variance Sampling with Provable Guarantees for Fast Training of Graph Neural Networks (KDD 2020)
-
-[3] Cluster-GCN: An Efficient Algorithm for Training Deep and Large Graph Convolutional Networks (KDD 2019)
-
-[4] Layer-Dependent Importance Sampling for Training Deep and Large Graph Convolutional Networks (Neurips 2019)
-
-[5] FastGCN: Fast Learning with Graph Convolutional Networks via Importance Sampling (ICLR 2018)
