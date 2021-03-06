@@ -1,11 +1,11 @@
-# cuSampler
-cuSampler accelerating graph sampling using GPUs.
-cuSampler uses <it>transit</it> parallelism that improves memory access locality and decreases control flow divergence.
+# NextDoor
+NextDoor accelerating graph sampling using GPUs.
+NextDoor uses <it>transit</it> parallelism that improves memory access locality and decreases control flow divergence.
 More details can be found in our EuroSys'21 paper. 
 
 
 # Code Structure
-* `src` directory contains the source of cuSampler. It contains following files and directories
+* `src` directory contains the source of NextDoor. It contains following files and directories
   * `apps` contains following applications. These applications are provided with their Python bindings to integrate these applications in existing GNNs:
     * `clusterGCNSampling`  ClusterGCN [4] Sampling 
     * `fastgcn` FastGCN [2] Sampling
@@ -17,8 +17,8 @@ More details can be found in our EuroSys'21 paper.
   * `tests` uses above applications as unit tests and provides a function to check results of these applications. 
   * `csr.hpp` and `graph.hpp` contains data structures for graphs.
   * `utils.hpp` contains utility functions.
-  * `nextdoor.cu` contains cuSampler kernels and execution logic.
-  * `libNextDoor.hpp` header file that contains functions to integrate cuSampler's execution logic in an external program.
+  * `nextdoor.cu` contains NextDoor kernels and execution logic.
+  * `libNextDoor.hpp` header file that contains functions to integrate NextDoor's execution logic in an external program.
   * `nextDoorModule.cu` contains implementation of functions defined in `libNextDoor.hpp` that can be included in both Python 2 and Python 3 modules.
 
 * `example` directory builds Uniform Random Walk as an example application.
@@ -54,6 +54,24 @@ TransitParallel with Load Balancing execute following command.
 ./uniformRandWalk -g ../input/ppi.data -t edge-list -f binary -n 1 -k TransitParallel -l
 ```
 
+Python 2 and 3 modules are also generated and can be used as follows.
+```
+$ python2
+Python 2.7.17 (default, Sep 30 2020, 13:38:04)
+[GCC 7.5.0] on linux2
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import UniformRandomWalkPy2
+>>> UniformRandomWalkPy2.initSampling("../input/ppi.data")
+Graph Binary Loaded
+Using GPUs: [0,]
+Final Size of each sample: 100
+Maximum Neighbors Sampled at each step: 1
+Number of Samples: 56944
+Maximum Threads Per Kernel: 57088
+>>> UniformRandomWalkPy2.sample()
+SampleParallel: End to end time 0.00748205 secs
+```
+
 # Benchmarking
 
 Existing sampling applications are used as benchmarks in the paper. Following instructions can be used to do Single GPU or Multi GPU benchmarking:
@@ -65,7 +83,7 @@ git clone --recurse-submodules https://github.com/plasma-umass/NextDoor.git
 * Download the graph datasets from https://drive.google.com/file/d/19duY39ygWS3RAiqEetHUKdv-4mi_F7vj/view?usp=sharing and copy them to input directory
 
 ```
-wget --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj" -O input.zip && rm -rf /tmp/cookies.txt 'https://docs.google.com/uc?export=download&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=19duY39ygWS3RAiqEetHUKdv-4mi_F7vj" -O input.zip && rm -rf /tmp/cookies.txt
+./downloadDataset.sh
 unzip input.zip
 ```
 
