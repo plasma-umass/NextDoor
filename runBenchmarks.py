@@ -2,7 +2,7 @@ import argparse
 import os
 import subprocess
 import re
-import datetime
+import datetime 
 
 #TODO: Store the output as log some where.
 logFile = "benchmarking.log"
@@ -83,7 +83,11 @@ for app in nextDoorApps:
             continue
         for graph in graphInfo:
             print (app, graph, technique)
-            out = re.findall(r'%s\.%s%s.+%s\.%s%s'%(app, graph, technique,app,graph,technique), output, re.DOTALL)[0]
+            o = re.findall(r'%s\.%s%s.+%s\.%s%s'%(app, graph, technique,app,graph,technique), output, re.DOTALL)
+            if (len(o) == 0):
+                printf("Error executing %s for %s with input %s"%(technique, app, graph))
+                continue
+            out = o[0]
             end2end = re.findall(r'End to end time ([\d\.]+) secs', out)
             results[technique][app][graph] = float(end2end[0])
             if (technique == "LB"):
@@ -105,7 +109,11 @@ if len(args.gpus) > 1:
         technique = "LB"
         for graph in graphInfo:
             print (app, graph, technique)
-            out = re.findall(r'%s\.%s%s.+%s\.%s%s'%(app, graph, technique,app,graph,technique), output, re.DOTALL)[0]
+            o = re.findall(r'%s\.%s%s.+%s\.%s%s'%(app, graph, technique,app,graph,technique), output, re.DOTALL)
+            if (len(o) == 0):
+                printf("Error executing %s for %s with input %s"%(technique, app, graph))
+                continue
+            out = o[0]
             end2end = re.findall(r'End to end time ([\d\.]+) secs', out)
             results["MultiGPU-LB"][app][graph] = float(end2end[0])
 else:
@@ -139,11 +147,11 @@ for walk in nextDoorApps:
         t = results["InversionTime"][walk][graph]/results["LB"][walk][graph]
         print (row_format.format(walk, graph, t * 100))
 
-#Multi GPU results
-print ("\n\nFigure 10: Speedup of sampling using Multiple GPUs over 1 GPU")
-row_format = "{:>30}" * 3
-print (row_format.format("Sampling App", "Graph", "%age of Time in Index"))
-for walk in multiGPUApps:
-    for graph in graphInfo:
-        speedup = results["LB"][walk][graph]/results["MultiGPU-LB"][walk][graph]
-        print (row_format.format(walk, graph, speedup * 100))
+# #Multi GPU results
+# print ("\n\nFigure 10: Speedup of sampling using Multiple GPUs over 1 GPU")
+# row_format = "{:>30}" * 3
+# print (row_format.format("Sampling App", "Graph", "%age of Time in Index"))
+# for walk in multiGPUApps:
+#     for graph in graphInfo:
+#         speedup = results["LB"][walk][graph]/results["MultiGPU-LB"][walk][graph]
+#         print (row_format.format(walk, graph, speedup * 100))

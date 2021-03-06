@@ -2,7 +2,7 @@
 #include <stdlib.h>
 
 #define RUNS 1
-#define CHECK_RESULTS true
+#define CHECK_RESULTS false
 #define VERTICES_IN_SAMPLE 0
 #include "apps/randomwalks/randomWalks.cu"
 #include "check_results.cu"

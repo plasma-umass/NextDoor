@@ -149,10 +149,13 @@ public:
 
     delete string;
     fclose(fp);
+    printf("Vertices and Edges loaded\n");
 
-    for (auto v : vertices) {
-      v.sort_edges();
+    #pragma omp parallel for
+    for (size_t v = 0; v < vertices.size(); v++) {
+      vertices[v].sort_edges();
     }
+    printf("Edges sorted\n");
   }
 
   
