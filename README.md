@@ -26,6 +26,12 @@ More details can be found in our EuroSys'21 paper.
 # Graph Inputs
 
 Graph Inputs used in the paper can be downloaded from the url: https://drive.google.com/file/d/19duY39ygWS3RAiqEetHUKdv-4mi_F7vj/view?usp=sharing. These graphs are obtained from snap.stanford.edu and each edge is assigned a random weight within [1, 5).
+Below commands download the dataset and then extract it to input folder.
+
+```
+sh ./downloadDatasets.sh
+unzip input.zip
+```
 
 # Building Example Sampling Application
 `example/uniformRandomWalk.cu` shows how to develop a Uniform Random Walk application using NextDoor.
@@ -54,7 +60,22 @@ TransitParallel with Load Balancing execute following command.
 ./uniformRandWalk -g ../input/ppi.data -t edge-list -f binary -n 1 -k TransitParallel -l
 ```
 
-Python 2 and 3 modules are also generated and can be used as follows.
+Command Line Arguments are:
+* -g is path to graph, 
+* -t is the type of storage of graph, which can be either a list of edges (edge-list) or adjacency list (adj-list), 
+* -f is the format of storage, which can be either binary or text, 
+* -n describes number of times to run it
+* -k describes the kind of kernel to use Transit Parallel or Sample Parallel 
+* -l describes if load balancing, caching, and other optimizations must be applied on Transit Parallel. This argument is valid for Transit Parallel only.
+
+
+Python 2 and 3 modules are also generated using make and can be used as follows. Both modules defines following functions.
+* initSampling(graph): It takes a path to graph that is stored in a binary edge-list format.
+* sample(): This will perform the sampling
+* finalSamples(): This will return the final samples in the form of a Python List.
+* finalSampleLength(): This will return the size of each sample.
+* finalSamplesArray(): This avoids building a list and gives a pointer to the final samples array of NextDoor. This pointer can then be converted to a numpy array.
+
 ```
 $ python2
 Python 2.7.17 (default, Sep 30 2020, 13:38:04)
@@ -71,6 +92,9 @@ Maximum Threads Per Kernel: 57088
 >>> UniformRandomWalkPy2.sample()
 SampleParallel: End to end time 0.00748205 secs
 ```
+
+### Executing other applications
+Similarly, other applications in `src/apps` folder can be used.
 
 # Benchmarking
 
