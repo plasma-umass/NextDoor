@@ -840,9 +840,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
     unsigned char shMemAlloc[sizeof(curandState)*THREADS];
   };
   __shared__ unionShMem shMem;
-  
-  //__shared__ bool globalLoadBV[COALESCE_GL_LOADS ? CACHE_SIZE : 1];
-  
+    
   CSR::Edge* edgesInShMem = CACHE_EDGES ? (CSR::Edge*)&shMem.edgeAndWeightCache[0] : nullptr;
   float* edgeWeightsInShMem = CACHE_WEIGHTS ? (float*)&shMem.edgeAndWeightCache[EDGE_CACHE_SIZE] : nullptr;
   
@@ -874,12 +872,6 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
   }
 
   curandState localRandState = (threadIdx.x % subWarpSize < App().stepSize(step))? *curandSrcPtr: curandState();
-  //curand_init(threadId, 0,0, &localRandState);
-
-  //__shared__ VertexID newNeigbhors[N_THREADS];
-  //if (threadIdx.x == 0) printf("blockIdx.x %d\n", blockIdx.x);
-  //shRandStates[threadIdx.x] = randStates[threadId];  
-  //__syncthreads();
   
   CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
   for (int fullBlockIdx = blockIdx.x; fullBlockIdx < totalThreadBlocks; fullBlockIdx += gridDim.x) {
@@ -898,7 +890,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
     }
   
     __syncthreads();
-
+    
     const int NUM_SUBWARPS_IN_TB = NUM_THREAD_GROUPS * (LoadBalancing::LoadBalancingThreshold::BlockLevel/SUB_WARP_SIZE);
     static_assert(NUM_SUBWARPS_IN_TB * TRANSITS_PER_THREAD <= THREADS);
     
@@ -919,9 +911,9 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
     
     const int threadsToLoadTransit = sizeof(CSR::Vertex)/sizeof(int);
     if (threadIdx.x < threadsToLoadTransit * NUM_SUBWARPS_IN_TB * TRANSITS_PER_THREAD) {
-      //Load Transit Vertex Information in a Coalesced manner
+      //Load transit Vertex Object in a coalesced manner
       //TODO: Fix this for subwarpsize < 32
-      int transitI = 0;//threadIdx.x / (TRANSITS_PER_THREAD * NUM_SUBWARPS_IN_TB);
+      int transitI = (threadIdx.x / (threadsToLoadTransit)) % TRANSITS_PER_THREAD;
       int subWarpIdx = threadIdx.x / (TRANSITS_PER_THREAD * threadsToLoadTransit);
       VertexID transit = shMem.subWarpTransits[subWarpIdx][transitI][0];
       const CSR::Vertex* transitVertex = csr->get_vertices() + transit;
@@ -940,7 +932,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
         continue;
       }
 
-      __syncwarp();
+      __syncwarp(); //TODO: Add mask based on subwarp
       VertexID_t transit = shMem.subWarpTransits[threadBlockWarpIdx][transitI][0];
       CSR::Vertex* shMemTransitVertex = ((CSR::Vertex*)(&shMem.transitVertices[threadBlockWarpIdx][transitI * sizeof(CSR::Vertex)]));
       EdgePos_t numEdgesInShMem = shMemTransitVertex->num_edges();
@@ -975,7 +967,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
 
       __syncwarp();
       bool continueExecution = true;
-    
+      
       if (transit == shMem.transitForSubWarp[threadBlockWarpIdx]) {
         //A thread will run next only when it's transit is same as transit of the threadblock.
         transitIdx = shMem.mapStartPos[threadBlockWarpIdx][transitI] + threadIdx.x/subWarpSize; //threadId/stepSize(step);
@@ -1012,7 +1004,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
         // if ((transit == 612657 || transit == 348930) && sampleIdx == 17175) {
         //   printf("transit %d fullBlockIdx  %d sampleIdx %d neighbor %d\n", transit, fullBlockIdx, sampleIdx, neighbor);
         // }
-        
+
         if (continueExecution) {
           if (step != App().steps() - 1) {
             //No need to store at last step
@@ -1025,7 +1017,6 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
             }
           }
         }
-
         if (true) {
           EdgePos_t insertionPos = transitNeighborIdx; 
           if (numberOfTransits<App>(step) > 1) {
@@ -1089,9 +1080,6 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
             if (continueExecution && isValidSampledVertex(neighbor, invalidVertex))
               finalSamples[(sampleIdx-deviceFirstSample)*finalSampleSize + insertionPos] = neighbor;
           }
-          // if (sample == 100) {
-          //   printf("neighbor for 100 %d insertionPos %ld transit %d\n", neighbor, (long)insertionPos, transit);
-          // }
           //TODO: We do not need atomic instead store indices of transit in another array,
           //wich can be accessed based on sample and transitIdx.
         }
@@ -2898,13 +2886,11 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           CHK_CU(cudaSetDevice(device));
           //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
           //Processing more can improve the locality if thread blocks have common transits.
-          const int perThreadSamplesForThreadBlockKernel = 1; // Works best for KHop
-          //const int perThreadSamplesForGridKernel = 8;
+          const int perThreadSamplesForThreadBlockKernel = 8; // Works best for KHop
           const int tbSize = 256L;
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/tbSize);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
           const size_t threadBlocks = DIVUP(((*threadBlockKernelTransitsNum[deviceIdx] * LoadBalancing::LoadBalancingThreshold::BlockLevel)/tbSize), perThreadSamplesForThreadBlockKernel);
-          std::cout << "threadBlocks " << threadBlocks << std::endl;
           if (useThreadBlockKernel && *threadBlockKernelTransitsNum[deviceIdx] > 0){// && numberOfTransits<App>(step) > 1) {
             //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
             // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
