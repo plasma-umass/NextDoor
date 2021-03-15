@@ -71,40 +71,6 @@ enum OutputFormat {
   AdjacencyMatrix
 };
 
-/************Application Functions********** 
-__host__ __device__ int stepSize(int k);
-
-template<class SampleType> 
-__device__ inline
-VertexID next(int step, CSRPartition* csr, const VertexID* transit, 
-              const VertexID sampleID, SampleType* sample,
-              const float maxWeight,
-              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-              curandState* state);
-template<class SampleType, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool DECREASE_GM_LOADS>
-__device__ inline
-VertexID nextCached(int step, const VertexID transit, 
-              const VertexID sampleID, SampleType* sample,
-              const float maxWeight,
-              const CSR::Edge* transitEdges, const float* transitEdgeWeights,
-              const EdgePos_t numEdges, const EdgePos_t neighbrID, 
-              curandState* state, VertexID_t* cachedEdges, float* cachedWeights,
-              bool* globalLoadBV);
-__host__ __device__ int steps();
-__host__ __device__ int samplingType();
-__host__ __device__ bool hasExplicitTransits();
-template<class SampleType>
-__device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, const int transitIdx, curandState* randState);
-template<class SampleType>
-__host__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID);
-__host__ __device__ OutputFormat outputFormat();
-__host__ __device__ EdgePos_t (CSR* graph);
-__host__ __device__ EdgePos_t initialSampleSize(CSR* graph);
-template<class SampleType>
-__host__ std::vector<VertexID_t> initialSample(int sampleIdx, CSR* graph, SampleType& sample);
-*********************/
-
 __constant__ char csrPartitionBuff[sizeof(CSRPartition)];
 
 template<typename T, size_t CACHE_SIZE, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
@@ -144,7 +110,7 @@ struct CachedArray {
     // } else 
     {
       e = shArray[id];
-      if (id < STATIC_CACHE_SIZE)
+      if (ONDEMAND_CACHING and id < STATIC_CACHE_SIZE)
         return e;
 
       if (ONDEMAND_CACHING and e == -1) {
@@ -773,44 +739,6 @@ __global__ void subWarpKernel(const int step, GPUCSRPartition graph, const Verte
   }
 }
 
-template<int CACHE_SIZE, bool COALESCE_GL_LOADS, typename T, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE>
-__device__ inline VertexID_t cacheAndGet(EdgePos_t id, const T* transitEdges, T* cachedEdges, bool* globalLoadBV)
-{
-  if (id >= CACHE_SIZE) {
-    return transitEdges[id];
-  }
-  
-  VertexID_t e;
-
-  // if (false && COALESCE_GL_LOADS) {
-  //   e = cachedEdges[id];
-  //   if (e == -1)
-  //     cachedEdges[id] = -2;
-
-  //   int subWarpThreadIdx = threadIdx.x % LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
-  //   //int subWarp = threadIdx.x / LoadBalancing::LoadBalancingThreshold::SubWarpLevel;
-  //   for (int i = subWarpThreadIdx; i < CACHE_SIZE; i += LoadBalancing::LoadBalancingThreshold::SubWarpLevel) {
-  //     if (cachedEdges[i] == -2) {
-  //       cachedEdges[i] = transitEdges[i];
-  //     }
-  //   }
-    
-  //   e = cachedEdges[id];
-  // } else 
-  {
-    e = cachedEdges[id];
-    if (id < STATIC_CACHE_SIZE)
-      return e;
-
-    if (ONDEMAND_CACHING and e == -1) {
-      e = transitEdges[id];
-      cachedEdges[id] = e;
-    }
-  }
-
-  return e;
-}
-
 template<class SampleType, typename App, int THREADS, int CACHE_SIZE, bool CACHE_EDGES, bool CACHE_WEIGHTS, bool COALESCE_GL_LOADS, int TRANSITS_PER_THREAD, 
 bool COALESCE_CURAND_LOAD, bool ONDEMAND_CACHING, int STATIC_CACHE_SIZE, int SUB_WARP_SIZE>
 __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const VertexID_t deviceFirstSample, 
@@ -829,7 +757,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
 
   union unionShMem {
     struct {
-      unsigned char edgeAndWeightCache[EDGE_CACHE_SIZE+WEIGHT_CACHE_SIZE];
+      unsigned char edgeAndWeightCache[EDGE_CACHE_SIZE*NUM_THREAD_GROUPS+WEIGHT_CACHE_SIZE*NUM_THREAD_GROUPS];
       bool invalidateCache;
       VertexID_t transitForSubWarp[NUM_THREAD_GROUPS];
       EdgePos_t mapStartPos[NUM_THREAD_GROUPS][TRANSITS_PER_THREAD];
@@ -841,7 +769,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
   };
   __shared__ unionShMem shMem;
     
-  CSR::Edge* edgesInShMem = CACHE_EDGES ? (CSR::Edge*)&shMem.edgeAndWeightCache[0] : nullptr;
+  CSR::Edge* edgesInShMem = CACHE_EDGES ? (CSR::Edge*)(&shMem.edgeAndWeightCache[0] + EDGE_CACHE_SIZE*(threadIdx.x/LoadBalancing::LoadBalancingThreshold::BlockLevel)) : nullptr;
   float* edgeWeightsInShMem = CACHE_WEIGHTS ? (float*)&shMem.edgeAndWeightCache[EDGE_CACHE_SIZE] : nullptr;
   
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
@@ -948,7 +876,9 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       __syncwarp();
 
       if (CACHE_EDGES && shMem.invalidateCache) {
-        for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += LoadBalancing::LoadBalancingThreshold::BlockLevel) {
+        for (int i = threadIdx.x%LoadBalancing::LoadBalancingThreshold::BlockLevel; 
+             i < min(CACHE_SIZE, numEdgesInShMem); 
+             i += LoadBalancing::LoadBalancingThreshold::BlockLevel) {
           if (ONDEMAND_CACHING) {
             if (i < STATIC_CACHE_SIZE)
               edgesInShMem[i] = glTransitEdges[i];
@@ -2887,7 +2817,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           CHK_CU(cudaSetDevice(device));
           //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
           //Processing more can improve the locality if thread blocks have common transits.
-          const int perThreadSamplesForThreadBlockKernel = 8; // Works best for KHop
+          const int perThreadSamplesForThreadBlockKernel = 1; // Works best for KHop
           const int tbSize = 256L;
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/tbSize);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
