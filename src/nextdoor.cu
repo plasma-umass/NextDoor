@@ -945,19 +945,20 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
         shMem.transitForSubWarp[threadBlockWarpIdx] = transit;
       }
 
-      // __syncthreads();
-      // if (CACHE_EDGES && shMem.invalidateCache) {
-      //   for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
-      //     if (ONDEMAND_CACHING) {
-      //       if (i < STATIC_CACHE_SIZE)
-      //         edgesInShMem[i] = glTransitEdges[i];
-      //       else 
-      //         edgesInShMem[i] = -1;
-      //     } else {
-      //       edgesInShMem[i] = glTransitEdges[i];
-      //     }
-      //   }
-      // }
+      __syncwarp();
+
+      if (CACHE_EDGES && shMem.invalidateCache) {
+        for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += LoadBalancing::LoadBalancingThreshold::BlockLevel) {
+          if (ONDEMAND_CACHING) {
+            if (i < STATIC_CACHE_SIZE)
+              edgesInShMem[i] = glTransitEdges[i];
+            else 
+              edgesInShMem[i] = -1;
+          } else {
+            edgesInShMem[i] = glTransitEdges[i];
+          }
+        }
+      }
   
       // if (CACHE_WEIGHTS && shMem.invalidateCache) {
       //   for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
@@ -987,7 +988,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
         // assert (kernelTypeForTransit[transit] == TransitKernelTypes::GridKernel);
         
         //TODO: Set this based on the input template parameters.
-        typedef CachedArray<CSR::Edge, 0, false, 0> CachedEdges;
+        typedef CachedArray<CSR::Edge, CACHE_SIZE, ONDEMAND_CACHING, STATIC_CACHE_SIZE> CachedEdges;
         typedef CachedArray<float, 0, false, 0> CachedWeights;
 
         CachedEdges cachedEdges = {glTransitEdges, edgesInShMem};
@@ -2894,9 +2895,9 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           if (useThreadBlockKernel && *threadBlockKernelTransitsNum[deviceIdx] > 0){// && numberOfTransits<App>(step) > 1) {
             //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
             // for (int threadBlocksExecuted = 0; threadBlocksExecuted < threadBlocks; threadBlocksExecuted += nextDoorData.maxThreadsPerKernel/256) {
-              const bool CACHE_EDGES = false;
+              const bool CACHE_EDGES = true;
               const bool CACHE_WEIGHTS = false;
-              const int CACHE_SIZE = 0;//(CACHE_EDGES || CACHE_WEIGHTS) ? 3*1024-10 : 0;
+              const int CACHE_SIZE = (CACHE_EDGES || CACHE_WEIGHTS) ? 384 : 0;
             
               switch (subWarpSizeAtStep<App>(step)) {
                 case 32:
