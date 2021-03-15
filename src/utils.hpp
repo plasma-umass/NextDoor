@@ -439,7 +439,8 @@ namespace GPUUtils {
 
     CHK_CU(cudaMemcpy(tmp, array, nelems*sizeof(T), cudaMemcpyDeviceToHost));
     for (int i = 0; i < nelems; i++) {
-      std::cout << tmp[i] << sep;
+      if (tmp[i] == 4549983 || tmp[i] == 4017644)
+      std::cout << i << ":" << tmp[i] << sep;
     }
 
     std::cout << std::endl;
@@ -451,7 +452,8 @@ namespace GPUUtils {
   void printKeyValuePairs(T1* keys, T2* values, int nelems, char sep)
   {
     for (int i = 0; i < nelems; i++) {
-      std::cout << "[" << keys[i] << ", " << values[i] << "]" << sep;
+      if (values[i] == 4439958 || keys[i] == 4549983)
+        std::cout << i << ": [" << keys[i] << ", " << values[i] << "]" << sep;
     }
 
     std::cout << std::endl;
@@ -466,7 +468,8 @@ namespace GPUUtils {
     CHK_CU(cudaMemcpy(tmp1, keys, nelems*sizeof(T1), cudaMemcpyDeviceToHost));
     CHK_CU(cudaMemcpy(tmp2, values, nelems*sizeof(T2), cudaMemcpyDeviceToHost));
     for (int i = 0; i < nelems; i++) {
-      std::cout << "[" << tmp1[i] << ", " << tmp2[i] << "]" << sep;
+      if (tmp1[i] == 4549983 || tmp1[i] == 4017644)
+        std::cout << i << ": [" << tmp1[i] << ", " << tmp2[i] << "]" << sep;
     }
 
     std::cout << std::endl;
