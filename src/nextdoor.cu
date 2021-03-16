@@ -875,7 +875,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
 
       __syncwarp();
 
-      if (CACHE_EDGES && shMem.invalidateCache) {
+      if (CACHE_EDGES && true){// shMem.invalidateCache) {
         for (int i = threadIdx.x%LoadBalancing::LoadBalancingThreshold::BlockLevel; 
              i < min(CACHE_SIZE, numEdgesInShMem); 
              i += LoadBalancing::LoadBalancingThreshold::BlockLevel) {
@@ -2817,7 +2817,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           CHK_CU(cudaSetDevice(device));
           //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
           //Processing more can improve the locality if thread blocks have common transits.
-          const int perThreadSamplesForThreadBlockKernel = 1; // Works best for KHop
+          const int perThreadSamplesForThreadBlockKernel = 2; // Works best for KHop
           const int tbSize = 256L;
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/tbSize);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
