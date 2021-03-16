@@ -2,7 +2,7 @@
 #include "../apps/khop/khop.cu"
 #include "../check_results.cu"
 
-#define RUNS 1
+#define RUNS 10
 #define CHECK_RESULTS true
 #define COMMA ,
 

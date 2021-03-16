@@ -1089,7 +1089,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
   for (int fullBlockIdx = blockIdx.x; fullBlockIdx < totalThreadBlocks; fullBlockIdx += gridDim.x) {
     EdgePos_t transitIdx = 0;
     if (threadIdx.x < TRANSITS_PER_THREAD) {
-      if (TRANSITS_PER_THREAD * (fullBlockIdx) + threadIdx.x < gridKernelTBPositionsNum) {
+      if (TRANSITS_PER_THREAD * fullBlockIdx + threadIdx.x < gridKernelTBPositionsNum) {
         shMem.mapStartPos[threadIdx.x] = gridKernelTBPositions[TRANSITS_PER_THREAD * fullBlockIdx + threadIdx.x];
       }
     }
@@ -1102,14 +1102,9 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       transitIdx = shMem.mapStartPos[transitI] + threadIdx.x % (THREADS/SUB_WARP_SIZE);
       //TODO: Specialize this for subWarpSizez = 1.
       VertexID_t transit = invalidVertex;
-      if (subWarpSize == 1) {
-        transit = transitToSamplesKeys[transitIdx];
-      } else {
-        transit = transitToSamplesKeys[transitIdx];
-      }
-
-      shMem.subWarpTransits[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transit;
-      shMem.subWarpSampleIdx[transitI][threadIdx.x% (THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
+      transit = transitToSamplesKeys[transitIdx];
+      shMem.subWarpTransits[transitI][threadIdx.x%(THREADS/SUB_WARP_SIZE)] = transit;
+      shMem.subWarpSampleIdx[transitI][threadIdx.x%(THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
     }
     __syncwarp();
     __syncthreads();
