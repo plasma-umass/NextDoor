@@ -2,8 +2,8 @@
 #include "../apps/khop/khop.cu"
 #include "../check_results.cu"
 
-#define RUNS 1
-#define CHECK_RESULTS true
+#define RUNS 5
+#define CHECK_RESULTS false
 #define COMMA ,
 
 // APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalSP, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "SampleParallel", false)

@@ -758,7 +758,6 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
   union unionShMem {
     struct {
       unsigned char edgeAndWeightCache[EDGE_CACHE_SIZE*NUM_THREAD_GROUPS+WEIGHT_CACHE_SIZE*NUM_THREAD_GROUPS];
-      bool invalidateCache;
       VertexID_t transitForSubWarp[NUM_THREAD_GROUPS];
       EdgePos_t mapStartPos[NUM_THREAD_GROUPS][TRANSITS_PER_THREAD];
       EdgePos_t subWarpTransits[NUM_THREAD_GROUPS][TRANSITS_PER_THREAD][LoadBalancing::LoadBalancingThreshold::BlockLevel/SUB_WARP_SIZE];
@@ -867,15 +866,16 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       const CSR::Edge* glTransitEdges = (CSR::Edge*)csr->get_edges() + shMemTransitVertex->get_start_edge_idx();
       const float* glTransitEdgeWeights = (float*)(CSR::Edge*)csr->get_weights() + shMemTransitVertex->get_start_edge_idx();
       float maxWeight = shMemTransitVertex->get_max_weight();
+      bool invalidateCache = false;
 
       if (threadIdx.x % subWarpSize == 0) {
-        shMem.invalidateCache = shMem.transitForSubWarp[threadBlockWarpIdx] != transit || transitI == 0;
+        invalidateCache = shMem.transitForSubWarp[threadBlockWarpIdx] != transit || transitI == 0;
         shMem.transitForSubWarp[threadBlockWarpIdx] = transit;
       }
 
-      __syncwarp();
+      invalidateCache = __shfl_sync(FULL_WARP_MASK, invalidateCache, 0, subWarpSize);
 
-      if (CACHE_EDGES && true){// shMem.invalidateCache) {
+      if (CACHE_EDGES && invalidateCache) {
         for (int i = threadIdx.x%LoadBalancing::LoadBalancingThreshold::BlockLevel; 
              i < min(CACHE_SIZE, numEdgesInShMem); 
              i += LoadBalancing::LoadBalancingThreshold::BlockLevel) {
@@ -2817,7 +2817,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
           CHK_CU(cudaSetDevice(device));
           //Process more than one thread blocks positions written in dGridKernelTransits per thread block.
           //Processing more can improve the locality if thread blocks have common transits.
-          const int perThreadSamplesForThreadBlockKernel = 2; // Works best for KHop
+          const int perThreadSamplesForThreadBlockKernel = 8; // Works best for KHop
           const int tbSize = 256L;
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/tbSize);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
