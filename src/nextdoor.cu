@@ -748,7 +748,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
                            VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
                            curandState* randStates, const int* kernelTypeForTransit, const VertexID_t* threadBlockKernelPositions, 
                            const EdgePos_t threadBlockKernelPositionsNum, int totalThreadBlocks,
-                           int numTransitsAtStepPerSample)
+                           int numTransitsAtStepPerSample, int finalSampleSizeTillPreviousStep)
 {
   #define EDGE_CACHE_SIZE (CACHE_EDGES ? CACHE_SIZE*sizeof(CSR::Edge) : 0)
   #define WEIGHT_CACHE_SIZE (CACHE_WEIGHTS ? CACHE_SIZE*sizeof(float) : 0)
@@ -954,14 +954,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
           if (numTransitsAtStepPerSample > 1) {
             if (step == 0) {
               insertionPos = transitNeighborIdx;
-            } else {
-              EdgePos_t numTransits = numTransitsAtStepPerSample;
-              EdgePos_t finalSampleSizeTillPreviousStep = 0;
-              EdgePos_t neighborsToSampleAtStep = 1;
-              for (int _s = 0; _s < step; _s++) {
-                neighborsToSampleAtStep *= App().stepSize(_s);
-                finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
-              }
+            } else {             
               EdgePos_t insertionStartPosForTransit = 0;
               //FIXME: 
               if (isValidSampledVertex(neighbor, invalidVertex) && threadIdx.x % subWarpSize == 0) {
@@ -1029,7 +1022,8 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
                            VertexID_t* samplesToTransitKeys, VertexID_t* samplesToTransitValues,
                            VertexID_t* finalSamples, const size_t finalSampleSize, EdgePos_t* sampleInsertionPositions,
                            curandState* randStates, const int* kernelTypeForTransit, const VertexID_t* gridKernelTBPositions, 
-                           const EdgePos_t gridKernelTBPositionsNum, int totalThreadBlocks, int numTransitsPerStepForSample)
+                           const EdgePos_t gridKernelTBPositionsNum, int totalThreadBlocks, int numTransitsPerStepForSample,
+                           int finalSampleSizeTillPreviousStep)
 {
   #define EDGE_CACHE_SIZE (CACHE_EDGES ? CACHE_SIZE*sizeof(CSR::Edge) : 0)
   #define WEIGHT_CACHE_SIZE (CACHE_WEIGHTS ? CACHE_SIZE*sizeof(float) : 0)
@@ -1227,13 +1221,6 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
             if (step == 0) {
               insertionPos = transitNeighborIdx;
             } else {
-              EdgePos_t numTransits = numTransitsPerStepForSample;
-              EdgePos_t finalSampleSizeTillPreviousStep = 0;
-              EdgePos_t neighborsToSampleAtStep = 1;
-              for (int _s = 0; _s < step; _s++) {
-                neighborsToSampleAtStep *= App().stepSize(_s);
-                finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
-              }
               EdgePos_t insertionStartPosForTransit = 0;
               //FIXME: 
               if (isValidSampledVertex(neighbor, invalidVertex) && threadIdx.x % subWarpSize == 0) {
@@ -2796,6 +2783,14 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
         //   }
         //   
         // }
+
+        EdgePos_t finalSampleSizeTillPreviousStep = 0;
+        EdgePos_t neighborsToSampleAtStep = 1;
+        for (int _s = 0; _s < step; _s++) {
+          neighborsToSampleAtStep *= App().stepSize(_s);
+          finalSampleSizeTillPreviousStep += neighborsToSampleAtStep;
+        }
+
         double threadBlockKernelTimeT1 = convertTimeValToDouble(getTimeOfDay ());
 
         for(auto deviceIdx = 0; deviceIdx < nextDoorData.devices.size(); deviceIdx++) {
@@ -2823,7 +2818,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dThreadBlockKernelTransits[deviceIdx], *threadBlockKernelTransitsNum[deviceIdx], threadBlocks,  numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dThreadBlockKernelTransits[deviceIdx], *threadBlockKernelTransitsNum[deviceIdx], threadBlocks,  numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                     break;
                 // case 16:
                 //   gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,16><<<maxThreadBlocksPerKernel, 256>>>(step,
@@ -2910,7 +2905,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                     break;
                 case 16:
                   gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,16><<<maxThreadBlocksPerKernel, 256>>>(step,
@@ -2919,7 +2914,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                     break;
                 case 8:
                 gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,8><<<maxThreadBlocksPerKernel, 256>>>(step,
@@ -2928,7 +2923,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                   break;
                 case 4:
                 gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,4><<<maxThreadBlocksPerKernel, 256>>>(step,
@@ -2937,7 +2932,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                   break;
                 case 2:
                 gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,2><<<maxThreadBlocksPerKernel, 256>>>(step,
@@ -2946,7 +2941,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                   break;
                 case 1:
                 gridKernel<SampleType,App,256,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,false,perThreadSamplesForGridKernel,true,true,256,1><<<maxThreadBlocksPerKernel, 256>>>(step,
@@ -2955,7 +2950,7 @@ bool doTransitParallelSampling(CSR* csr, GPUCSRPartition gpuCSRPartition, NextDo
                     totalThreads[deviceIdx],  nextDoorData.dOutputSamples[deviceIdx], nextDoorData.samples.size(),
                     nextDoorData.dSamplesToTransitMapKeys[deviceIdx], nextDoorData.dSamplesToTransitMapValues[deviceIdx],
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, nextDoorData.dSampleInsertionPositions[deviceIdx],
-                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step));
+                    nextDoorData.dCurandStates[deviceIdx], dKernelTypeForTransit[deviceIdx], dGridKernelTransits[deviceIdx], *gridKernelTransitsNum[deviceIdx], threadBlocks,numberOfTransits<App>(step), finalSampleSizeTillPreviousStep);
                   break;
                 default:
                   //TODO: Add others
