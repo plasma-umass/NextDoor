@@ -57,7 +57,7 @@ $(SINGLEGPU_TEST_BUILD_DIR)/layer: src/tests/singleGPU/layer.cu src/nextdoor.cu 
 
 #******Multi GPU Tests********#
 $(MULTIGPU_TEST_BUILD_DIR)/khop: src/tests/multiGPU/khop.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop/khop.cu 
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp  -maxrregcount=40 -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xcompiler -fopenmp  -maxrregcount=40 -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/deepwalk: src/tests/multiGPU/deepwalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
@@ -69,19 +69,19 @@ $(MULTIGPU_TEST_BUILD_DIR)/ppr: src/tests/multiGPU/ppr.cu src/nextdoor.cu src/te
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/fastgcn: src/tests/multiGPU/fastgcn.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/fastgcn/fastgcnSampling.cu
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3  -Xcompiler -fopenmp -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/ladies: src/tests/multiGPU/ladies.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/ladies/ladiessampling.cu
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3  -Xcompiler -fopenmp -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/multirw: src/tests/multiGPU/multirw.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/multiRW/multiRW.cu
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xcompiler -fopenmp -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/clustergcn: src/tests/multiGPU/clustergcn.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/clustergcn/clusterGCNSampling.cu
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xcompiler -fopenmp -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/mvs: src/tests/multiGPU/mvs.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/mvs/mvsSampling.cu
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -Xcompiler -fopenmp -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xcompiler -fopenmp -o $@
 ########################################
 
 #*************APPS*********************#

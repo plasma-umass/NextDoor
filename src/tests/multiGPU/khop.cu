@@ -3,7 +3,7 @@
 #include "../check_results.cu"
 
 #define RUNS 1
-#define CHECK_RESULTS false
+#define CHECK_RESULTS true
 #define COMMA ,
 
 APP_TEST_BINARY(KHopSample, KHop, KHopApp, LiveJournalLB, LJ1_PATH, RUNS, CHECK_RESULTS, checkSampledVerticesResult<KHopSample COMMA KHopApp>, "TransitParallel", true)
