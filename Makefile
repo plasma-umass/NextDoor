@@ -57,7 +57,7 @@ $(SINGLEGPU_TEST_BUILD_DIR)/layer: src/tests/singleGPU/layer.cu src/nextdoor.cu 
 
 #******Multi GPU Tests********#
 $(MULTIGPU_TEST_BUILD_DIR)/khop: src/tests/multiGPU/khop.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop/khop.cu 
-	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xcompiler -fopenmp  -maxrregcount=40 -o $@
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3  -Xptxas -O3 -Xcompiler -fopenmp  -maxrregcount=40 -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/deepwalk: src/tests/multiGPU/deepwalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3 -Xptxas -O3 -Xcompiler -fopenmp -o $@

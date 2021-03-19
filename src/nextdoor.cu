@@ -1091,8 +1091,11 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
     if (threadIdx.x < TRANSITS_PER_THREAD) {
       if (TRANSITS_PER_THREAD * fullBlockIdx + threadIdx.x < gridKernelTBPositionsNum) {
         shMem.mapStartPos[threadIdx.x] = gridKernelTBPositions[TRANSITS_PER_THREAD * fullBlockIdx + threadIdx.x];
+      } else {
+        shMem.mapStartPos[threadIdx.x] = -1;
       }
     }
+    
     __syncthreads();
     if (threadIdx.x < THREADS/SUB_WARP_SIZE * TRANSITS_PER_THREAD) {
       //Coalesce loads of transits per sub-warp by loading transits for all sub-warps in one warp.
@@ -1100,25 +1103,34 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
       // static_assert ((THREADS/SUB_WARP_SIZE * TRANSITS_PER_THREAD) < THREADS);
       int transitI = threadIdx.x / (THREADS/SUB_WARP_SIZE);// * TRANSITS_PER_THREAD);
       transitIdx = shMem.mapStartPos[transitI] + threadIdx.x % (THREADS/SUB_WARP_SIZE);
+      // if (!(transitIdx >= 0 && transitIdx < 57863 * 10)) {
+      //   printf("transitIdx %d shMem.mapStartPos[transitI] %d\n", transitIdx, shMem.mapStartPos[transitI]);
+      // }
       //TODO: Specialize this for subWarpSizez = 1.
       VertexID_t transit = invalidVertex;
-      transit = transitToSamplesKeys[transitIdx];
+      if (transitIdx != -1) {
+        transit = transitToSamplesKeys[transitIdx];
+        shMem.subWarpSampleIdx[transitI][threadIdx.x%(THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
+      }
       shMem.subWarpTransits[transitI][threadIdx.x%(THREADS/SUB_WARP_SIZE)] = transit;
-      shMem.subWarpSampleIdx[transitI][threadIdx.x%(THREADS/SUB_WARP_SIZE)] = transitToSamplesValues[transitIdx];
     }
+
     __syncwarp();
     __syncthreads();
     const int threadsToLoadTransit = sizeof(CSR::Vertex)/sizeof(int);
     if (threadIdx.x < threadsToLoadTransit * TRANSITS_PER_THREAD) {
-      //Load Transit Vertex Information in a Coalesced manner
+      //Load Transit Vertex of first subwarp in a Coalesced manner
       int transitI = threadIdx.x / threadsToLoadTransit;
       VertexID transit = shMem.subWarpTransits[transitI][0];
-      const CSR::Vertex* transitVertex = csr->get_vertices() + transit;
-      int tid = threadIdx.x % threadsToLoadTransit;
-      int data = ((const int*)transitVertex)[tid];
-      *(((int*)&shMem.transitVertices[transitI * sizeof(CSR::Vertex)]) + tid) = data;
+      if (transit != invalidVertex) {
+        const CSR::Vertex* transitVertex = csr->get_vertices() + transit;
+        int tid = threadIdx.x % threadsToLoadTransit;
+        int data = ((const int*)transitVertex)[tid];
+        *(((int*)&shMem.transitVertices[transitI * sizeof(CSR::Vertex)]) + tid) = data;
+      }
     }
     __syncwarp();
+    
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
       if (TRANSITS_PER_THREAD * (fullBlockIdx) + transitI >= gridKernelTBPositionsNum) {
         continue;
@@ -2534,7 +2546,6 @@ bool doTransitParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoor
           auto device = nextDoorData.devices[deviceIdx];
           CHK_CU(cudaSetDevice(device));
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
-          printf("device %d deviceSampleStartPtr %d\n", device, deviceSampleStartPtr);
           for (int threadsExecuted = 0; threadsExecuted < totalThreads[deviceIdx]; threadsExecuted += nextDoorData.maxThreadsPerKernel[deviceIdx]) {
             size_t currExecutionThreads = min((size_t)nextDoorData.maxThreadsPerKernel[deviceIdx], totalThreads[deviceIdx] - threadsExecuted);
             samplingKernel<SampleType, App, TransitParallelMode::NextFuncExecution, 0><<<thread_block_size(currExecutionThreads, N_THREADS), N_THREADS>>>(step, gpuCSRPartitions[deviceIdx], 
@@ -2890,9 +2901,11 @@ bool doTransitParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoor
           //Processing more can improve the locality if thread blocks have common transits.
           const int perThreadSamplesForGridKernel = 16; // Works best for KHop
           //const int perThreadSamplesForGridKernel = 8;
+          
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
           const size_t threadBlocks = DIVUP(*gridKernelTransitsNum[deviceIdx], perThreadSamplesForGridKernel);
+          printf("device %d gridTransitsNum %d threadBlocks %d\n", device, *gridKernelTransitsNum[deviceIdx], threadBlocks);
 
           if (useGridKernel && *gridKernelTransitsNum[deviceIdx] > 0){// && numberOfTransits<App>(step) > 1) {
             //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
