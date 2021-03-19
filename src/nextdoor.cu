@@ -813,6 +813,8 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
 
       if (TRANSITS_PER_THREAD * __fullWarpIdx + transitIdx < threadBlockKernelPositionsNum) {
         shMem.mapStartPos[warpIdx][transitIdx] = threadBlockKernelPositions[TRANSITS_PER_THREAD * __fullWarpIdx + transitIdx];
+      } else {
+        shMem.mapStartPos[warpIdx][transitIdx] = -1;
       }
     }
   
@@ -829,13 +831,15 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       transitIdx = shMem.mapStartPos[subWarpIdx][transitI];
       //TODO: Specialize this for subWarpSize = 1.
       VertexID_t transit = invalidVertex;
-      transit = transitToSamplesKeys[transitIdx];
-      shMem.subWarpSampleIdx[subWarpIdx][transitI][0] = transitToSamplesValues[transitIdx];
+      if (transitIdx != -1) {
+        transit = transitToSamplesKeys[transitIdx];
+        shMem.subWarpSampleIdx[subWarpIdx][transitI][0] = transitToSamplesValues[transitIdx];
+      }
       shMem.subWarpTransits[subWarpIdx][transitI][0] = transit;
     }
 
     __syncthreads();
-    
+
     const int threadsToLoadTransit = sizeof(CSR::Vertex)/sizeof(int);
     if (threadIdx.x < threadsToLoadTransit * NUM_SUBWARPS_IN_TB * TRANSITS_PER_THREAD) {
       //Load transit Vertex Object in a coalesced manner
@@ -843,14 +847,16 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       int transitI = (threadIdx.x / (threadsToLoadTransit)) % TRANSITS_PER_THREAD;
       int subWarpIdx = threadIdx.x / (TRANSITS_PER_THREAD * threadsToLoadTransit);
       VertexID transit = shMem.subWarpTransits[subWarpIdx][transitI][0];
-      const CSR::Vertex* transitVertex = csr->get_vertices() + transit;
-      int tid = threadIdx.x % threadsToLoadTransit;
-      int data = ((const int*)transitVertex)[tid];
-      *(((int*)&shMem.transitVertices[subWarpIdx][transitI * sizeof(CSR::Vertex)]) + tid) = data;
+      if (transit != invalidVertex) {
+        const CSR::Vertex* transitVertex = csr->get_vertices() + transit;
+        int tid = threadIdx.x % threadsToLoadTransit;
+        int data = ((const int*)transitVertex)[tid];
+        *(((int*)&shMem.transitVertices[subWarpIdx][transitI * sizeof(CSR::Vertex)]) + tid) = data;
+      }
     }
     
     __syncthreads();
-    
+
     for (int transitI = 0; transitI < TRANSITS_PER_THREAD; transitI++) {
       int threadBlockWarpIdx = threadIdx.x / subWarpSize;
       //TODO: Support this for SubWarp != 32
@@ -869,13 +875,22 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
       invalidateCache = __shfl_sync(FULL_WARP_MASK, invalidateCache, 0, subWarpSize);
 
       transit = shMem.subWarpTransits[threadBlockWarpIdx][transitI][0];
+      if (transit == invalidVertex) 
+        continue;
+      
+      __syncwarp();
+
+      // assert (transit != invalidVertex);
       CSR::Vertex* shMemTransitVertex = ((CSR::Vertex*)(&shMem.transitVertices[threadBlockWarpIdx][transitI * sizeof(CSR::Vertex)]));
       EdgePos_t numEdgesInShMem = shMemTransitVertex->num_edges();
       const CSR::Edge* glTransitEdges = (CSR::Edge*)csr->get_edges() + shMemTransitVertex->get_start_edge_idx();
+      // assert(glTransitEdges == csr->get_edges(transit));
+      // assert(glTransitEdges != nullptr);
+      // assert(numEdgesInShMem == csr->get_n_edges_for_vertex(transit));
+      // assert(shMemTransitVertex->get_start_edge_idx() + numEdgesInShMem <= csr->get_n_edges());
       const float* glTransitEdgeWeights = (float*)(CSR::Edge*)csr->get_weights() + shMemTransitVertex->get_start_edge_idx();
       float maxWeight = shMemTransitVertex->get_max_weight();
-
-
+      
       if (CACHE_EDGES && invalidateCache) {
         for (int i = threadIdx.x%LoadBalancing::LoadBalancingThreshold::BlockLevel; 
              i < min(CACHE_SIZE, numEdgesInShMem); 
@@ -890,14 +905,16 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
           }
         }
       }
+
+      __syncwarp();
   
       // if (CACHE_WEIGHTS && shMem.invalidateCache) {
       //   for (int i = threadIdx.x; i < min(CACHE_SIZE, numEdgesInShMem); i += blockDim.x) {
       //     edgeWeightsInShMem[i] = (ONDEMAND_CACHING) ? -1 : glTransitEdgeWeights[i];
       //   }
       // }
+      
 
-      __syncwarp();
       bool continueExecution = true;
       
       if (subWarpSize == 32){// || transit == shMem.transitForSubWarp[threadBlockWarpIdx]) {
@@ -2824,7 +2841,7 @@ bool doTransitParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoor
               const bool CACHE_EDGES = true;
               const bool CACHE_WEIGHTS = false;
               const int CACHE_SIZE = (CACHE_EDGES || CACHE_WEIGHTS) ? 384 : 0;
-
+              // printf("device %d threadBlockKernelTransitsNum %d threadBlocks %d\n", device, *threadBlockKernelTransitsNum[deviceIdx], threadBlocks);
               switch (subWarpSizeAtStep<App>(step)) {
                 case 32:
                   threadBlockKernel<SampleType,App,tbSize,CACHE_SIZE,CACHE_EDGES,CACHE_WEIGHTS,perThreadSamplesForThreadBlockKernel,false,0,32><<<maxThreadBlocksPerKernel, tbSize>>>(step,
@@ -2885,6 +2902,7 @@ bool doTransitParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoor
                 //     break;
               }
               CHK_CU(cudaGetLastError());
+              // CHK_CU(cudaDeviceSynchronize());
             // }
           }
         }
@@ -2905,7 +2923,7 @@ bool doTransitParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoor
           const size_t maxThreadBlocksPerKernel = min(4096L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L);
           const VertexID_t deviceSampleStartPtr = PartStartPointer(nextDoorData.samples.size(), deviceIdx, numDevices);
           const size_t threadBlocks = DIVUP(*gridKernelTransitsNum[deviceIdx], perThreadSamplesForGridKernel);
-          printf("device %d gridTransitsNum %d threadBlocks %d\n", device, *gridKernelTransitsNum[deviceIdx], threadBlocks);
+          // printf("device %d gridTransitsNum %d threadBlocks %d\n", device, *gridKernelTransitsNum[deviceIdx], threadBlocks);
 
           if (useGridKernel && *gridKernelTransitsNum[deviceIdx] > 0){// && numberOfTransits<App>(step) > 1) {
             //FIXME: A Bug in Grid Kernel prevents it from being used when numberOfTransits for a sample at step are 1.
