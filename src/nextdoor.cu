@@ -280,9 +280,6 @@ __global__ void samplingKernel(const int step, GPUCSRPartition graph, const size
   __syncwarp();
   if (tpMode == NextFuncExecution) {
     EdgePos_t insertionPos = 0;
-    if (sampleIdx == 11) {
-      printf("sampleIdx %d neighbor %d\n", sampleIdx, neighbor);
-    }
     //TODO: templatize over hasExplicitTransits()
     if (step != App().steps() - 1) {
       //No need to store at last step
