@@ -170,13 +170,12 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
       clusters[clusterIdx].push_back(clusterIdx * VERTICES_IN_CLUSTERS + v);
     }
   }
-  printCudaMemInfo();
-  GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
-  
+  printCudaMemInfo(); 
   NextDoorData<SubGraphSample, SubGraphSamplingAppI> nextDoorData;
   nextDoorData.devices = {0};
   nextDoorData.csr = csr;
-  nextDoorData.gpuCSRPartition = gpuCSRPartition;
+  std::vector<GPUCSRPartition> gpuCSRPartitions = transferCSRToGPUs(nextDoorData, csr);
+  nextDoorData.gpuCSRPartitions = gpuCSRPartitions;
   CHK_CU(cudaMalloc(&dAdjMatrixTotalLen, sizeof(int)));
   CHK_CU(cudaMemset(dAdjMatrixTotalLen, 0, sizeof(int)));
   CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(SubGraphSamplingAppI().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
@@ -186,9 +185,9 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   
   for (int i = 0; i < nruns; i++) {
     if (strcmp(kernelType, "TransitParallel") == 0)
-      doTransitParallelSampling<SubGraphSample, SubGraphSamplingAppI>(csr, gpuCSRPartition, nextDoorData, enableLoadBalancing);
+      doTransitParallelSampling<SubGraphSample, SubGraphSamplingAppI>(csr, nextDoorData, enableLoadBalancing);
     else if (strcmp(kernelType, "SampleParallel") == 0)
-      doSampleParallelSampling<SubGraphSample, SubGraphSamplingAppI>(csr, gpuCSRPartition, nextDoorData);
+      doSampleParallelSampling<SubGraphSample, SubGraphSamplingAppI>(csr, nextDoorData);
     else
       abort();
   }
