@@ -3277,7 +3277,7 @@ bool doSampleParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoorD
       }
 
       //Perform SampleParallel Sampling
-      sampleParallelKernel<SampleType, App, 256, false><<<min(1024L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L), 256>>>(step, gpuCSRPartitions[deviceIdx], 
+      sampleParallelKernel<SampleType, App, 256, false><<<min(1024L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L), 256L>>>(step, gpuCSRPartitions[deviceIdx], 
                     deviceSampleStartPtr, nextDoorData.INVALID_VERTEX, totalThreads[deviceIdx], 
                     nextDoorData.dInitialSamples[deviceIdx], nextDoorData.dOutputSamples[deviceIdx], perDeviceNumSamples,
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, 
