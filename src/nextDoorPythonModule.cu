@@ -43,7 +43,7 @@ static PyObject * initSampling(PyObject *self, PyObject *args)
   if (!PyArg_ParseTuple(args, "s", &graph_file)) {
     return NULL;
   }
-  graph_csr = loadGraph(graph, graph_file, "edge-list", "binary");
+  graph_csr = loadGraph(graph, graph_file, (char*)"edge-list", (char*)"binary");
   assert(graph_csr != nullptr);
   allocNextDoorDataOnGPU(graph_csr, nextDoorData);
   gpuCSRPartitions = transferCSRToGPUs(nextDoorData, graph_csr);
