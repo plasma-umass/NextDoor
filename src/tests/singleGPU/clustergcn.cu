@@ -13,13 +13,9 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
   //sure that if neighbors at kth-hop is an adjacent vertex of one
   //of the k-1th hop neighbors.
   CSR* csr = nextDoorData.csr;
-  auto& initialSamples = nextDoorData.initialContents;
   auto finalSampleSize = getFinalSampleSize<SubGraphSamplingAppI>();
-  auto& finalSamples = nextDoorData.hFinalSamples;
-  auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
   auto& samples = nextDoorData.samples;
-  int maxSteps = 4;
-
+  
   //First create the adjacency matrix.
   std::cout << "checking results" << std::endl;
   AdjMatrix adj_matrix(csr->get_n_vertices(), std::unordered_set<VertexID> ());
@@ -27,9 +23,7 @@ bool checkSubGraphResult(NextDoorData<SampleType, App>& nextDoorData)
   csrToAdjMatrix(csr, adj_matrix);
 
   //Now check the correctness
-  size_t numNeighborsToSampleAtStep = 0;
   bool foundError = false;
-  int sampleIdx = 0;
   int* hRowStorage = new int[csr->get_n_edges()*DIVUP(App().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
   int* hColStorage = new int[csr->get_n_edges()*DIVUP(App().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
 
