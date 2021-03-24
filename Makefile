@@ -20,7 +20,7 @@ $(SINGLEGPU_TEST_BUILD_DIR)/ladies \
 $(SINGLEGPU_TEST_BUILD_DIR)/multirw $(SINGLEGPU_TEST_BUILD_DIR)/clustergcn $(SINGLEGPU_TEST_BUILD_DIR)/mvs \
 $(SINGLEGPU_TEST_BUILD_DIR)/layer
 
-all-multiGPU-tests: directories $(MULTIGPU_TEST_BUILD_DIR)/deepwalk $(MULTIGPU_TEST_BUILD_DIR)/khop $(MULTIGPU_TEST_BUILD_DIR)/fastgcn \
+all-multiGPU-tests: directories $(MULTIGPU_TEST_BUILD_DIR)/deepwalk $(MULTIGPU_TEST_BUILD_DIR)/khop $(MULTIGPU_TEST_BUILD_DIR)/layer $(MULTIGPU_TEST_BUILD_DIR)/fastgcn \
 	$(MULTIGPU_TEST_BUILD_DIR)/ladies \
 	$(MULTIGPU_TEST_BUILD_DIR)/multirw $(MULTIGPU_TEST_BUILD_DIR)/clustergcn $(MULTIGPU_TEST_BUILD_DIR)/mvs \
 	$(MULTIGPU_TEST_BUILD_DIR)/ppr $(MULTIGPU_TEST_BUILD_DIR)/node2vec
@@ -57,6 +57,9 @@ $(SINGLEGPU_TEST_BUILD_DIR)/layer: src/tests/singleGPU/layer.cu src/nextdoor.cu 
 
 #******Multi GPU Tests********#
 $(MULTIGPU_TEST_BUILD_DIR)/khop: src/tests/multiGPU/khop.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/khop/khop.cu 
+	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3  -Xptxas -O3 -Xcompiler -fopenmp  -maxrregcount=40 -o $@
+
+$(MULTIGPU_TEST_BUILD_DIR)/layer: src/tests/multiGPU/layer.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/layer/layerSampling.cu 
 	nvcc $< $(TEST_INCLUDE_DIRS) $(TEST_LFLAGS) $(GOOGLE_TEST_MAIN) $(ARCH_CODE_FLAGS) -O3  -Xptxas -O3 -Xcompiler -fopenmp  -maxrregcount=40 -o $@
 
 $(MULTIGPU_TEST_BUILD_DIR)/deepwalk: src/tests/multiGPU/deepwalk.cu src/nextdoor.cu src/tests/testBase.h src/check_results.cu src/apps/randomwalks/randomWalks.cu
