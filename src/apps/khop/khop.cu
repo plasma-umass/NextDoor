@@ -64,6 +64,7 @@ struct KHopApp {
   template<class SampleType>
   __host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
   {
+    return -1;
   }
 
   template<class SampleType>

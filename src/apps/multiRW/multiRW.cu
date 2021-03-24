@@ -84,7 +84,6 @@ struct MultiRWApp {
   template<class SampleType>
   __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
   {
-    CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
     //Use rejection sampling to sample based on the degree of vertices.
     int x = RandNumGen::rand_int(randState, NUM_ROOT_VERTICES);
     //printf("x %d\n", x);

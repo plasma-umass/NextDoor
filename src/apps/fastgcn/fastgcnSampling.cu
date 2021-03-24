@@ -33,7 +33,7 @@ struct FastGCNSamplingApp {
       VertexID transit = transits[i];
       bool hasEdge = csr->has_edge_logn(transit, id);
       int len = i*VERTICES_PER_SAMPLE + neighbrID;//::atomicAdd(&sample->adjacencyMatrixLen[step], 1);
-      int ii = -1, jj = -1, p = 0.0f;
+      int ii = -1, jj = -1;
       if (hasEdge) {
         //int cooIdx = step * NUM_SAMPLED_VERTICES + len;
         ii = i; jj = neighbrID;

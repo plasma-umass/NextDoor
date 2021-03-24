@@ -96,7 +96,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
         if (!foundError && transit != INVALID_VERTEX &&
           adjMatrix[prevVertex].count(transit) == 0) {
           std::cout << "col: " << col << " row: " << row << std::endl;
-          printf("%s:%d Invalid '%d' in Sample '%ld' at for previous step vertex '%d' Step '%d'\n", __FILE__, __LINE__, transit, sampleId, prevVertex, step);
+          printf("%s:%d Invalid '%d' in Sample '%d' at for previous step vertex '%d' Step '%d'\n", __FILE__, __LINE__, transit, sampleId, prevVertex, step);
           foundError = true;
         }
       }

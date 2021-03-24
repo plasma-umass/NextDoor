@@ -56,7 +56,7 @@ struct RandomWalkApp {
   template<class SampleType>
   __host__ SampleType initializeSample(CSR* graph, const VertexID_t sampleID)
   {
-    SampleType sample;
+    SampleType sample = SampleType ();
 
     return sample;
   }

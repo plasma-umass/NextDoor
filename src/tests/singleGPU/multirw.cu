@@ -15,7 +15,6 @@ bool checkMultiRWResult(NextDoorData<SampleType, App>& nextDoorData)
   //sure that if neighbors at kth-hop is an adjacent vertex of one
   //of the k-1th hop neighbors.
   CSR* csr = nextDoorData.csr;
-  auto& initialSamples = nextDoorData.initialContents;
   auto finalSampleSize = getFinalSampleSize<MultiRWApp>();
   auto& finalSamples = nextDoorData.hFinalSamples;
   auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
