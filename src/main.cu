@@ -47,7 +47,9 @@ int appMain(int argc, char* argv[], bool (*checkResults) (NextDoorData<SampleTyp
     return 0;
   }
 
-  return nextdoor<SampleType, App>(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
+  nextdoor<SampleType, App>(opt->getValue('g'), opt->getValue('t'), opt->getValue('f'), 
                   atoi(opt->getValue('n')), opt->getFlag("check-results"), opt->getFlag("print-samples"),
                   opt->getValue('k'), opt->getFlag('l'), checkResults);
+
+  return 0;
 }
