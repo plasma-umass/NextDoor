@@ -20,7 +20,6 @@ bool checkMVSResult(NextDoorData<SampleType, App>& nextDoorData)
   auto& finalSamples = nextDoorData.hFinalSamples;
   auto INVALID_VERTEX = nextDoorData.INVALID_VERTEX;
   auto& samples = nextDoorData.samples;
-  int maxSteps = 4;
   storagePosition = 0;
 
   //First create the adjacency matrix.
@@ -30,9 +29,7 @@ bool checkMVSResult(NextDoorData<SampleType, App>& nextDoorData)
   csrToAdjMatrix(csr, adj_matrix);
 
   //Now check the correctness
-  size_t numNeighborsToSampleAtStep = 0;
   bool foundError = false;
-  int sampleIdx = 0;
   int* hRowStorage = new int[csr->get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
   int* hColStorage = new int[csr->get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())];
 

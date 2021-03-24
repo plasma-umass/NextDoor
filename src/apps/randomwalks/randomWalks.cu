@@ -22,7 +22,7 @@ struct RandomWalkApp {
 
   __host__ __device__ EdgePos_t numSamples(CSR* graph)
   {
-    return graph->get_n_vertices() / VERTICES_PER_SAMPLE;
+    return graph->get_n_vertices() < 256*1024 ? 100 * graph->get_n_vertices() : graph->get_n_vertices();
   }
 
   template<class SampleType>
@@ -31,7 +31,7 @@ struct RandomWalkApp {
     std::vector<VertexID_t> initialValue;
 
     for (int i = 0; i < VERTICES_PER_SAMPLE; i++) {
-      initialValue.push_back(sampleIdx);
+      initialValue.push_back(sampleIdx%graph->get_n_vertices());
     }
 
     return initialValue;
@@ -50,6 +50,7 @@ struct RandomWalkApp {
   template<class SampleType>
   __host__ __device__ VertexID_t stepTransits(int step, const VertexID_t sampleID, SampleType& sample, int transitIdx, curandState* randState)
   {
+    return -1;
   }
 
   template<class SampleType>

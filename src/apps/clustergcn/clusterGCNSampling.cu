@@ -207,5 +207,5 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   CHK_CU(cudaFree(dColStorage));
   CHK_CU(cudaFree(dAdjMatrixTotalLen));
   freeDeviceData(nextDoorData);
-  return true;
+  return true || toRet;
 }

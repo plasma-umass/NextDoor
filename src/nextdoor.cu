@@ -790,7 +790,7 @@ __global__ void threadBlockKernel(const int step, GPUCSRPartition graph, const V
     __syncthreads();
     if (threadIdx.x % subWarpSize < stepSize) {
       //Load curand only for the threads that are going to do sampling.
-      int ld = threadIdx.x - (threadIdx.x/subWarpSize)*(subWarpSize-stepSize);
+      // int ld = threadIdx.x - (threadIdx.x/subWarpSize)*(subWarpSize-stepSize);
       curandSrcPtr = (curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
     }
   } else {
@@ -1086,7 +1086,7 @@ __global__ void gridKernel(const int step, GPUCSRPartition graph, const VertexID
     __syncthreads();
     if (threadIdx.x % subWarpSize < stepSize) {
       //Load curand only for the threads that are going to do sampling.
-      int ld = threadIdx.x - (threadIdx.x/subWarpSize)*(subWarpSize-stepSize);
+      // int ld = threadIdx.x - (threadIdx.x/subWarpSize)*(subWarpSize-stepSize);
       curandSrcPtr = (curandState*)(&shStateBuff[threadIdx.x*intsInRandState]);
     }
   } else {
@@ -1380,7 +1380,6 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
   //Number of threads executed are: Num of Samples * Number of Transits
   int threadId = threadIdx.x + blockDim.x * blockIdx.x;
   //__shared__ VertexID newNeigbhors[N_THREADS];
-  CSRPartition* csr = (CSRPartition*)&csrPartitionBuff[0];
   if (threadId >= currExecutionThreads)
     return;
   
@@ -1517,7 +1516,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
   
         for (int i = 0; i < numTransitsInNeghbrhood; i++) {
           if (!graph.device_csr->has_vertex(transits[i])) {
-            printf("transits[%d] %d step %d \n", i, transits[i]);
+            printf("transits[%d] %d step %d \n", i, transits[i], step);
             return;
           }
           numTransitEdges += graph.device_csr->get_n_edges_for_vertex(transits[i]);
@@ -1585,7 +1584,7 @@ __global__ void explicitTransitsKernel(const int step, GPUCSRPartition graph,
         finalSamples[sampleIdx*finalSampleSize + stepSizeAtStep<App>(step - 1) + neighbrID] = neighbor;
       } else if (App().outputFormat() == SampledVertices && App().samplingType() == IndividualNeighborhood) {
         if (numberOfTransits<App>(step) > 1) {    
-          insertionPos = finalSampleSizeTillPreviousStep + (threadId % numTransits);//utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);
+          insertionPos = utils::atomicAdd(&sampleInsertionPositions[sampleIdx], 1);//finalSampleSizeTillPreviousStep + (threadId % numTransits);//
         } else {
           insertionPos = step;
         }
@@ -3277,7 +3276,7 @@ bool doSampleParallelSampling(CSR* csr, NextDoorData<SampleType, App>& nextDoorD
       }
 
       //Perform SampleParallel Sampling
-      sampleParallelKernel<SampleType, App, 256, false><<<min(1024L, nextDoorData.maxThreadsPerKernel[deviceIdx]/256L), 256L>>>(step, gpuCSRPartitions[deviceIdx], 
+      sampleParallelKernel<SampleType, App, 256, false><<<min(1024L, nextDoorData.maxThreadsPerKernel[deviceIdx]/1024L), 256L>>>(step, gpuCSRPartitions[deviceIdx], 
                     deviceSampleStartPtr, nextDoorData.INVALID_VERTEX, totalThreads[deviceIdx], 
                     nextDoorData.dInitialSamples[deviceIdx], nextDoorData.dOutputSamples[deviceIdx], perDeviceNumSamples,
                     nextDoorData.dFinalSamples[deviceIdx], finalSampleSize, 
