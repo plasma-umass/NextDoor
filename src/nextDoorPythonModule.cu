@@ -35,7 +35,7 @@ const char* docString = "The Python Module contains following functions:\n"
 
 static CSR* graph_csr = nullptr;
 static Graph graph;
-static GPUCSRPartition gpuCSRPartition;
+static std::vector<GPUCSRPartition> gpuCSRPartitions;
 
 static PyObject * initSampling(PyObject *self, PyObject *args)
 {
@@ -45,14 +45,15 @@ static PyObject * initSampling(PyObject *self, PyObject *args)
   }
   graph_csr = loadGraph(graph, graph_file, "edge-list", "binary");
   assert(graph_csr != nullptr);
-  gpuCSRPartition = transferCSRToGPU(graph_csr);
   allocNextDoorDataOnGPU(graph_csr, nextDoorData);
+  gpuCSRPartitions = transferCSRToGPUs(nextDoorData, graph_csr);
+  nextDoorData.gpuCSRPartitions = gpuCSRPartitions;
   Py_RETURN_NONE;
 }
 
 static PyObject* sample(PyObject *self, PyObject *args)
 {
-  doSampleParallelSampling(graph_csr, gpuCSRPartition, nextDoorData);
+  doSampleParallelSampling(graph_csr, nextDoorData);
   Py_RETURN_NONE;
 }
 

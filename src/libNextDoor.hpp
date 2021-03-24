@@ -33,11 +33,12 @@ struct NextDoorData {
   std::vector<VertexID_t*> dInitialSamples;
   int INVALID_VERTEX;
   int maxBits;
-  GPUCSRPartition gpuCSRPartition;
+  std::vector<GPUCSRPartition> gpuCSRPartitions;
 };
 
 CSR* loadGraph(Graph& graph, char* graph_file, char* graph_type, char* graph_format);
-GPUCSRPartition transferCSRToGPU(CSR* csr);
+template<typename NextDoorData>
+std::vector<GPUCSRPartition> transferCSRToGPUs(NextDoorData& data, CSR* csr);
 template<class SampleType, typename App>
 bool allocNextDoorDataOnGPU(CSR* csr, NextDoorData<SampleType, App>& data);
 template<class SampleType, typename App>

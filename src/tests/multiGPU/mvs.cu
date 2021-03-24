@@ -134,17 +134,17 @@ bool foo(const char* graph_file, const char* graph_type, const char* graph_forma
   nextDoorData.csr = csr;
   CHK_CU(cudaMalloc(&dRowStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
   CHK_CU(cudaMalloc(&dColStorage, sizeof(VertexID_t) * graph.get_n_edges()*DIVUP(MVSSamplingApp().numSamples(csr)*VERTICES_PER_SAMPLE, csr->get_n_vertices())));
-  
-  GPUCSRPartition gpuCSRPartition = transferCSRToGPU(csr);
-  nextDoorData.gpuCSRPartition = gpuCSRPartition;
+
+  std::vector<GPUCSRPartition> gpuCSRPartitions = transferCSRToGPUs(nextDoorData, csr);
+  nextDoorData.gpuCSRPartitions = gpuCSRPartitions;
   //CHK_CU(cudaMalloc(&SubGraphSample::rowStorage, sizeof(VertexID_t) * graph.get_n_edges()));
   allocNextDoorDataOnGPU<MVSSample, MVSSamplingApp>(csr, nextDoorData);
   
   for (int i = 0; i < RUNS; i++) {
     if (strcmp(kernelType, "TransitParallel") == 0)
-      doTransitParallelSampling<MVSSample, MVSSamplingApp>(csr, gpuCSRPartition, nextDoorData, enableLoadBalancing);
+      doTransitParallelSampling<MVSSample, MVSSamplingApp>(csr, nextDoorData, enableLoadBalancing);
     else if (strcmp(kernelType, "SampleParallel") == 0)
-      doSampleParallelSampling<MVSSample, MVSSamplingApp>(csr, gpuCSRPartition, nextDoorData);
+      doSampleParallelSampling<MVSSample, MVSSamplingApp>(csr, nextDoorData);
     else
       abort();
   }

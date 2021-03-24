@@ -65,7 +65,7 @@ bool checkAdjacencyMatrixResult(NextDoorData<SampleType, App>& nextDoorData)
     std::cout << "Step: "<< step << " finalSampleSize " << finalSampleSize << " numNeighborsToSampleAtStep " << numNeighborsToSampleAtStep << std::endl;
     const size_t startIdxForCurrStep = (step == 0) ? 0 : (numNeighborsToSampleAtStep + App().stepSize(step));
     for (size_t s = 0; s < hFinalSamples.size(); s += finalSampleSize) {
-      const size_t sampleId = s/finalSampleSize;
+      int sampleId = s/finalSampleSize;
       size_t contentsLength = 0;
 
       //Two kinds of check are performed here.
