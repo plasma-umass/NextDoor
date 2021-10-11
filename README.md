@@ -51,6 +51,7 @@ Other functions that are needed to be defined includes:
 
 To build the application, run 
 ```
+cd example
 make
 ```
 
