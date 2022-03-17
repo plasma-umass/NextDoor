@@ -4,7 +4,7 @@ struct KHopApp {
 
   __host__ __device__ 
   int stepSize(int k) {
-    return ((k == 0) ? 10 : 25);
+    return ((k == 0) ? 25 : 10);
   }
 
   template<typename SampleType, typename EdgeArray, typename WeightArray>
